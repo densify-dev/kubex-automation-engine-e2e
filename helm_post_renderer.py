@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Helm post-renderer for E2E-specific manifest overrides."""
 
 from __future__ import annotations

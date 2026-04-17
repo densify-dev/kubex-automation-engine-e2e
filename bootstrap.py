@@ -270,6 +270,7 @@ def install_controller(config: BootstrapConfig) -> None:
     )
     with controller_values_file(config) as values_file:
         post_renderer = Path(__file__).resolve().parent / "helm_post_renderer.py"
+        post_renderer.chmod(post_renderer.stat().st_mode | 0o111)
         run(
             "helm",
             "upgrade",
@@ -284,8 +285,6 @@ def install_controller(config: BootstrapConfig) -> None:
             "-f",
             str(values_file),
             "--post-renderer",
-            sys.executable,
-            "--post-renderer-args",
             str(post_renderer),
             "--wait",
         )
