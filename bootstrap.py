@@ -284,6 +284,8 @@ def install_controller(config: BootstrapConfig) -> None:
             "-f",
             str(values_file),
             "--post-renderer",
+            sys.executable,
+            "--post-renderer-args",
             str(post_renderer),
             "--wait",
         )
