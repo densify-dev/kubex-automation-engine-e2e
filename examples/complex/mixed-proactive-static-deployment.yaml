@@ -1,0 +1,108 @@
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: mixed-static-automation-strategy
+  namespace: default
+spec:
+  inPlaceResize:
+    enabled: true
+    containerRestart: false
+  podEviction:
+    enabled: false
+  safetyChecks:
+    minCpuChangePercent: 10
+    minMemoryChangePercent: 10
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: mixed-proactive-automation-strategy
+  namespace: default
+spec:
+  podEviction:
+    enabled: true
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: StaticPolicy
+metadata:
+  name: mixed-static-policy
+  namespace: default
+spec:
+  scope:
+    labelSelector:
+      matchLabels:
+        app: mixed-demo
+    workloadTypes:
+      - Deployment
+  resources:
+    containers:
+      api:
+        limits:
+          cpu: 800m
+          memory: 2Gi
+      sidecar:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi
+  automationStrategyRef:
+    name: mixed-static-automation-strategy
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: ProactivePolicy
+metadata:
+  name: mixed-proactive-policy
+  namespace: default
+spec:
+  scope:
+    labelSelector:
+      matchLabels:
+        app: mixed-demo
+    workloadTypes:
+      - Deployment
+  automationStrategyRef:
+    name: mixed-proactive-automation-strategy
+  safetyChecks:
+    maxAnalysisAgeDays: 365
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mixed-demo
+  namespace: default
+  labels:
+    app: mixed-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mixed-demo
+  template:
+    metadata:
+      labels:
+        app: mixed-demo
+    spec:
+      containers:
+        - name: api
+          image: busybox:1.37
+          command: ["sh", "-c", "echo running; sleep 3600"]
+          resources:
+            requests:
+              cpu: 150m
+              memory: 256Mi
+            limits:
+              cpu: 300m
+              memory: 512Mi
+        - name: sidecar
+          image: busybox:1.37
+          command: ["sh", "-c", "sleep 3600"]
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 50m
+              memory: 64Mi

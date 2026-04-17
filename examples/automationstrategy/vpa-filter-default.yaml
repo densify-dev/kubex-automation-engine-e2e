@@ -1,0 +1,79 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: automationstrategy-vpa-default
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: vpa-strategy
+  namespace: automationstrategy-vpa-default
+spec:
+  safetyChecks:
+    enableVpaFilter: true
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: StaticPolicy
+metadata:
+  name: vpa-policy
+  namespace: automationstrategy-vpa-default
+spec:
+  scope:
+    labelSelector:
+      matchLabels:
+        app: vpa-demo
+  resources:
+    containers:
+      "*":
+        requests:
+          cpu: 300m
+          memory: 384Mi
+        limits:
+          cpu: 800m
+          memory: 768Mi
+  automationStrategyRef:
+    name: vpa-strategy
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vpa-demo
+  namespace: automationstrategy-vpa-default
+  labels:
+    app: vpa-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vpa-demo
+  template:
+    metadata:
+      labels:
+        app: vpa-demo
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.37
+          command: ["sleep", "3600"]
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 400m
+              memory: 512Mi
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: vpa-demo
+  namespace: automationstrategy-vpa-default
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: vpa-demo
+  updatePolicy:
+    updateMode: Auto
+  # No resourcePolicy => defaults to all containers, CPU+memory

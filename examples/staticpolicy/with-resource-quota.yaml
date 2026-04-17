@@ -1,0 +1,77 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rightsizing-quota
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: rightsizing-demo-quota
+  namespace: rightsizing-quota
+spec:
+  hard:
+    requests.cpu: "150m"
+    requests.memory: "200Mi"
+    limits.cpu: "300m"
+    limits.memory: "1Gi"
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: quota-automation-strategy
+  namespace: rightsizing-quota
+spec:
+  podEviction:
+    enabled: false
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: StaticPolicy
+metadata:
+  name: quota-rightsizing-policy
+  namespace: rightsizing-quota
+spec:
+  scope:
+    labelSelector:
+      matchLabels:
+        app: rightsizing-quota-demo
+  resources:
+    containers:
+      "*":
+        requests:
+          cpu: 200m
+          memory: 256Mi
+        limits:
+          cpu: 400m
+          memory: 512Mi
+  automationStrategyRef:
+    name: quota-automation-strategy
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rightsizing-quota-demo
+  namespace: rightsizing-quota
+  labels:
+    app: rightsizing-quota-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rightsizing-quota-demo
+  template:
+    metadata:
+      labels:
+        app: rightsizing-quota-demo
+    spec:
+      containers:
+        - name: demo
+          image: busybox:1.37
+          command: ["sleep", "3600"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi

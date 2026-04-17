@@ -1,0 +1,28 @@
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: ClusterAutomationStrategy
+metadata:
+  name: sample-cluster-automation-strategy
+spec: {}
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: ClusterStaticPolicy
+metadata:
+  name: sample-cluster-scoped-rightsizing-policy
+spec:
+  scope:
+    namespaceSelector:
+      operator: In
+      values:
+        - '*'
+  resources:
+    containers:
+      "*":
+        requests:
+          cpu: 296m
+          memory: 296Mi
+        limits:
+          cpu: 496m
+          memory: 596Mi
+  automationStrategyRef:
+    name: sample-cluster-automation-strategy

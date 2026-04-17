@@ -1,0 +1,91 @@
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: sample-automation-strategy
+  namespace: default
+spec:
+  enablement:
+    cpu:
+      requests:
+        # downsize (default: true)
+        downsize: false
+        # upsize (default: true)
+        upsize: true
+        # floor/ceiling clamp desired requests to this range (optional)
+        floor: 150m
+        ceiling: 800m
+      limits:
+        # downsize (default: true)
+        downsize: true
+        # upsize (default: true)
+        upsize: true
+    memory:
+      requests:
+        # downsize (default: true)
+        downsize: true
+        # upsize (default: true)
+        upsize: true
+        # setFromUnspecified (default: true)
+        setFromUnspecified: true
+        # floor/ceiling clamp desired requests to this range (optional)
+        floor: 128Mi
+        ceiling: 2Gi
+      limits:
+        # downsize (default: true)
+        downsize: true
+        # upsize (default: true)
+        upsize: false
+        # setFromUnspecified (default: true)
+        setFromUnspecified: false
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: StaticPolicy
+metadata:
+  name: sample-rightsizing-policy
+  namespace: default
+spec:
+  scope:
+    labelSelector:
+      matchLabels:
+        app: rightsizing-demo-with-advanced-automation-strategy
+  resources:
+    containers:
+      "*":
+        requests:
+          cpu: 200m
+          memory: 128Mi
+        limits:
+          cpu: 400m
+          memory: 1500Mi
+  automationStrategyRef:
+    name: sample-automation-strategy
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rightsizing-demo-with-advanced-automation-strategy
+  namespace: default
+  labels:
+    app: rightsizing-demo-with-advanced-automation-strategy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rightsizing-demo-with-advanced-automation-strategy
+  template:
+    metadata:
+      labels:
+        app: rightsizing-demo-with-advanced-automation-strategy
+    spec:
+      containers:
+        - name: demo
+          image: busybox:1.37
+          command: ["sleep", "3600"]
+          resources:
+            requests:
+              cpu: 250m
+              memory: 900Mi
+            limits:
+              cpu: 300m
+              memory: 950Mi

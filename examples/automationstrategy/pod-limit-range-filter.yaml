@@ -1,0 +1,90 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: automationstrategy-podlimitrange
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: pod-limits
+  namespace: automationstrategy-podlimitrange
+spec:
+  limits:
+    - type: Pod
+      min:
+        cpu: 600m
+        memory: 512Mi
+      max:
+        cpu: "1500m"
+        memory: 1Gi
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: pod-limitrange-strategy
+  namespace: automationstrategy-podlimitrange
+spec:
+  safetyChecks:
+    enablePodLimitRangeFilter: true
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: StaticPolicy
+metadata:
+  name: pod-limitrange-policy
+  namespace: automationstrategy-podlimitrange
+spec:
+  scope:
+    labelSelector:
+      matchLabels:
+        app: pod-limitrange-demo
+  resources:
+    containers:
+      "*":
+        requests:
+          cpu: 200m
+          memory: 128Mi
+        limits:
+          cpu: 900m
+          memory: 768Mi
+  automationStrategyRef:
+    name: pod-limitrange-strategy
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pod-limitrange-demo
+  namespace: automationstrategy-podlimitrange
+  labels:
+    app: pod-limitrange-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pod-limitrange-demo
+  template:
+    metadata:
+      labels:
+        app: pod-limitrange-demo
+    spec:
+      containers:
+        - name: app-a
+          image: busybox:1.37
+          command: ["sleep", "3600"]
+          resources:
+            requests:
+              cpu: 300m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+        - name: app-b
+          image: busybox:1.37
+          command: ["sleep", "3600"]
+          resources:
+            requests:
+              cpu: 300m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

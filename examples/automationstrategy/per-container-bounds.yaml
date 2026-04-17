@@ -1,0 +1,38 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: automationstrategy-bounds-validation
+---
+# Valid: usage-level bounds are consistent and the container override stays within
+# the effective inherited range.
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: bounds-valid
+  namespace: automationstrategy-bounds-validation
+spec:
+  enablement:
+    memory:
+      requests:
+        floor: 128Mi
+        ceiling: 512Mi
+        containers:
+          app:
+            floor: 192Mi
+            ceiling: 384Mi
+---
+# Valid cluster-scoped example: inherited and explicit container bounds are compatible.
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: ClusterAutomationStrategy
+metadata:
+  name: cluster-bounds-valid
+spec:
+  enablement:
+    memory:
+      requests:
+        floor: 256Mi
+        ceiling: 1Gi
+        containers:
+          app:
+            ceiling: 768Mi

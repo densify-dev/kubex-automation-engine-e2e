@@ -1,0 +1,78 @@
+name: E2E Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      controller_image_repository:
+        description: "Docker image repository override for the controller"
+        required: false
+        default: ""
+      controller_image_tag:
+        description: "Docker image tag override for the controller"
+        required: false
+        default: ""
+      controller_chart_repo_url:
+        description: "Helm repo URL that serves the controller charts"
+        required: false
+        default: https://densify-dev.github.io/helm-charts
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  e2e:
+    name: E2E Tests (${{ matrix.kubernetes.version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        kubernetes:
+          - version: v1.35.0
+            cluster_name: e2e-135
+          - version: v1.34.0
+            cluster_name: e2e-134
+    env:
+      HELM_RELEASE: kubex-automation-engine
+      HELM_NAMESPACE: kubex
+      CONTROLLER_IMAGE_REPOSITORY: ${{ github.event.inputs.controller_image_repository }}
+      CONTROLLER_IMAGE_TAG: ${{ github.event.inputs.controller_image_tag }}
+      HELM_REPO_URL: ${{ github.event.inputs.controller_chart_repo_url || 'https://densify-dev.github.io/helm-charts' }}
+      CLUSTER_NAME: ${{ matrix.kubernetes.cluster_name }}
+      NODE_IMAGE: kindest/node:${{ matrix.kubernetes.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python test dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install kind
+        run: |
+          curl -sSLo /tmp/kind https://kind.sigs.k8s.io/dl/v0.25.0/kind-linux-amd64
+          chmod +x /tmp/kind
+          sudo mv /tmp/kind /usr/local/bin/kind
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Run full suite
+        run: ./scripts/run-full-suite.sh
+        env:
+          CLUSTER_NAME: ${{ env.CLUSTER_NAME }}
+          NODE_IMAGE: ${{ env.NODE_IMAGE }}
+          HELM_RELEASE: ${{ env.HELM_RELEASE }}
+          HELM_NAMESPACE: ${{ env.HELM_NAMESPACE }}
+          CONTROLLER_IMAGE_REPOSITORY: ${{ env.CONTROLLER_IMAGE_REPOSITORY }}
+          CONTROLLER_IMAGE_TAG: ${{ env.CONTROLLER_IMAGE_TAG }}
+          HELM_REPO_URL: ${{ env.HELM_REPO_URL }}

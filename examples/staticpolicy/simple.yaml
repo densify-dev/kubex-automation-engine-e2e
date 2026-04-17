@@ -1,0 +1,97 @@
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: sample-automation-strategy
+  namespace: default
+spec:
+  # enablement:
+  #   cpu:
+  #     requests:
+  #       # downsize (default: true)
+  #       downsize: true
+  #       # upsize (default: true)
+  #       upsize: true
+  #       # setFromUnspecified (default: true)
+  #       setFromUnspecified: true
+  #     limits:
+  #       # downsize (default: true)
+  #       downsize: true
+  #       # upsize (default: true)
+  #       upsize: true
+  #       # setFromUnspecified (default: false)
+  #       setFromUnspecified: false
+  #   memory:
+  #     requests:
+  #       # downsize (default: true)
+  #       downsize: true
+  #       # upsize (default: true)
+  #       upsize: true
+  #       # setFromUnspecified (default: true)
+  #       setFromUnspecified: true
+  #     limits:
+  #       # downsize (default: true)
+  #       downsize: true
+  #       # upsize (default: true)
+  #       upsize: true
+  #       # setFromUnspecified (default: true)
+  #       setFromUnspecified: false
+  # inPlaceResize:
+  #   # enabled (default: true)
+  #   enabled: true
+  #   # containerRestart (default: false)
+  #   containerRestart: false
+  podEviction:
+    # enabled (default: true)
+    enabled: false
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: StaticPolicy
+metadata:
+  name: sample-rightsizing-policy
+  namespace: default
+spec:
+  scope:
+    labelSelector:
+      matchLabels:
+        app: rightsizing-demo
+  resources:
+    containers:
+      "*":
+        requests:
+          cpu: 200m
+          memory: 256Mi
+        limits:
+          cpu: 600m
+          memory: 512Mi
+  automationStrategyRef:
+    name: sample-automation-strategy
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rightsizing-demo
+  namespace: default
+  labels:
+    app: rightsizing-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rightsizing-demo
+  template:
+    metadata:
+      labels:
+        app: rightsizing-demo
+    spec:
+      containers:
+        - name: demo
+          image: busybox:1.37
+          command: ["sleep", "3600"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi

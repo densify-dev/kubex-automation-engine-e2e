@@ -1,0 +1,61 @@
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: per-container-automation-strategy
+  namespace: default
+spec: {}
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: StaticPolicy
+metadata:
+  name: per-container-rightsizing-policy
+  namespace: default
+spec:
+  scope:
+    labelSelector:
+      matchLabels:
+        app: per-container-demo
+  resources:
+    containers:
+      "*":
+        requests:
+          cpu: 150m
+      app:
+        requests:
+          cpu: 300m
+          memory: 256Mi
+        limits:
+          cpu: 600m
+          memory: 512Mi
+      sidecar:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+  automationStrategyRef:
+    name: per-container-automation-strategy
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: per-container-demo
+  namespace: default
+  labels:
+    app: per-container-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: per-container-demo
+  template:
+    metadata:
+      labels:
+        app: per-container-demo
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.37
+          command: ["sleep", "3600"]
+        - name: sidecar
+          image: busybox:1.37
+          command: ["sleep", "3600"]

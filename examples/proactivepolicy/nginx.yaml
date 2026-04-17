@@ -1,0 +1,74 @@
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: nginx-automation-strategy
+  namespace: default
+spec:
+  podEviction:
+    enabled: false
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: StaticPolicy
+metadata:
+  name: nginx-static-policy
+  namespace: default
+spec:
+  scope:
+    labelSelector:
+      matchLabels:
+        app: nginx
+  automationStrategyRef:
+    name: nginx-automation-strategy
+  resources:
+    containers:
+      "*":
+        requests:
+          cpu: 400m
+        limits:
+          cpu: 700m
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: ProactivePolicy
+metadata:
+  name: nginx-proactive-policy
+  namespace: default
+spec:
+  scope:
+    labelSelector:
+      matchLabels:
+        app: nginx
+  automationStrategyRef:
+    name: nginx-automation-strategy
+  safetyChecks:
+    maxAnalysisAgeDays: 7
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  namespace: default
+  labels:
+    app: nginx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27.4
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
