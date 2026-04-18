@@ -1,0 +1,56 @@
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: multi-container-automation-strategy
+  namespace: default
+spec:
+  enablement:
+    memory:
+      requests:
+        floor: 128Mi
+        containers:
+          api:
+            floor: 256Mi
+          worker:
+            ceiling: 192Mi
+  podEviction:
+    enabled: true
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: ProactivePolicy
+metadata:
+  name: multi-container-proactive-policy
+  namespace: default
+spec:
+  scope:
+    labelSelector:
+      matchLabels:
+        app: multi-container-demo
+  automationStrategyRef:
+    name: multi-container-automation-strategy
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: multi-container-demo
+  namespace: default
+  labels:
+    app: multi-container-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: multi-container-demo
+  template:
+    metadata:
+      labels:
+        app: multi-container-demo
+    spec:
+      containers:
+        - name: api
+          image: busybox:1.37
+          command: ["sleep", "3600"]
+        - name: worker
+          image: busybox:1.37
+          command: ["sleep", "3600"]

@@ -1,0 +1,6 @@
+pytest
+pytest-xdist
+pytest-timeout
+kubernetes
+PyYAML
+ruff

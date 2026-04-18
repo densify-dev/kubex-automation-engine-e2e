@@ -1,0 +1,91 @@
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: sample-automation-strategy
+  namespace: default
+spec: {}
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: ClusterAutomationStrategy
+metadata:
+  name: sample-cluster-automation-strategy
+spec: {}
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: StaticPolicy
+metadata:
+  name: static-policy-same-order
+  namespace: default
+spec:
+  weight: 51
+  scope:
+    labelSelector:
+      matchLabels:
+        app: rightsizing-demo
+  resources:
+    containers:
+      "*":
+        requests:
+          cpu: 200m
+          memory: 200Mi
+        limits:
+          cpu: 400m
+          memory: 400Mi
+  automationStrategyRef:
+    name: sample-automation-strategy
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: ClusterStaticPolicy
+metadata:
+  name: cluster-policy-same-order
+spec:
+  weight: 50
+  scope:
+    namespaceSelector:
+      operator: In
+      values:
+        - default
+    labelSelector:
+      matchLabels:
+        app: rightsizing-demo
+  resources:
+    containers:
+      "*":
+        requests:
+          cpu: 250m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+  automationStrategyRef:
+    name: sample-cluster-automation-strategy
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rightsizing-demo
+  namespace: default
+  labels:
+    app: rightsizing-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rightsizing-demo
+  template:
+    metadata:
+      labels:
+        app: rightsizing-demo
+    spec:
+      containers:
+        - name: demo
+          image: busybox:1.37
+          command: ["sleep", "3600"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi

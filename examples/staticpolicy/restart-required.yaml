@@ -1,0 +1,89 @@
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: restart-required-strategy
+  namespace: default
+spec:
+  enablement:
+    cpu:
+      requests:
+        downsize: true
+        upsize: true
+        setFromUnspecified: true
+      limits:
+        downsize: true
+        upsize: true
+        setFromUnspecified: true
+    memory:
+      requests:
+        downsize: true
+        upsize: true
+        setFromUnspecified: true
+      limits:
+        downsize: true
+        upsize: true
+        setFromUnspecified: true
+  inPlaceResize:
+    enabled: true
+    # containerRestart: false disables in-place resize when the container requires a restart.
+    containerRestart: false
+  podEviction:
+    enabled: true
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: StaticPolicy
+metadata:
+  name: restart-required-policy
+  namespace: default
+spec:
+  scope:
+    labelSelector:
+      matchLabels:
+        app: restart-required-demo
+  resources:
+    containers:
+      app:
+        requests:
+          cpu: 600m
+          memory: 256Mi
+        limits:
+          cpu: 800m
+          memory: 512Mi
+  automationStrategyRef:
+    name: restart-required-strategy
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: restart-required-demo
+  namespace: default
+  labels:
+    app: restart-required-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: restart-required-demo
+  template:
+    metadata:
+      labels:
+        app: restart-required-demo
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - sleep 3600
+          resources:
+            requests:
+              cpu: 500m
+              memory: 128Mi
+            limits:
+              cpu: 700m
+              memory: 256Mi
+          resizePolicy:
+            - resourceName: cpu
+              restartPolicy: RestartContainer

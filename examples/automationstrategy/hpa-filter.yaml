@@ -1,0 +1,85 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: automationstrategy-hpa
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: hpa-strategy
+  namespace: automationstrategy-hpa
+spec:
+  safetyChecks:
+    enableHpaFilter: true
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: StaticPolicy
+metadata:
+  name: hpa-policy
+  namespace: automationstrategy-hpa
+spec:
+  scope:
+    labelSelector:
+      matchLabels:
+        app: hpa-demo
+  resources:
+    containers:
+      "*":
+        requests:
+          cpu: 300m
+          memory: 384Mi
+        limits:
+          cpu: 800m
+          memory: 768Mi
+  automationStrategyRef:
+    name: hpa-strategy
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hpa-demo
+  namespace: automationstrategy-hpa
+  labels:
+    app: hpa-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hpa-demo
+  template:
+    metadata:
+      labels:
+        app: hpa-demo
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.37
+          command: ["sleep", "3600"]
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 400m
+              memory: 512Mi
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hpa-demo
+  namespace: automationstrategy-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: deployment
+    name: hpa-demo
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50

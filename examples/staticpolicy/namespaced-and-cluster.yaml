@@ -1,0 +1,123 @@
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: sample-automation-strategy
+  namespace: default
+spec: {}
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: ClusterAutomationStrategy
+metadata:
+  name: sample-cluster-automation-strategy
+spec: {}
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: StaticPolicy
+metadata:
+  name: sample-rightsizing-policy
+  namespace: default
+spec:
+  scope:
+    labelSelector:
+      matchLabels:
+        app: rightsizing-demo
+  resources:
+    containers:
+      "*":
+        requests:
+          cpu: 200m
+          memory: 256Mi
+        limits:
+          cpu: 400m
+          memory: 512Mi
+  automationStrategyRef:
+    name: sample-automation-strategy
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: ClusterStaticPolicy
+metadata:
+  name: sample-cluster-scoped-rightsizing-policy
+spec:
+  scope:
+    labelSelector:
+      matchLabels:
+        app: rightsizing-demo
+    namespaceSelector:
+      operator: In
+      values:
+        - "*"
+  resources:
+    containers:
+      "*":
+        requests:
+          cpu: 200m
+          memory: 296Mi
+        limits:
+          cpu: 400m
+          memory: 596Mi
+  automationStrategyRef:
+    name: sample-cluster-automation-strategy
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rightsizing-demo
+  namespace: default
+  labels:
+    app: rightsizing-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rightsizing-demo
+  template:
+    metadata:
+      labels:
+        app: rightsizing-demo
+    spec:
+      containers:
+        - name: demo
+          image: busybox:1.37
+          command: ["sleep", "3600"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: example
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rightsizing-demo
+  namespace: example
+  labels:
+    app: rightsizing-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rightsizing-demo
+  template:
+    metadata:
+      labels:
+        app: rightsizing-demo
+    spec:
+      containers:
+        - name: demo
+          image: busybox:1.37
+          command: ["sleep", "3600"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi

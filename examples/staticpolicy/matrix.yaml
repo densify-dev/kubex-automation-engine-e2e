@@ -1,0 +1,174 @@
+# In-place only, defaults elsewhere
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: ar-inplace-only
+  namespace: default
+spec:
+  inPlaceResize:
+    enabled: true
+    containerRestart: false
+  podEviction:
+    enabled: false
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: StaticPolicy
+metadata:
+  name: sp-inplace-only
+  namespace: default
+spec:
+  scope:
+    labelSelector:
+      matchLabels:
+        app: demo-inplace
+  automationStrategyRef:
+    name: ar-inplace-only
+  resources:
+    containers:
+      "*":
+        requests:
+          cpu: 200m
+          memory: 256Mi
+        limits:
+          cpu: 400m
+          memory: 512Mi
+
+# Eviction only (no in-place)
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: ar-eviction-only
+  namespace: default
+spec:
+  inPlaceResize:
+    enabled: false
+  podEviction:
+    enabled: true
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: StaticPolicy
+metadata:
+  name: sp-eviction-only
+  namespace: default
+spec:
+  scope:
+    labelSelector:
+      matchLabels:
+        app: demo-eviction
+  automationStrategyRef:
+    name: ar-eviction-only
+  resources:
+    containers:
+      "*":
+        requests:
+          cpu: 250m
+          memory: 300Mi
+        limits:
+          cpu: 500m
+          memory: 600Mi
+
+# CPU only, in-place
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: ar-cpu-only
+  namespace: default
+spec:
+  enablement:
+    cpu:
+      requests:
+        downsize: true
+        upsize: true
+        setFromUnspecified: true
+      limits:
+        downsize: true
+        upsize: true
+        setFromUnspecified: true
+    memory:
+      requests:
+        downsize: false
+        upsize: false
+        setFromUnspecified: false
+      limits:
+        downsize: false
+        upsize: false
+        setFromUnspecified: false
+  inPlaceResize:
+    enabled: true
+  podEviction:
+    enabled: false
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: StaticPolicy
+metadata:
+  name: sp-cpu-only
+  namespace: default
+spec:
+  scope:
+    labelSelector:
+      matchLabels:
+        app: demo-cpu
+  automationStrategyRef:
+    name: ar-cpu-only
+  resources:
+    containers:
+      "*":
+        requests:
+          cpu: 300m
+        limits:
+          cpu: 600m
+
+# Memory only, eviction
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: ar-memory-only
+  namespace: default
+spec:
+  enablement:
+    cpu:
+      requests:
+        downsize: false
+        upsize: false
+        setFromUnspecified: false
+      limits:
+        downsize: false
+        upsize: false
+        setFromUnspecified: false
+    memory:
+      requests:
+        downsize: true
+        upsize: true
+        setFromUnspecified: true
+      limits:
+        downsize: true
+        upsize: true
+        setFromUnspecified: true
+  inPlaceResize:
+    enabled: false
+  podEviction:
+    enabled: true
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: StaticPolicy
+metadata:
+  name: sp-memory-only
+  namespace: default
+spec:
+  scope:
+    labelSelector:
+      matchLabels:
+        app: demo-memory
+  automationStrategyRef:
+    name: ar-memory-only
+  resources:
+    containers:
+      "*":
+        requests:
+          memory: 512Mi
+        limits:
+          memory: 1Gi

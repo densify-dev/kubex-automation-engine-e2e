@@ -1,0 +1,105 @@
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: sample-automation-strategy
+  namespace: default
+spec:
+  podEviction:
+    enabled: false
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: StaticPolicy
+metadata:
+  name: sample-memory-rightsizing-policy
+  namespace: default
+spec:
+  scope:
+    labelSelector:
+      matchLabels:
+        app: rightsizing-memory-demo
+  resources:
+    containers:
+      "*":
+        requests:
+          memory: 256Mi
+        limits:
+          memory: 512Mi
+  automationStrategyRef:
+    name: sample-automation-strategy
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: StaticPolicy
+metadata:
+  name: sample-cpu-rightsizing-policy
+  namespace: default
+spec:
+  scope:
+    labelSelector:
+      matchLabels:
+        app: rightsizing-cpu-demo
+  resources:
+    containers:
+      "*":
+        requests:
+          cpu: 200m
+  automationStrategyRef:
+    name: sample-automation-strategy
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rightsizing-memory-demo
+  namespace: default
+  labels:
+    app: rightsizing-memory-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rightsizing-memory-demo
+  template:
+    metadata:
+      labels:
+        app: rightsizing-memory-demo
+    spec:
+      containers:
+        - name: demo
+          image: busybox:1.37
+          command: ["sleep", "3600"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rightsizing-cpu-demo
+  namespace: default
+  labels:
+    app: rightsizing-cpu-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rightsizing-cpu-demo
+  template:
+    metadata:
+      labels:
+        app: rightsizing-cpu-demo
+    spec:
+      containers:
+        - name: demo
+          image: busybox:1.37
+          command: ["sleep", "3600"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi

@@ -1,0 +1,78 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: automationstrategy-bounds-validation
+---
+# Invalid: direct per-container bounds are reversed.
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: bounds-invalid-direct-container-range
+  namespace: automationstrategy-bounds-validation
+spec:
+  enablement:
+    memory:
+      requests:
+        containers:
+          app:
+            floor: 400Mi
+            ceiling: 300Mi
+---
+# Invalid: container floor is above the inherited usage-level ceiling.
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: bounds-invalid-inherited-ceiling
+  namespace: automationstrategy-bounds-validation
+spec:
+  enablement:
+    memory:
+      requests:
+        ceiling: 256Mi
+        containers:
+          app:
+            floor: 300Mi
+---
+# Invalid: container ceiling is below the inherited usage-level floor.
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: bounds-invalid-inherited-floor
+  namespace: automationstrategy-bounds-validation
+spec:
+  enablement:
+    memory:
+      requests:
+        floor: 300Mi
+        containers:
+          app:
+            ceiling: 256Mi
+---
+# Invalid: usage-level bounds are reversed before container overrides are considered.
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: bounds-invalid-usage-range
+  namespace: automationstrategy-bounds-validation
+spec:
+  enablement:
+    cpu:
+      requests:
+        floor: 800m
+        ceiling: 500m
+---
+# Invalid cluster-scoped example: effective floor exceeds effective ceiling because
+# the container inherits the usage-level floor.
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: ClusterAutomationStrategy
+metadata:
+  name: cluster-bounds-invalid-inherited-floor
+spec:
+  enablement:
+    memory:
+      requests:
+        floor: 512Mi
+        containers:
+          app:
+            ceiling: 384Mi

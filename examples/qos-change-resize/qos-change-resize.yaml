@@ -1,0 +1,35 @@
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: qos-change-rule
+  namespace: default
+spec:
+  inPlaceResize:
+    enabled: true
+  podEviction:
+    enabled: true
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: StaticPolicy
+metadata:
+  name: qos-change-policy
+  namespace: default
+spec:
+  automationStrategyRef:
+    name: qos-change-rule
+  scope:
+    labelSelector:
+      matchLabels:
+        app: qos-change-demo
+    workloadTypes:
+      - Deployment
+  resources:
+    containers:
+      "*":
+        requests:
+          cpu: "250m"
+          memory: "256Mi"
+        limits:
+          cpu: "250m"
+          memory: "400Mi"

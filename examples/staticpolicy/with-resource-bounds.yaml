@@ -1,0 +1,73 @@
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: resource-bounds-strategy
+  namespace: default
+spec:
+  enablement:
+    cpu:
+      requests:
+        # Requested policy value is 100m, but floor clamps it to 250m.
+        floor: 250m
+      limits:
+        # Requested policy value is 1500m, but ceiling clamps it to 1000m.
+        ceiling: 1000m
+    memory:
+      requests:
+        # Requested policy value is 64Mi, but floor clamps it to 128Mi.
+        floor: 128Mi
+      limits:
+        # Requested policy value is 2Gi, but ceiling clamps it to 1Gi.
+        ceiling: 1Gi
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: StaticPolicy
+metadata:
+  name: resource-bounds-policy
+  namespace: default
+spec:
+  scope:
+    labelSelector:
+      matchLabels:
+        app: rightsizing-demo-resource-bounds
+  resources:
+    containers:
+      "*":
+        requests:
+          cpu: 100m
+          memory: 64Mi
+        limits:
+          cpu: 1500m
+          memory: 2Gi
+  automationStrategyRef:
+    name: resource-bounds-strategy
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rightsizing-demo-resource-bounds
+  namespace: default
+  labels:
+    app: rightsizing-demo-resource-bounds
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rightsizing-demo-resource-bounds
+  template:
+    metadata:
+      labels:
+        app: rightsizing-demo-resource-bounds
+    spec:
+      containers:
+        - name: demo
+          image: busybox:1.37
+          command: ["sleep", "3600"]
+          resources:
+            requests:
+              cpu: 300m
+              memory: 256Mi
+            limits:
+              cpu: 800m
+              memory: 768Mi
