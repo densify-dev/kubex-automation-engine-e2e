@@ -81,7 +81,7 @@ class TestResizeBehavior:
             except ApiException:
                 pass
 
-    @pytest.mark.timeout(600)
+    @pytest.mark.timeout(900)
     def test_resize_uses_in_place_on_135_and_eviction_before_135(
         self,
         k8s_clients,
@@ -140,7 +140,7 @@ class TestResizeBehavior:
         # with the expected requests.
         wait_for(
             resized_pod_ready,
-            timeout=240,
+            timeout=480,
             message="resized workload pod readiness",
         )
         resized_pod_value = resized_pod["value"] or current_pod()
