@@ -119,8 +119,15 @@ class TestProtectedNamespace:
             updated = get_crd(k8s_clients.custom, "globalconfigurations", "global-config")
             assert "test-protected-*" in updated["spec"]["protectedNamespacePatterns"]
         finally:
-            gc = get_crd(k8s_clients.custom, "globalconfigurations", "global-config")
-            gc["spec"]["protectedNamespacePatterns"] = original
-            k8s_clients.custom.replace_cluster_custom_object(
-                GROUP, VERSION, "globalconfigurations", "global-config", gc
-            )
+            for attempt in range(5):
+                try:
+                    gc = get_crd(k8s_clients.custom, "globalconfigurations", "global-config")
+                    gc["spec"]["protectedNamespacePatterns"] = original
+                    k8s_clients.custom.replace_cluster_custom_object(
+                        GROUP, VERSION, "globalconfigurations", "global-config", gc
+                    )
+                    break
+                except ApiException as e:
+                    if e.status != 409 or attempt == 4:
+                        raise
+                    time.sleep(1)

@@ -119,6 +119,26 @@
       "RecommendedMemRequestBytes": 201326592,
       "RecommendedCpuLimitMCores": 450,
       "RecommendedMemLimitBytes": 402653184
+    },
+    {
+      "Cluster": "local-cluster",
+      "Namespace": "e2e-test",
+      "PodOwnerKind": "Deployment",
+      "PodOwnerName": "e2e-resize-workload",
+      "Container": "app",
+      "EntityId": "entity-e2e-resize",
+      "ContainerId": "container-e2e-resize",
+      "KubexAutomation": "true",
+      "HpaMetricName": "cpu###memory",
+      "AnalyzedOn": "2026-01-29T19:36:50Z",
+      "CurrentCpuRequestMCores": 100,
+      "CurrentMemRequestBytes": 67108864,
+      "CurrentCpuLimitMCores": 400,
+      "CurrentMemLimitBytes": 268435456,
+      "RecommendedCpuRequestMCores": 250,
+      "RecommendedMemRequestBytes": 201326592,
+      "RecommendedCpuLimitMCores": 400,
+      "RecommendedMemLimitBytes": 268435456
     }
   ]
 }
