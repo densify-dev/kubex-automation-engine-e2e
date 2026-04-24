@@ -60,7 +60,7 @@ jobs:
       HELM_RELEASE: kubex-automation-engine
       HELM_NAMESPACE: kubex
       CONTROLLER_IMAGE_REPOSITORY: densify/automation-controller
-      CONTROLLER_IMAGE_TAG: 0.2.1-beta
+      CONTROLLER_IMAGE_TAG: 0.2.1-beta6
       HELM_REPO_URL: ${{ github.event.inputs.controller_chart_repo_url || 'https://densify-dev.github.io/helm-charts' }}
       HELM_CRDS_CHART: charts/kubex-crds
       HELM_CONTROLLER_CHART: charts/kubex-automation-engine
