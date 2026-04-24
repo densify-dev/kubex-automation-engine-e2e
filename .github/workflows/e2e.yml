@@ -1,0 +1,118 @@
+name: E2E Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      controller_image_repository:
+        description: "Docker image repository override for the controller"
+        required: false
+        default: ""
+      controller_image_tag:
+        description: "Docker image tag override for the controller"
+        required: false
+        default: ""
+      controller_chart_repo_url:
+        description: "Helm repo URL that serves the controller charts"
+        required: false
+        default: https://densify-dev.github.io/helm-charts
+      controller_chart_version:
+        description: "Helm chart version override for kubex-automation-engine"
+        required: false
+        default: ""
+      crds_chart_version:
+        description: "Helm chart version override for kubex-crds"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  e2e:
+    name: E2E Tests (${{ matrix.kubernetes.version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        kubernetes:
+          - version: v1.35.0
+            cluster_name: e2e-135
+            with_metrics_server: "true"
+            with_keda: "true"
+            with_vpa: "true"
+          - version: v1.32.0
+            cluster_name: e2e-132
+            with_metrics_server: "true"
+            with_keda: "false"
+            with_vpa: "false"
+    env:
+      # The published e2e branch is self-contained: test/e2e, examples, and local charts.
+      HELM_RELEASE: kubex-automation-engine
+      HELM_NAMESPACE: kubex
+      CONTROLLER_IMAGE_REPOSITORY: densify/automation-controller
+      CONTROLLER_IMAGE_TAG: 0.2.1-beta
+      HELM_REPO_URL: ${{ github.event.inputs.controller_chart_repo_url || 'https://densify-dev.github.io/helm-charts' }}
+      HELM_CRDS_CHART: charts/kubex-crds
+      HELM_CONTROLLER_CHART: charts/kubex-automation-engine
+      HELM_CRDS_CHART_VERSION: ${{ github.event.inputs.crds_chart_version }}
+      HELM_CONTROLLER_CHART_VERSION: ${{ github.event.inputs.controller_chart_version }}
+      CLUSTER_NAME: ${{ matrix.kubernetes.cluster_name }}
+      NODE_IMAGE: kindest/node:${{ matrix.kubernetes.version }}
+      WITH_METRICS_SERVER: ${{ matrix.kubernetes.with_metrics_server }}
+      WITH_KEDA: ${{ matrix.kubernetes.with_keda }}
+      WITH_VPA: ${{ matrix.kubernetes.with_vpa }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python test dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install kind
+        run: |
+          curl -fsSLo /tmp/kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64
+          expected_sha="$(curl -fsSL https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64.sha256sum | awk '{print $1}')"
+          echo "${expected_sha}  /tmp/kind" | sha256sum -c -
+          chmod +x /tmp/kind
+          sudo mv /tmp/kind /usr/local/bin/kind
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.20.2
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Run full suite
+        run: ./scripts/run-full-suite.sh
+        env:
+          CLUSTER_NAME: ${{ env.CLUSTER_NAME }}
+          NODE_IMAGE: ${{ env.NODE_IMAGE }}
+          HELM_RELEASE: ${{ env.HELM_RELEASE }}
+          HELM_NAMESPACE: ${{ env.HELM_NAMESPACE }}
+          CONTROLLER_IMAGE_REPOSITORY: ${{ env.CONTROLLER_IMAGE_REPOSITORY }}
+          CONTROLLER_IMAGE_TAG: ${{ env.CONTROLLER_IMAGE_TAG }}
+          HELM_REPO_URL: ${{ env.HELM_REPO_URL }}
+          HELM_CRDS_CHART: ${{ env.HELM_CRDS_CHART }}
+          HELM_CONTROLLER_CHART: ${{ env.HELM_CONTROLLER_CHART }}
+          HELM_CRDS_CHART_VERSION: ${{ env.HELM_CRDS_CHART_VERSION }}
+          HELM_CONTROLLER_CHART_VERSION: ${{ env.HELM_CONTROLLER_CHART_VERSION }}
+          WITH_METRICS_SERVER: ${{ env.WITH_METRICS_SERVER }}
+          WITH_KEDA: ${{ env.WITH_KEDA }}
+          WITH_VPA: ${{ env.WITH_VPA }}
