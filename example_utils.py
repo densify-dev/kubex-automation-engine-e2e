@@ -11,8 +11,17 @@ import yaml
 
 from helpers import kubectl, wait_for
 
+
+def _discover_repo_root(start: Path) -> Path:
+    for candidate in (start, *start.parents):
+        if (candidate / "examples" / "recommendations.json").is_file():
+            return candidate
+    raise RuntimeError("unable to locate repo root from example_utils.py")
+
+
+REPO_ROOT = _discover_repo_root(Path(__file__).resolve().parent)
 EXAMPLES_ROOT = Path(
-    os.environ.get("EXAMPLES_ROOT", Path(__file__).resolve().parent / "examples")
+    os.environ.get("EXAMPLES_ROOT", REPO_ROOT / "examples")
 ).resolve()
 INVALID_EXAMPLES_ROOT = EXAMPLES_ROOT / "invalid"
 

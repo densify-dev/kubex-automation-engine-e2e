@@ -1,10 +1,9 @@
 """Tests: AutomationStrategy behavior from the mixed-scope example."""
 
-from pathlib import Path
-
 import pytest
 
 from example_utils import (
+    EXAMPLES_ROOT,
     apply_manifest,
     delete_manifest_in_reverse,
     skip_reason,
@@ -16,12 +15,7 @@ from helpers import get_pod_resources, pod_is_ready, wait_for
 class TestStrategyScopeBehavior:
     """Verify the documented namespaced-and-cluster example mutates as expected."""
 
-    MANIFEST_PATH = (
-        Path(__file__).resolve().parents[3]
-        / "examples"
-        / "staticpolicy"
-        / "namespaced-and-cluster.yaml"
-    )
+    MANIFEST_PATH = EXAMPLES_ROOT / "staticpolicy" / "namespaced-and-cluster.yaml"
 
     @pytest.fixture(autouse=True)
     def setup_teardown(self, kube_context):

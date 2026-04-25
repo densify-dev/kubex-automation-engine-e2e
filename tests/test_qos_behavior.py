@@ -1,19 +1,15 @@
 """Tests: controller keeps requests aligned to limits (Guaranteed QoS) on resize."""
 
-from pathlib import Path
-
 import pytest
 
-from example_utils import apply_manifest, delete_manifest_in_reverse
+from example_utils import EXAMPLES_ROOT, apply_manifest, delete_manifest_in_reverse
 from helpers import get_deployment_pod, get_pod_resources, pod_is_ready, wait_for
 
 
 class TestQoSBehavior:
     """Verify the retain-guaranteed-qos example keeps requests aligned to limits after mutation."""
 
-    MANIFEST_PATH = (
-        Path(__file__).resolve().parents[3] / "examples" / "staticpolicy" / "retain-guaranteed-qos.yaml"
-    )
+    MANIFEST_PATH = EXAMPLES_ROOT / "staticpolicy" / "retain-guaranteed-qos.yaml"
     NAMESPACE = "default"
     DEPLOYMENT = "retain-guaranteed-demo"
 

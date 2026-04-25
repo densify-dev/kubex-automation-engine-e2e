@@ -1,11 +1,10 @@
 """Tests: broader AutomationStrategy knob matrix."""
 
-from pathlib import Path
 import time
 
 import pytest
 
-from example_utils import apply_manifest, delete_manifest_in_reverse, skip_reason
+from example_utils import EXAMPLES_ROOT, apply_manifest, delete_manifest_in_reverse, skip_reason
 from helpers import get_pod_resources, pod_is_ready, wait_for
 
 
@@ -16,20 +15,14 @@ class TestStrategyKnobMatrix:
         ("manifest_path", "assertions", "sleep_seconds"),
         [
             (
-                Path(__file__).resolve().parents[3]
-                / "examples"
-                / "automationstrategy"
-                / "vpa-filter-default.yaml",
+                EXAMPLES_ROOT / "automationstrategy" / "vpa-filter-default.yaml",
                 [
                     ("automationstrategy-vpa-default", "vpa-demo", {"app": {"cpu": "200m", "memory": "256Mi", "limits_cpu": "400m", "limits_memory": "512Mi"}}),
                 ],
                 45,
             ),
             (
-                Path(__file__).resolve().parents[3]
-                / "examples"
-                / "automationstrategy"
-                / "limit-range-filter.yaml",
+                EXAMPLES_ROOT / "automationstrategy" / "limit-range-filter.yaml",
                 [
                     (
                         "automationstrategy-limitrange",
@@ -40,10 +33,7 @@ class TestStrategyKnobMatrix:
                 20,
             ),
             (
-                Path(__file__).resolve().parents[3]
-                / "examples"
-                / "automationstrategy"
-                / "pod-limit-range-filter.yaml",
+                EXAMPLES_ROOT / "automationstrategy" / "pod-limit-range-filter.yaml",
                 [
                     (
                         "automationstrategy-podlimitrange",
@@ -67,10 +57,7 @@ class TestStrategyKnobMatrix:
                 20,
             ),
             (
-                Path(__file__).resolve().parents[3]
-                / "examples"
-                / "automationstrategy"
-                / "min-change-thresholds.yaml",
+                EXAMPLES_ROOT / "automationstrategy" / "min-change-thresholds.yaml",
                 [
                     (
                         "automationstrategy-minchange",
@@ -81,10 +68,7 @@ class TestStrategyKnobMatrix:
                 20,
             ),
             (
-                Path(__file__).resolve().parents[3]
-                / "examples"
-                / "automationstrategy"
-                / "min-ready-seconds.yaml",
+                EXAMPLES_ROOT / "automationstrategy" / "min-ready-seconds.yaml",
                 [
                     (
                         "automationstrategy-ready",
@@ -95,10 +79,7 @@ class TestStrategyKnobMatrix:
                 20,
             ),
             (
-                Path(__file__).resolve().parents[3]
-                / "examples"
-                / "automationstrategy"
-                / "node-allocatable-headroom.yaml",
+                EXAMPLES_ROOT / "automationstrategy" / "node-allocatable-headroom.yaml",
                 [
                     (
                         "automationstrategy-node",
@@ -109,10 +90,7 @@ class TestStrategyKnobMatrix:
                 20,
             ),
             (
-                Path(__file__).resolve().parents[3]
-                / "examples"
-                / "staticpolicy"
-                / "namespaced-and-cluster.yaml",
+                EXAMPLES_ROOT / "staticpolicy" / "namespaced-and-cluster.yaml",
                 [
                     (
                         "default",

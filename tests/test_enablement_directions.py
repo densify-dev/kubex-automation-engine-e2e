@@ -1,22 +1,15 @@
 """Tests: AutomationStrategy enablement directions for requests and limits."""
 
-from pathlib import Path
-
 import pytest
 
-from example_utils import apply_manifest, delete_manifest_in_reverse, skip_reason
+from example_utils import EXAMPLES_ROOT, apply_manifest, delete_manifest_in_reverse, skip_reason
 from helpers import get_pod_resources, pod_is_ready, wait_for
 
 
 class TestEnablementDirections:
     """Verify strategy direction knobs block and allow the right mutations."""
 
-    MANIFEST_PATH = (
-        Path(__file__).resolve().parents[3]
-        / "examples"
-        / "staticpolicy"
-        / "enablement-directions.yaml"
-    )
+    MANIFEST_PATH = EXAMPLES_ROOT / "staticpolicy" / "enablement-directions.yaml"
     NAMESPACE = "default"
 
     @pytest.fixture(autouse=True)
