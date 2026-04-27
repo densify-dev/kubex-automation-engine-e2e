@@ -1,15 +1,20 @@
 """Tests: broader AutomationStrategy knob matrix."""
 
+from datetime import datetime
 import time
 
 import pytest
 
 from example_utils import EXAMPLES_ROOT, apply_manifest, delete_manifest_in_reverse, skip_reason
-from helpers import get_pod_resources, pod_is_ready, wait_for
+from helpers import get_crd, get_pod_resources, pod_is_ready, wait_for
 
 
 class TestStrategyKnobMatrix:
     """Verify common strategy knobs keep or change workloads as intended."""
+
+    @staticmethod
+    def _creation_timestamp(value: str) -> datetime:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
     @pytest.mark.parametrize(
         ("manifest_path", "assertions", "sleep_seconds"),
@@ -95,6 +100,38 @@ class TestStrategyKnobMatrix:
                     (
                         "default",
                         "rightsizing-demo",
+                        {"demo": {"cpu": "200m", "memory": "296Mi", "limits_cpu": "400m", "limits_memory": "596Mi"}},
+                    ),
+                    (
+                        "example",
+                        "rightsizing-demo",
+                        {"demo": {"cpu": "200m", "memory": "296Mi", "limits_cpu": "400m", "limits_memory": "596Mi"}},
+                    ),
+                ],
+                20,
+            ),
+            (
+                EXAMPLES_ROOT / "staticpolicy" / "namespaced-and-cluster-namespace-wins.yaml",
+                [
+                    (
+                        "default",
+                        "rightsizing-demo",
+                        {"demo": {"cpu": "200m", "memory": "256Mi", "limits_cpu": "400m", "limits_memory": "512Mi"}},
+                    ),
+                    (
+                        "example",
+                        "rightsizing-demo",
+                        {"demo": {"cpu": "200m", "memory": "296Mi", "limits_cpu": "400m", "limits_memory": "596Mi"}},
+                    ),
+                ],
+                20,
+            ),
+            (
+                EXAMPLES_ROOT / "staticpolicy" / "namespaced-and-cluster-same-weight.yaml",
+                [
+                    (
+                        "default",
+                        "rightsizing-demo",
                         {"demo": {"cpu": "200m", "memory": "256Mi", "limits_cpu": "400m", "limits_memory": "512Mi"}},
                     ),
                     (
@@ -114,6 +151,8 @@ class TestStrategyKnobMatrix:
             "automationstrategy/min-ready-seconds",
             "automationstrategy/node-allocatable-headroom",
             "staticpolicy/namespaced-and-cluster",
+            "staticpolicy/namespaced-and-cluster-namespace-wins",
+            "staticpolicy/namespaced-and-cluster-same-weight",
         ],
     )
     def test_strategy_knobs_keep_expected_behavior(
@@ -130,6 +169,26 @@ class TestStrategyKnobMatrix:
 
         try:
             apply_manifest(manifest_path, kube_context)
+
+            if manifest_path == EXAMPLES_ROOT / "staticpolicy" / "namespaced-and-cluster-same-weight.yaml":
+                def static_policy(namespace: str, name: str):
+                    plural = "staticpolicies" if namespace else "clusterstaticpolicies"
+                    return get_crd(k8s_clients.custom, plural, name, namespace)
+
+                wait_for(
+                    lambda: bool(
+                        static_policy("default", "sample-rightsizing-policy")
+                        and static_policy(None, "sample-cluster-scoped-rightsizing-policy")
+                    ),
+                    timeout=180,
+                    message="same-weight policies to exist",
+                )
+
+                namespaced_policy = static_policy("default", "sample-rightsizing-policy")
+                cluster_policy = static_policy(None, "sample-cluster-scoped-rightsizing-policy")
+                assert self._creation_timestamp(
+                    namespaced_policy["metadata"]["creationTimestamp"]
+                ) < self._creation_timestamp(cluster_policy["metadata"]["creationTimestamp"])
 
             def current_pod(namespace: str, deployment: str):
                 pods = k8s_clients.core.list_namespaced_pod(

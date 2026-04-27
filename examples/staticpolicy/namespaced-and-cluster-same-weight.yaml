@@ -18,7 +18,6 @@ metadata:
   name: sample-rightsizing-policy
   namespace: default
 spec:
-  weight: 0
   scope:
     labelSelector:
       matchLabels:
@@ -40,7 +39,6 @@ kind: ClusterStaticPolicy
 metadata:
   name: sample-cluster-scoped-rightsizing-policy
 spec:
-  weight: 10
   scope:
     labelSelector:
       matchLabels:

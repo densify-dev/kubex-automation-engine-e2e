@@ -39,39 +39,43 @@ This directory has example bundles:
    - Multi-replica Deployment plus PodDisruptionBudget to exercise eviction-based resizing behavior under PDB constraints.
 
 10) `same-order-weight-precedence.yaml`  
-   - PolicyEvaluation gives `StaticPolicy` and `ClusterStaticPolicy` the same priority; weight determines the winner.
+    - PolicyEvaluation gives `StaticPolicy` and `ClusterStaticPolicy` the same priority; weight determines the winner.
 
-11) `wildcard-weight-precedence.yaml`  
-   - Two `StaticPolicy` resources with different weights: a wildcard `*` policy should win over a lower-weight per-container policy.
+11) `namespaced-and-cluster-same-weight.yaml`  
+    - Demonstrates the same namespaced/cluster policy pair with equal weights.
+    - The older policy wins, so `creationTimestamp` determines the effective policy.
 
-12) `with-keda-hpa-filter.yaml`
-   - Assumes KEDA is installed.
-   - Deploys a `ScaledObject` targeting the demo workload so KEDA creates/manages an HPA with non-resource metrics.
-   - Exercises KEDA-aware HPA filtering to block CPU and memory resize actions.
+12) `wildcard-weight-precedence.yaml`  
+    - Two `StaticPolicy` resources with different weights: a wildcard `*` policy should win over a lower-weight per-container policy.
 
-13) `with-resource-bounds.yaml`
-   - Adds `floor`/`ceiling` bounds under `spec.enablement` in `AutomationStrategy`.
-   - Exercises desired-value clamping for CPU/memory requests/limits.
+13) `with-keda-hpa-filter.yaml`
+    - Assumes KEDA is installed.
+    - Deploys a `ScaledObject` targeting the demo workload so KEDA creates/manages an HPA with non-resource metrics.
+    - Exercises KEDA-aware HPA filtering to block CPU and memory resize actions.
 
-14) `cronjob.yaml`
-   - Demonstrates `StaticPolicy` targeting `CronJob` workloads via `scope.workloadTypes`.
-   - Includes a sample CronJob selected by label to show static request/limit recommendations.
+14) `with-resource-bounds.yaml`
+    - Adds `floor`/`ceiling` bounds under `spec.enablement` in `AutomationStrategy`.
+    - Exercises desired-value clamping for CPU/memory requests/limits.
 
-15) `request-exceeds-limit-after-limit-filter.yaml`
-   - Reproduces a filtered-limit scenario:
-     - Pod-level `LimitRange` max filters out desired CPU limit action (`700m`).
-     - Desired CPU request action (`300m`) remains.
-     - Final pre-check blocks resize because request would exceed current effective limit (`200m`).
+15) `cronjob.yaml`
+    - Demonstrates `StaticPolicy` targeting `CronJob` workloads via `scope.workloadTypes`.
+    - Includes a sample CronJob selected by label to show static request/limit recommendations.
 
-16) `in-place-memory-decrease-success.yaml`
-   - Happy-path validation for in-place memory downsize fallback handling.
-   - Uses a Deployment with `256Mi` memory request/limit and a `StaticPolicy` that targets `128Mi`.
-   - Intended to trigger Kubernetes API rejection for memory limit downsize unless resize policy allows restart, then fall back to eviction.
+16) `request-exceeds-limit-after-limit-filter.yaml`
+    - Reproduces a filtered-limit scenario:
+      - Pod-level `LimitRange` max filters out desired CPU limit action (`700m`).
+      - Desired CPU request action (`300m`) remains.
+      - Final pre-check blocks resize because request would exceed current effective limit (`200m`).
 
-17) `in-place-memory-decrease-fail.yaml`
-   - Negative-path validation for non-memory resize API rejection behavior.
-   - Uses `ephemeral-storage` request/limit targets so the in-place resize path hits a different API rejection than the memory-downsize-specific error.
-   - Intended to verify the controller logs the generic in-place failure fallback path.
+17) `in-place-memory-decrease-success.yaml`
+    - Happy-path validation for in-place memory downsize fallback handling.
+    - Uses a Deployment with `256Mi` memory request/limit and a `StaticPolicy` that targets `128Mi`.
+    - Intended to trigger Kubernetes API rejection for memory limit downsize unless resize policy allows restart, then fall back to eviction.
+
+18) `in-place-memory-decrease-fail.yaml`
+    - Negative-path validation for non-memory resize API rejection behavior.
+    - Uses `ephemeral-storage` request/limit targets so the in-place resize path hits a different API rejection than the memory-downsize-specific error.
+    - Intended to verify the controller logs the generic in-place failure fallback path.
 
 Apply examples:
 
@@ -86,6 +90,7 @@ kubectl apply -f examples/staticpolicy/multi-container.yaml
 kubectl apply -f examples/staticpolicy/enablement-directions.yaml
 kubectl apply -f examples/staticpolicy/with-pdb-multi-replica.yaml
 kubectl apply -f examples/staticpolicy/same-order-weight-precedence.yaml
+kubectl apply -f examples/staticpolicy/namespaced-and-cluster-same-weight.yaml
 kubectl apply -f examples/staticpolicy/wildcard-weight-precedence.yaml
 kubectl apply -f examples/staticpolicy/with-keda-hpa-filter.yaml
 kubectl apply -f examples/staticpolicy/with-resource-bounds.yaml

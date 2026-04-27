@@ -45,9 +45,9 @@ class TestStrategyScopeBehavior:
             values = resources["demo"]
             return (
                 values["requests"].get("cpu") == "200m"
-                and values["requests"].get("memory") == "256Mi"
+                and values["requests"].get("memory") == "296Mi"
                 and values["limits"].get("cpu") == "400m"
-                and values["limits"].get("memory") == "512Mi"
+                and values["limits"].get("memory") == "596Mi"
             )
 
         def example_workload_mutated():
