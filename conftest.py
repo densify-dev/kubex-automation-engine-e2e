@@ -9,6 +9,7 @@ from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
 from bootstrap import BootstrapConfig, bootstrap
+from helpers import kubectl_diagnostics
 
 # Make helpers.py importable from tests/ subdirectory
 sys.path.insert(0, os.path.dirname(__file__))
@@ -381,3 +382,46 @@ def test_namespace_setup(k8s_clients, test_namespace):
         k8s_clients.core.delete_namespace(test_namespace)
     except ApiException:
         pass
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    report = outcome.get_result()
+    if report.when != "call" or not report.failed:
+        return
+
+    kube_context = item.funcargs.get("kube_context")
+    test_namespace = item.funcargs.get("test_namespace")
+    controller_namespace = item.funcargs.get("controller_namespace", item.config.getoption("--namespace"))
+    namespaces = []
+
+    for namespace in [controller_namespace, test_namespace]:
+        if namespace and namespace not in namespaces:
+            namespaces.append(namespace)
+
+    if any(
+        marker in item.nodeid
+        for marker in ["test_global_config.py", "test_webhook.py", "test_strategy_behavior.py"]
+    ) and "default" not in namespaces:
+        namespaces.append("default")
+
+    print("=== e2e failure diagnostics ===", flush=True)
+    for namespace in namespaces:
+        print(f"=== namespace: {namespace} ===", flush=True)
+        kubectl_diagnostics("get", "pods", "-n", namespace, "-o", "wide", context=kube_context)
+        kubectl_diagnostics("get", "deployments", "-n", namespace, "-o", "wide", context=kube_context)
+        kubectl_diagnostics("get", "events", "-n", namespace, "--sort-by=.lastTimestamp", context=kube_context)
+        kubectl_diagnostics("describe", "pods", "-n", namespace, context=kube_context)
+        kubectl_diagnostics("describe", "deployments", "-n", namespace, context=kube_context)
+        if namespace == controller_namespace:
+            kubectl_diagnostics(
+                "logs",
+                "-n",
+                namespace,
+                "--selector",
+                "app.kubernetes.io/name=kubex-automation-engine",
+                "--tail=200",
+                "--all-containers",
+                context=kube_context,
+            )

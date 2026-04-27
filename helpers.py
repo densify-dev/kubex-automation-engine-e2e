@@ -38,6 +38,16 @@ def kubectl(*args, context=None, check=True) -> str:
     return result.stdout.strip()
 
 
+def kubectl_diagnostics(*args, context=None) -> None:
+    """Run a kubectl command and stream output without failing the caller."""
+    cmd = ["kubectl"]
+    if context:
+        cmd += ["--context", context]
+    cmd += list(args)
+    print(f"+ {' '.join(cmd)}", flush=True)
+    subprocess.run(cmd, capture_output=False, text=True, check=False)
+
+
 def wait_for(condition_fn, timeout=DEFAULT_TIMEOUT, interval=POLL_INTERVAL, message="condition"):
     """Poll condition_fn until it returns True or timeout expires."""
     deadline = time.time() + timeout
