@@ -6,6 +6,7 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -138,7 +139,6 @@ def install_metrics_server(config: BootstrapConfig) -> None:
         "metrics-server",
         "https://kubernetes-sigs.github.io/metrics-server",
     )
-    run("helm", "repo", "update")
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
         json.dump(
             {
@@ -152,21 +152,34 @@ def install_metrics_server(config: BootstrapConfig) -> None:
         handle.flush()
         values_path = Path(handle.name)
     try:
-        run(
-            "helm",
-            "upgrade",
-            "--install",
-            "metrics-server",
-            "metrics-server/metrics-server",
-            "--kube-context",
-            config.kube_context,
-            "--namespace",
-            "kube-system",
-            "--create-namespace",
-            "--wait",
-            "-f",
-            str(values_path),
-        )
+        last_error: RuntimeError | None = None
+        for attempt in range(1, 4):
+            try:
+                run("helm", "repo", "update")
+                run(
+                    "helm",
+                    "upgrade",
+                    "--install",
+                    "metrics-server",
+                    "metrics-server/metrics-server",
+                    "--kube-context",
+                    config.kube_context,
+                    "--namespace",
+                    "kube-system",
+                    "--create-namespace",
+                    "--wait",
+                    "-f",
+                    str(values_path),
+                )
+                break
+            except RuntimeError as exc:
+                last_error = exc
+                if attempt == 3:
+                    raise
+                print(f"metrics-server install failed on attempt {attempt}; retrying", flush=True)
+                time.sleep(10)
+        if last_error is not None and attempt == 3:
+            raise last_error
     finally:
         values_path.unlink(missing_ok=True)
 
