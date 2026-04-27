@@ -19,10 +19,13 @@ def _discover_repo_root(start: Path) -> Path:
     raise RuntimeError("unable to locate repo root from example_utils.py")
 
 
-REPO_ROOT = _discover_repo_root(Path(__file__).resolve().parent)
-EXAMPLES_ROOT = Path(
-    os.environ.get("EXAMPLES_ROOT", REPO_ROOT / "examples")
-).resolve()
+_EXAMPLES_ROOT_OVERRIDE = os.environ.get("EXAMPLES_ROOT")
+if _EXAMPLES_ROOT_OVERRIDE:
+    EXAMPLES_ROOT = Path(_EXAMPLES_ROOT_OVERRIDE).resolve()
+    REPO_ROOT = EXAMPLES_ROOT.parent
+else:
+    REPO_ROOT = _discover_repo_root(Path(__file__).resolve().parent)
+    EXAMPLES_ROOT = (REPO_ROOT / "examples").resolve()
 INVALID_EXAMPLES_ROOT = EXAMPLES_ROOT / "invalid"
 
 OPTIONAL_API_GROUPS = {
