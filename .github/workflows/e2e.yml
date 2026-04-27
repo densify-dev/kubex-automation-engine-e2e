@@ -59,8 +59,6 @@ jobs:
       # The published e2e branch is self-contained: test/e2e, examples, and local charts.
       HELM_RELEASE: kubex-automation-engine
       HELM_NAMESPACE: kubex
-      CONTROLLER_IMAGE_REPOSITORY: densify/automation-controller
-      CONTROLLER_IMAGE_TAG: 0.2.1-beta6
       HELM_REPO_URL: ${{ github.event.inputs.controller_chart_repo_url || 'https://densify-dev.github.io/helm-charts' }}
       HELM_CRDS_CHART: charts/kubex-crds
       HELM_CONTROLLER_CHART: charts/kubex-automation-engine
@@ -74,6 +72,28 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Load controller image metadata
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          metadata_path = Path("metadata.json")
+          if not metadata_path.is_file():
+              raise SystemExit("metadata.json is required")
+          metadata = json.loads(metadata_path.read_text())
+          env_path = Path(os.environ["GITHUB_ENV"])
+          lines = []
+          if not os.environ.get("CONTROLLER_IMAGE_REPOSITORY"):
+              lines.append(f"CONTROLLER_IMAGE_REPOSITORY={metadata['controller_image_repository']}")
+          if not os.environ.get("CONTROLLER_IMAGE_TAG"):
+              lines.append(f"CONTROLLER_IMAGE_TAG={metadata['controller_image_tag']}")
+          if lines:
+              with env_path.open("a") as handle:
+                  for line in lines:
+                      handle.write(f"{line}\n")
+          PY
 
       - name: Set up Python
         uses: actions/setup-python@v5
