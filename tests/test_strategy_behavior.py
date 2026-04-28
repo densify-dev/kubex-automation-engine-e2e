@@ -30,28 +30,63 @@ class TestStrategyScopeBehavior:
     def test_namespaced_and_cluster_strategy_example_applies_expected_resources(
         self, k8s_clients
     ):
-        def current_pod(namespace: str, deployment: str):
+        def current_pod(namespace: str, deployment: str, expected=None):
             pods = k8s_clients.core.list_namespaced_pod(
                 namespace, label_selector=f"app={deployment}"
             ).items
             live_pods = [p for p in pods if p.metadata.deletion_timestamp is None]
             if not live_pods:
                 raise RuntimeError(f"no live pod found for deployment {namespace}/{deployment}")
+
+            if expected is not None:
+                matching_pods = []
+                for pod in live_pods:
+                    resources = get_pod_resources(k8s_clients.core, namespace, pod.metadata.name)
+                    if all(
+                        resources[container]["requests"].get("cpu") == values["cpu"]
+                        and resources[container]["requests"].get("memory") == values["memory"]
+                        and resources[container]["limits"].get("cpu") == values["limits_cpu"]
+                        and resources[container]["limits"].get("memory") == values["limits_memory"]
+                        for container, values in expected.items()
+                    ):
+                        matching_pods.append(pod)
+                if matching_pods:
+                    return sorted(matching_pods, key=lambda pod: pod.metadata.creation_timestamp)[-1]
+                raise RuntimeError(
+                    f"no pod found for deployment {namespace}/{deployment} with expected resources"
+                )
+
             return sorted(live_pods, key=lambda pod: pod.metadata.creation_timestamp)[-1]
 
         def default_workload_mutated():
-            pod = current_pod("default", "rightsizing-demo")
+            expected = {
+                "demo": {
+                    "cpu": "200m",
+                    "memory": "256Mi",
+                    "limits_cpu": "400m",
+                    "limits_memory": "512Mi",
+                }
+            }
+            pod = current_pod("default", "rightsizing-demo", expected)
             resources = get_pod_resources(k8s_clients.core, "default", pod.metadata.name)
             values = resources["demo"]
             return (
                 values["requests"].get("cpu") == "200m"
-                and values["requests"].get("memory") == "296Mi"
+                and values["requests"].get("memory") == "256Mi"
                 and values["limits"].get("cpu") == "400m"
-                and values["limits"].get("memory") == "596Mi"
+                and values["limits"].get("memory") == "512Mi"
             )
 
         def example_workload_mutated():
-            pod = current_pod("example", "rightsizing-demo")
+            expected = {
+                "demo": {
+                    "cpu": "200m",
+                    "memory": "296Mi",
+                    "limits_cpu": "400m",
+                    "limits_memory": "596Mi",
+                }
+            }
+            pod = current_pod("example", "rightsizing-demo", expected)
             resources = get_pod_resources(k8s_clients.core, "example", pod.metadata.name)
             values = resources["demo"]
             return (

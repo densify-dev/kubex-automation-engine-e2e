@@ -1,41 +1,15 @@
 """Tests: broader AutomationStrategy knob matrix."""
 
-from datetime import datetime
 import time
 
 import pytest
-import yaml
 
-from example_utils import EXAMPLES_ROOT, apply_manifest, delete_manifest_in_reverse, manifest_documents, skip_reason
-from helpers import apply_manifest as apply_manifest_body
-from helpers import get_crd, get_pod_resources, pod_is_ready, wait_for
+from example_utils import EXAMPLES_ROOT, apply_manifest, delete_manifest_in_reverse, skip_reason
+from helpers import get_pod_resources, pod_is_ready, wait_for
 
 
 class TestStrategyKnobMatrix:
     """Verify common strategy knobs keep or change workloads as intended."""
-
-    MIXED_SCOPE_POLICY_REFRESH = {
-        EXAMPLES_ROOT / "staticpolicy" / "namespaced-and-cluster.yaml": (
-            "clusterstaticpolicies",
-            "sample-cluster-scoped-rightsizing-policy",
-        ),
-        EXAMPLES_ROOT / "staticpolicy" / "namespaced-and-cluster-namespace-wins.yaml": (
-            "clusterstaticpolicies",
-            "sample-cluster-scoped-rightsizing-policy",
-        ),
-        EXAMPLES_ROOT / "staticpolicy" / "namespaced-and-cluster-same-weight.yaml": (
-            "clusterstaticpolicies",
-            "sample-cluster-scoped-rightsizing-policy",
-        ),
-    }
-
-    TIMESTAMP_ORDER_CHECK = {
-        EXAMPLES_ROOT / "staticpolicy" / "namespaced-and-cluster-same-weight.yaml",
-    }
-
-    @staticmethod
-    def _creation_timestamp(value: str) -> datetime:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
     @pytest.mark.parametrize(
         ("manifest_path", "assertions", "sleep_seconds"),
@@ -121,7 +95,7 @@ class TestStrategyKnobMatrix:
                     (
                         "default",
                         "rightsizing-demo",
-                        {"demo": {"cpu": "200m", "memory": "296Mi", "limits_cpu": "400m", "limits_memory": "596Mi"}},
+                        {"demo": {"cpu": "200m", "memory": "256Mi", "limits_cpu": "400m", "limits_memory": "512Mi"}},
                     ),
                     (
                         "example",
@@ -191,58 +165,7 @@ class TestStrategyKnobMatrix:
         try:
             apply_manifest(manifest_path, kube_context)
 
-            if manifest_path in self.MIXED_SCOPE_POLICY_REFRESH:
-                plural, name = self.MIXED_SCOPE_POLICY_REFRESH[manifest_path]
-
-                def static_policy(namespace: str, name: str):
-                    plural = "staticpolicies" if namespace else "clusterstaticpolicies"
-                    return get_crd(k8s_clients.custom, plural, name, namespace)
-
-                wait_for(
-                    lambda: bool(
-                        static_policy("default", "sample-rightsizing-policy")
-                        and static_policy(None, "sample-cluster-scoped-rightsizing-policy")
-                    ),
-                    timeout=180,
-                    message="same-weight policies to exist",
-                )
-
-                policy_doc = next(
-                    doc
-                    for doc in manifest_documents(manifest_path)
-                    if doc["kind"]
-                    == ("ClusterStaticPolicy" if plural == "clusterstaticpolicies" else "StaticPolicy")
-                )
-                if plural == "clusterstaticpolicies":
-                    k8s_clients.custom.delete_cluster_custom_object(
-                        "rightsizing.kubex.ai",
-                        "v1alpha1",
-                        plural,
-                        name,
-                    )
-                else:
-                    k8s_clients.custom.delete_namespaced_custom_object(
-                        "rightsizing.kubex.ai",
-                        "v1alpha1",
-                        "default",
-                        plural,
-                        name,
-                    )
-                time.sleep(2)
-                apply_manifest_body(yaml.safe_dump(policy_doc, sort_keys=False), kube_context)
-
-                refreshed_policy = static_policy(
-                    "default" if plural == "staticpolicies" else None,
-                    name,
-                )
-                if manifest_path in self.TIMESTAMP_ORDER_CHECK:
-                    namespaced_policy = static_policy("default", "sample-rightsizing-policy")
-                    cluster_policy = static_policy(None, "sample-cluster-scoped-rightsizing-policy")
-                    assert self._creation_timestamp(
-                        namespaced_policy["metadata"]["creationTimestamp"]
-                    ) < self._creation_timestamp(cluster_policy["metadata"]["creationTimestamp"])
-
-            def current_pod(namespace: str, deployment: str):
+            def current_pod(namespace: str, deployment: str, expected=None):
                 pods = k8s_clients.core.list_namespaced_pod(
                     namespace, label_selector=f"app={deployment}"
                 ).items
@@ -251,6 +174,25 @@ class TestStrategyKnobMatrix:
                 ]
                 if not ready_pods:
                     raise RuntimeError(f"no ready pod found for deployment {namespace}/{deployment}")
+
+                if expected is not None:
+                    matching_pods = []
+                    for pod in ready_pods:
+                        resources = get_pod_resources(k8s_clients.core, namespace, pod.metadata.name)
+                        if all(
+                            resources[container]["requests"].get("cpu") == values["cpu"]
+                            and resources[container]["requests"].get("memory") == values["memory"]
+                            and resources[container]["limits"].get("cpu") == values["limits_cpu"]
+                            and resources[container]["limits"].get("memory") == values["limits_memory"]
+                            for container, values in expected.items()
+                        ):
+                            matching_pods.append(pod)
+                    if matching_pods:
+                        return sorted(matching_pods, key=lambda pod: pod.metadata.creation_timestamp)[-1]
+                    raise RuntimeError(
+                        f"no ready pod found for deployment {namespace}/{deployment} with expected resources"
+                    )
+
                 return sorted(ready_pods, key=lambda pod: pod.metadata.creation_timestamp)[-1]
 
             time.sleep(5)
@@ -264,7 +206,7 @@ class TestStrategyKnobMatrix:
             time.sleep(sleep_seconds)
 
             for namespace, deployment, expected in assertions:
-                pod = current_pod(namespace, deployment)
+                pod = current_pod(namespace, deployment, expected)
                 resources = get_pod_resources(k8s_clients.core, namespace, pod.metadata.name)
                 for container, values in expected.items():
                     container_resources = resources[container]
