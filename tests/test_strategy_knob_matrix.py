@@ -14,6 +14,21 @@ from helpers import get_crd, get_pod_resources, pod_is_ready, wait_for
 class TestStrategyKnobMatrix:
     """Verify common strategy knobs keep or change workloads as intended."""
 
+    MIXED_SCOPE_POLICY_REFRESH = {
+        EXAMPLES_ROOT / "staticpolicy" / "namespaced-and-cluster.yaml": (
+            "clusterstaticpolicies",
+            "sample-cluster-scoped-rightsizing-policy",
+        ),
+        EXAMPLES_ROOT / "staticpolicy" / "namespaced-and-cluster-namespace-wins.yaml": (
+            "staticpolicies",
+            "sample-rightsizing-policy",
+        ),
+        EXAMPLES_ROOT / "staticpolicy" / "namespaced-and-cluster-same-weight.yaml": (
+            "clusterstaticpolicies",
+            "sample-cluster-scoped-rightsizing-policy",
+        ),
+    }
+
     @staticmethod
     def _creation_timestamp(value: str) -> datetime:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -172,7 +187,9 @@ class TestStrategyKnobMatrix:
         try:
             apply_manifest(manifest_path, kube_context)
 
-            if manifest_path == EXAMPLES_ROOT / "staticpolicy" / "namespaced-and-cluster-same-weight.yaml":
+            if manifest_path in self.MIXED_SCOPE_POLICY_REFRESH:
+                plural, name = self.MIXED_SCOPE_POLICY_REFRESH[manifest_path]
+
                 def static_policy(namespace: str, name: str):
                     plural = "staticpolicies" if namespace else "clusterstaticpolicies"
                     return get_crd(k8s_clients.custom, plural, name, namespace)
@@ -186,25 +203,44 @@ class TestStrategyKnobMatrix:
                     message="same-weight policies to exist",
                 )
 
-                cluster_doc = next(
+                policy_doc = next(
                     doc
                     for doc in manifest_documents(manifest_path)
-                    if doc["kind"] == "ClusterStaticPolicy"
+                    if doc["kind"]
+                    == ("ClusterStaticPolicy" if plural == "clusterstaticpolicies" else "StaticPolicy")
                 )
-                k8s_clients.custom.delete_cluster_custom_object(
-                    "rightsizing.kubex.ai",
-                    "v1alpha1",
-                    "clusterstaticpolicies",
-                    "sample-cluster-scoped-rightsizing-policy",
-                )
+                if plural == "clusterstaticpolicies":
+                    k8s_clients.custom.delete_cluster_custom_object(
+                        "rightsizing.kubex.ai",
+                        "v1alpha1",
+                        plural,
+                        name,
+                    )
+                else:
+                    k8s_clients.custom.delete_namespaced_custom_object(
+                        "rightsizing.kubex.ai",
+                        "v1alpha1",
+                        "default",
+                        plural,
+                        name,
+                    )
                 time.sleep(2)
-                apply_manifest_body(yaml.safe_dump(cluster_doc, sort_keys=False), kube_context)
+                apply_manifest_body(yaml.safe_dump(policy_doc, sort_keys=False), kube_context)
 
-                namespaced_policy = static_policy("default", "sample-rightsizing-policy")
-                cluster_policy = static_policy(None, "sample-cluster-scoped-rightsizing-policy")
-                assert self._creation_timestamp(
-                    namespaced_policy["metadata"]["creationTimestamp"]
-                ) < self._creation_timestamp(cluster_policy["metadata"]["creationTimestamp"])
+                refreshed_policy = static_policy(
+                    "default" if plural == "staticpolicies" else None,
+                    name,
+                )
+                if plural == "clusterstaticpolicies":
+                    namespaced_policy = static_policy("default", "sample-rightsizing-policy")
+                    assert self._creation_timestamp(
+                        namespaced_policy["metadata"]["creationTimestamp"]
+                    ) < self._creation_timestamp(refreshed_policy["metadata"]["creationTimestamp"])
+                else:
+                    cluster_policy = static_policy(None, "sample-cluster-scoped-rightsizing-policy")
+                    assert self._creation_timestamp(
+                        refreshed_policy["metadata"]["creationTimestamp"]
+                    ) < self._creation_timestamp(cluster_policy["metadata"]["creationTimestamp"])
 
             def current_pod(namespace: str, deployment: str):
                 pods = k8s_clients.core.list_namespaced_pod(
