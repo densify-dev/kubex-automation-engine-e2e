@@ -20,13 +20,17 @@ class TestStrategyKnobMatrix:
             "sample-cluster-scoped-rightsizing-policy",
         ),
         EXAMPLES_ROOT / "staticpolicy" / "namespaced-and-cluster-namespace-wins.yaml": (
-            "staticpolicies",
-            "sample-rightsizing-policy",
+            "clusterstaticpolicies",
+            "sample-cluster-scoped-rightsizing-policy",
         ),
         EXAMPLES_ROOT / "staticpolicy" / "namespaced-and-cluster-same-weight.yaml": (
             "clusterstaticpolicies",
             "sample-cluster-scoped-rightsizing-policy",
         ),
+    }
+
+    TIMESTAMP_ORDER_CHECK = {
+        EXAMPLES_ROOT / "staticpolicy" / "namespaced-and-cluster-same-weight.yaml",
     }
 
     @staticmethod
@@ -231,15 +235,11 @@ class TestStrategyKnobMatrix:
                     "default" if plural == "staticpolicies" else None,
                     name,
                 )
-                if plural == "clusterstaticpolicies":
+                if manifest_path in self.TIMESTAMP_ORDER_CHECK:
                     namespaced_policy = static_policy("default", "sample-rightsizing-policy")
-                    assert self._creation_timestamp(
-                        namespaced_policy["metadata"]["creationTimestamp"]
-                    ) < self._creation_timestamp(refreshed_policy["metadata"]["creationTimestamp"])
-                else:
                     cluster_policy = static_policy(None, "sample-cluster-scoped-rightsizing-policy")
                     assert self._creation_timestamp(
-                        refreshed_policy["metadata"]["creationTimestamp"]
+                        namespaced_policy["metadata"]["creationTimestamp"]
                     ) < self._creation_timestamp(cluster_policy["metadata"]["creationTimestamp"])
 
             def current_pod(namespace: str, deployment: str):
