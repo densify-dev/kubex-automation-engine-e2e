@@ -177,7 +177,9 @@ class TestStrategyKnobMatrix:
 
                 if expected is not None:
                     matching_pods = []
-                    for pod in ready_pods:
+                    for pod in pods:
+                        if pod.metadata.deletion_timestamp is not None:
+                            continue
                         resources = get_pod_resources(k8s_clients.core, namespace, pod.metadata.name)
                         if all(
                             resources[container]["requests"].get("cpu") == values["cpu"]

@@ -17,6 +17,7 @@ from helpers import get_deployment_resources
 
 
 class TestExampleBehavior:
+    @pytest.mark.timeout(300)
     @pytest.mark.parametrize(
         "manifest_path",
         all_valid_example_manifests(),
