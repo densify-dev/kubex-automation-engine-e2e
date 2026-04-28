@@ -4,8 +4,10 @@ from datetime import datetime
 import time
 
 import pytest
+import yaml
 
-from example_utils import EXAMPLES_ROOT, apply_manifest, delete_manifest_in_reverse, skip_reason
+from example_utils import EXAMPLES_ROOT, apply_manifest, delete_manifest_in_reverse, manifest_documents, skip_reason
+from helpers import apply_manifest as apply_manifest_body
 from helpers import get_crd, get_pod_resources, pod_is_ready, wait_for
 
 
@@ -183,6 +185,20 @@ class TestStrategyKnobMatrix:
                     timeout=180,
                     message="same-weight policies to exist",
                 )
+
+                cluster_doc = next(
+                    doc
+                    for doc in manifest_documents(manifest_path)
+                    if doc["kind"] == "ClusterStaticPolicy"
+                )
+                k8s_clients.custom.delete_cluster_custom_object(
+                    "rightsizing.kubex.ai",
+                    "v1alpha1",
+                    "clusterstaticpolicies",
+                    "sample-cluster-scoped-rightsizing-policy",
+                )
+                time.sleep(2)
+                apply_manifest_body(yaml.safe_dump(cluster_doc, sort_keys=False), kube_context)
 
                 namespaced_policy = static_policy("default", "sample-rightsizing-policy")
                 cluster_policy = static_policy(None, "sample-cluster-scoped-rightsizing-policy")
