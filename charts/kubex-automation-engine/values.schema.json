@@ -41,8 +41,31 @@
         }
       }
     },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
     "podSecurityContext": {
-      "type": "object"
+      "type": "object",
+      "properties": {
+        "fsGroup": {
+          "type": "integer"
+        },
+        "runAsGroup": {
+          "type": "integer"
+        },
+        "runAsUser": {
+          "type": "integer"
+        },
+        "runAsNonRoot": {
+          "type": "boolean"
+        },
+        "seccompProfile": {
+          "type": "object"
+        }
+      }
     },
     "securityContext": {
       "type": "object"
@@ -148,7 +171,7 @@
           "type": "object",
           "properties": {
             "image": {
-              "type": "string"
+              "type": ["string", "null"]
             },
             "labels": {
               "type": "object",

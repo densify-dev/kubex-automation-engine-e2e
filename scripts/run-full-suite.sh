@@ -20,6 +20,9 @@ NODE_IMAGE="${NODE_IMAGE:-kindest/node:v1.35.0}"
 CONTROLLER_IMAGE_REPOSITORY="${CONTROLLER_IMAGE_REPOSITORY:-}"
 CONTROLLER_IMAGE_TAG="${CONTROLLER_IMAGE_TAG:-}"
 CONTROLLER_IMAGE_PULL_POLICY="${CONTROLLER_IMAGE_PULL_POLICY:-IfNotPresent}"
+CLEANUP_IMAGE_REPOSITORY="${CLEANUP_IMAGE_REPOSITORY:-}"
+CLEANUP_IMAGE_TAG="${CLEANUP_IMAGE_TAG:-}"
+CLEANUP_IMAGE_PULL_POLICY="${CLEANUP_IMAGE_PULL_POLICY:-IfNotPresent}"
 RECOMMENDATIONS_FILE="${RECOMMENDATIONS_FILE:-${REPO_ROOT}/examples/recommendations.json}"
 LOAD_KIND_IMAGES="${LOAD_KIND_IMAGES:-}"
 HELM_CRDS_CHART="${HELM_CRDS_CHART:-}"
@@ -119,6 +122,15 @@ bootstrap_cluster() {
   fi
   if [[ -n "$CONTROLLER_IMAGE_TAG" ]]; then
     bootstrap_args+=(--controller-image-tag "$CONTROLLER_IMAGE_TAG")
+  fi
+  if [[ -n "$CLEANUP_IMAGE_REPOSITORY" ]]; then
+    bootstrap_args+=(--cleanup-image-repository "$CLEANUP_IMAGE_REPOSITORY")
+  fi
+  if [[ -n "$CLEANUP_IMAGE_TAG" ]]; then
+    bootstrap_args+=(--cleanup-image-tag "$CLEANUP_IMAGE_TAG")
+  fi
+  if [[ -n "$CLEANUP_IMAGE_PULL_POLICY" ]]; then
+    bootstrap_args+=(--cleanup-image-pull-policy "$CLEANUP_IMAGE_PULL_POLICY")
   fi
   if [[ -n "$NODE_IMAGE" ]]; then
     bootstrap_args+=(--kind-node-image "$NODE_IMAGE")

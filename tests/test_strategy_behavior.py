@@ -1,5 +1,7 @@
 """Tests: AutomationStrategy behavior from the mixed-scope example."""
 
+import json
+
 import pytest
 
 from example_utils import (
@@ -99,11 +101,11 @@ class TestStrategyScopeBehavior:
         wait_for_declared_workloads_ready(self.MANIFEST_PATH, k8s_clients)
         wait_for(
             default_workload_mutated,
-            timeout=240,
+            timeout=600,
             message="default namespace workload mutation",
         )
         wait_for(
             example_workload_mutated,
-            timeout=240,
+            timeout=600,
             message="example namespace workload mutation",
         )

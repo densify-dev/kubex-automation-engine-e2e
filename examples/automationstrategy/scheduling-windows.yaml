@@ -1,0 +1,29 @@
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: maintenance-hours
+  namespace: default
+spec:
+  inPlaceResize:
+    enabled: true
+  podEviction:
+    enabled: true
+  scheduling:
+    inclusionWindows:
+      - name: weekday-maintenance
+        timezone: UTC
+        weekdays:
+          - Mon
+          - Tue
+          - Wed
+          - Thu
+          - Fri
+        start: "01:00"
+        end: "05:00"
+    exclusionWindows:
+      - name: release-freeze
+        timezone: Europe/London
+        weekdays:
+          - Friday
+        start: "16:00"
+        end: "18:00"

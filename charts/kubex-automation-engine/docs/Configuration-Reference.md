@@ -96,6 +96,7 @@ Note: `kubexCredentials.userSecretName` is currently not consumed by this chart.
 | `replicaCount` | `1` | Controller replica count |
 | `image.repository` | `densify/automation-controller` | Controller image |
 | `image.tag` | `0.1-beta20` | Controller image tag |
+| `imagePullSecrets` | `[]` | Secrets applied to the controller Deployment and cleanup Job pod specs |
 | `gateway.image.repository` | `densify/automation-gateway` | Gateway sidecar image |
 | `createSecrets` | `true` | Create required gateway and TLS secrets |
 | `webhook.enabled` | `true` | Enable webhook components |
@@ -103,6 +104,7 @@ Note: `kubexCredentials.userSecretName` is currently not consumed by this chart.
 | `selfSignedCert.validity` | `3650` | Self-signed certificate validity in days |
 | `controllerManager.globalConfigReconcileInterval` | `1m` | Base reconcile cadence for global config controller |
 | `kubex.requestTimeout` | `30s` | Kubex API request timeout |
+| `podSecurityContext` | chart default | Pod-level security context for the controller Deployment; defaults to `65534` for `runAsUser`, `runAsGroup`, and `fsGroup`, plus `runAsNonRoot=true` and `seccompProfile.type=RuntimeDefault` |
 | `openshift.enabled` | `false` | Enable OpenShift-oriented pod security context defaults and cleanup job settings without changing the default Kubernetes installation path |
 | `openshift.fsGroup` | `null` | Optional `fsGroup` applied when `openshift.enabled=true` unless already set in `podSecurityContext` |
 | `gateway.securityContext` | chart default | Gateway sidecar container security context |

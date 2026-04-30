@@ -28,6 +28,9 @@ class BootstrapConfig:
     controller_image_repository: str | None = None
     controller_image_tag: str | None = None
     controller_image_pull_policy: str = "IfNotPresent"
+    cleanup_image_repository: str | None = None
+    cleanup_image_tag: str | None = None
+    cleanup_image_pull_policy: str = "IfNotPresent"
     kind_node_image: str | None = None
     install_controller: bool = True
     install_metrics_server: bool = True
@@ -136,6 +139,7 @@ def install_metrics_server(config: BootstrapConfig) -> None:
         "helm",
         "repo",
         "add",
+        "--force-update",
         "metrics-server",
         "https://kubernetes-sigs.github.io/metrics-server",
     )
@@ -152,7 +156,6 @@ def install_metrics_server(config: BootstrapConfig) -> None:
         handle.flush()
         values_path = Path(handle.name)
     try:
-        last_error: RuntimeError | None = None
         for attempt in range(1, 4):
             try:
                 run("helm", "repo", "update")
@@ -171,21 +174,18 @@ def install_metrics_server(config: BootstrapConfig) -> None:
                     "-f",
                     str(values_path),
                 )
-                break
+                return
             except RuntimeError as exc:
-                last_error = exc
                 if attempt == 3:
                     raise
                 print(f"metrics-server install failed on attempt {attempt}; retrying", flush=True)
                 time.sleep(10)
-        if last_error is not None and attempt == 3:
-            raise last_error
     finally:
         values_path.unlink(missing_ok=True)
 
 
 def install_keda(config: BootstrapConfig) -> None:
-    run("helm", "repo", "add", "kedacore", "https://kedacore.github.io/charts")
+    run("helm", "repo", "add", "--force-update", "kedacore", "https://kedacore.github.io/charts")
     run("helm", "repo", "update")
     run(
         "helm",
@@ -288,12 +288,75 @@ DNS.4 = vpa-webhook.kube-system.svc.cluster.local
 
 
 def load_kind_images(config: BootstrapConfig) -> None:
-    images = ["densify/kubex-automation-cleanup:0.1.2"]
+    images = []
+    if config.cleanup_image_repository and config.cleanup_image_tag:
+        images.append(f"{config.cleanup_image_repository}:{config.cleanup_image_tag}")
+    else:
+        images.append("densify/kubex-automation-cleanup:0.1.2")
     if config.controller_image_repository and config.controller_image_tag:
         images.append(f"{config.controller_image_repository}:{config.controller_image_tag}")
 
     for image in images:
-        run("kind", "load", "docker-image", image, "--name", config.kind_cluster_name)
+        try:
+            run("kind", "load", "docker-image", image, "--name", config.kind_cluster_name)
+        except RuntimeError as err:
+            print(
+                f"kind load failed for {image}; falling back to direct ctr import: {err}",
+                flush=True,
+            )
+            _import_kind_image_via_ctr(config.kind_cluster_name, image)
+
+
+def _import_kind_image_via_ctr(kind_cluster_name: str, image: str) -> None:
+    nodes = run(
+        "docker",
+        "ps",
+        "--filter",
+        f"label=io.x-k8s.kind.cluster={kind_cluster_name}",
+        "--format",
+        "{{.Names}}",
+        capture_output=True,
+    ).stdout.splitlines()
+    if not nodes:
+        raise RuntimeError(f"no Kind nodes found for cluster {kind_cluster_name}")
+
+    for node in nodes:
+        print(f"+ docker save {image} | docker exec -i {node} ctr -n=k8s.io images import --all-platforms -", flush=True)
+        docker_save = subprocess.Popen(
+            ["docker", "save", image],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=False,
+        )
+        docker_exec = subprocess.Popen(
+            [
+                "docker",
+                "exec",
+                "-i",
+                node,
+                "ctr",
+                "-n=k8s.io",
+                "images",
+                "import",
+                "--all-platforms",
+                "-",
+            ],
+            stdin=docker_save.stdout,
+            stdout=sys.stdout,
+            stderr=sys.stderr,
+            text=False,
+        )
+        assert docker_save.stdout is not None
+        docker_save.stdout.close()
+        docker_exec_return = docker_exec.wait()
+        _, docker_save_stderr = docker_save.communicate()
+        if docker_save.returncode != 0:
+            detail = docker_save_stderr.decode(errors="replace")
+            raise RuntimeError(f"docker save failed for {image} (exit {docker_save.returncode})\n{detail}")
+        if docker_exec_return != 0:
+            raise RuntimeError(
+                f"ctr images import failed for {image} on node {node} (exit {docker_exec_return})"
+            )
 
 
 def _chart_is_local(chart_ref: str) -> bool:
@@ -332,6 +395,13 @@ def _controller_values(config: BootstrapConfig) -> dict:
             "fileName": "recommendations.json",
         }
         values["globalConfiguration"] = {"suppressFetchRecommendations": True}
+        values["gateway"] = {
+            "image": {
+                "repository": "registry.k8s.io/pause",
+                "tag": "3.10",
+                "pullPolicy": "IfNotPresent",
+            }
+        }
     if config.controller_image_repository or config.controller_image_tag:
         if not (config.controller_image_repository and config.controller_image_tag):
             raise RuntimeError("controller image repository and tag must be set together")
@@ -339,6 +409,16 @@ def _controller_values(config: BootstrapConfig) -> dict:
             "repository": config.controller_image_repository,
             "tag": config.controller_image_tag,
             "pullPolicy": config.controller_image_pull_policy,
+        }
+    if config.cleanup_image_repository or config.cleanup_image_tag:
+        if not (config.cleanup_image_repository and config.cleanup_image_tag):
+            raise RuntimeError("cleanup image repository and tag must be set together")
+        values["cleanup"] = {
+            "image": {
+                "repository": config.cleanup_image_repository,
+                "tag": config.cleanup_image_tag,
+                "pullPolicy": config.cleanup_image_pull_policy,
+            }
         }
     return values
 
@@ -358,7 +438,7 @@ def controller_values_file(config: BootstrapConfig):
 
 def install_controller(config: BootstrapConfig) -> None:
     if not (_chart_is_local(config.helm_crds_chart) and _chart_is_local(config.helm_controller_chart)):
-        run("helm", "repo", "add", config.helm_repo_name, config.helm_repo_url)
+        run("helm", "repo", "add", "--force-update", config.helm_repo_name, config.helm_repo_url)
         run("helm", "repo", "update")
     ensure_namespace(config)
     ensure_recommendations_configmap(config)
@@ -376,7 +456,6 @@ def install_controller(config: BootstrapConfig) -> None:
         "--wait",
     )
     with controller_values_file(config) as values_file:
-        post_renderer = Path(__file__).resolve().parent / "helm_post_renderer.py"
         try:
             run(
                 "helm",
@@ -394,10 +473,6 @@ def install_controller(config: BootstrapConfig) -> None:
                 "--create-namespace",
                 "-f",
                 str(values_file),
-                "--post-renderer",
-                sys.executable,
-                "--post-renderer-args",
-                str(post_renderer),
                 "--wait",
                 "--timeout",
                 "10m0s",
@@ -442,6 +517,8 @@ def install_controller(config: BootstrapConfig) -> None:
             raise
 
 
+
+
 def bootstrap(config: BootstrapConfig) -> None:
     ensure_kind_cluster(config)
     if config.load_kind_images:
@@ -471,6 +548,9 @@ def parse_args() -> BootstrapConfig:
     parser.add_argument("--controller-image-repository")
     parser.add_argument("--controller-image-tag")
     parser.add_argument("--controller-image-pull-policy", default="IfNotPresent")
+    parser.add_argument("--cleanup-image-repository")
+    parser.add_argument("--cleanup-image-tag")
+    parser.add_argument("--cleanup-image-pull-policy", default="IfNotPresent")
     parser.add_argument("--recommendations-file")
     parser.add_argument("--kind-node-image", default="kindest/node:v1.35.0")
     parser.add_argument("--load-kind-images", action="store_true")
@@ -493,6 +573,9 @@ def parse_args() -> BootstrapConfig:
         controller_image_repository=args.controller_image_repository,
         controller_image_tag=args.controller_image_tag,
         controller_image_pull_policy=args.controller_image_pull_policy,
+        cleanup_image_repository=args.cleanup_image_repository,
+        cleanup_image_tag=args.cleanup_image_tag,
+        cleanup_image_pull_policy=args.cleanup_image_pull_policy,
         recommendations_file=args.recommendations_file,
         kind_node_image=args.kind_node_image,
         load_kind_images=args.load_kind_images,

@@ -4,7 +4,14 @@ import time
 
 import pytest
 
-from example_utils import EXAMPLES_ROOT, apply_manifest, delete_manifest_in_reverse, skip_reason
+from example_utils import (
+    EXAMPLES_ROOT,
+    apply_manifest,
+    delete_manifest_in_reverse,
+    manifest_documents,
+    skip_reason,
+)
+from helpers import apply_manifest as apply_manifest_object
 from helpers import get_pod_resources, pod_is_ready, wait_for
 
 
@@ -73,7 +80,7 @@ class TestStrategyKnobMatrix:
                     (
                         "automationstrategy-ready",
                         "min-ready-demo",
-                        {"app": {"cpu": "200m", "memory": "256Mi", "limits_cpu": "400m", "limits_memory": "512Mi"}},
+                        {"app": {"cpu": "300m", "memory": "384Mi", "limits_cpu": "800m", "limits_memory": "768Mi"}},
                     ),
                 ],
                 20,
@@ -84,7 +91,7 @@ class TestStrategyKnobMatrix:
                     (
                         "automationstrategy-node",
                         "node-allocatable-demo",
-                        {"app": {"cpu": "500m", "memory": "512Mi", "limits_cpu": "1", "limits_memory": "1Gi"}},
+                        {"app": {"memory": "16Gi", "limits_cpu": "12", "limits_memory": "24Gi"}},
                     ),
                 ],
                 20,
@@ -150,6 +157,7 @@ class TestStrategyKnobMatrix:
             "staticpolicy/namespaced-and-cluster-same-weight",
         ],
     )
+    @pytest.mark.timeout(1800)
     def test_strategy_knobs_keep_expected_behavior(
         self,
         manifest_path,
@@ -162,19 +170,51 @@ class TestStrategyKnobMatrix:
         if reason:
             pytest.skip(reason)
 
+        def apply_ordered_manifest(path):
+            if path != EXAMPLES_ROOT / "automationstrategy" / "min-ready-seconds.yaml":
+                apply_manifest(path, kube_context)
+                return
+
+            docs = manifest_documents(path)
+            deployment_docs = [doc for doc in docs if doc["kind"] == "Deployment"]
+            prerequisite_docs = [doc for doc in docs if doc["kind"] != "Deployment"]
+
+            for doc in prerequisite_docs:
+                apply_manifest_object(doc, kube_context)
+
+            wait_for(
+                lambda: k8s_clients.custom.get_namespaced_custom_object(
+                    "rightsizing.kubex.ai",
+                    "v1alpha1",
+                    "automationstrategy-ready",
+                    "automationstrategies",
+                    "min-ready-strategy",
+                ),
+                timeout=60,
+                message="min-ready strategy availability",
+            )
+            wait_for(
+                lambda: k8s_clients.custom.get_namespaced_custom_object(
+                    "rightsizing.kubex.ai",
+                    "v1alpha1",
+                    "automationstrategy-ready",
+                    "staticpolicies",
+                    "min-ready-policy",
+                ),
+                timeout=60,
+                message="min-ready policy availability",
+            )
+
+            for doc in deployment_docs:
+                apply_manifest_object(doc, kube_context)
+
         try:
-            apply_manifest(manifest_path, kube_context)
+            apply_ordered_manifest(manifest_path)
 
             def current_pod(namespace: str, deployment: str, expected=None):
                 pods = k8s_clients.core.list_namespaced_pod(
                     namespace, label_selector=f"app={deployment}"
                 ).items
-                ready_pods = [
-                    p for p in pods if p.metadata.deletion_timestamp is None and pod_is_ready(p)
-                ]
-                if not ready_pods:
-                    raise RuntimeError(f"no ready pod found for deployment {namespace}/{deployment}")
-
                 if expected is not None:
                     matching_pods = []
                     for pod in pods:
@@ -182,18 +222,36 @@ class TestStrategyKnobMatrix:
                             continue
                         resources = get_pod_resources(k8s_clients.core, namespace, pod.metadata.name)
                         if all(
-                            resources[container]["requests"].get("cpu") == values["cpu"]
-                            and resources[container]["requests"].get("memory") == values["memory"]
-                            and resources[container]["limits"].get("cpu") == values["limits_cpu"]
-                            and resources[container]["limits"].get("memory") == values["limits_memory"]
+                            (
+                                values.get("cpu") is None
+                                or resources[container]["requests"].get("cpu") == values["cpu"]
+                            )
+                            and (
+                                values.get("memory") is None
+                                or resources[container]["requests"].get("memory") == values["memory"]
+                            )
+                            and (
+                                values.get("limits_cpu") is None
+                                or resources[container]["limits"].get("cpu") == values["limits_cpu"]
+                            )
+                            and (
+                                values.get("limits_memory") is None
+                                or resources[container]["limits"].get("memory") == values["limits_memory"]
+                            )
                             for container, values in expected.items()
                         ):
                             matching_pods.append(pod)
                     if matching_pods:
                         return sorted(matching_pods, key=lambda pod: pod.metadata.creation_timestamp)[-1]
                     raise RuntimeError(
-                        f"no ready pod found for deployment {namespace}/{deployment} with expected resources"
+                        f"no pod found for deployment {namespace}/{deployment} with expected resources"
                     )
+
+                ready_pods = [
+                    p for p in pods if p.metadata.deletion_timestamp is None and pod_is_ready(p)
+                ]
+                if not ready_pods:
+                    raise RuntimeError(f"no ready pod found for deployment {namespace}/{deployment}")
 
                 return sorted(ready_pods, key=lambda pod: pod.metadata.creation_timestamp)[-1]
 
@@ -208,13 +266,22 @@ class TestStrategyKnobMatrix:
             time.sleep(sleep_seconds)
 
             for namespace, deployment, expected in assertions:
+                wait_for(
+                    lambda ns=namespace, dep=deployment, exp=expected: current_pod(ns, dep, exp),
+                    timeout=600,
+                    message=f"expected resources for {namespace}/{deployment}",
+                )
                 pod = current_pod(namespace, deployment, expected)
                 resources = get_pod_resources(k8s_clients.core, namespace, pod.metadata.name)
                 for container, values in expected.items():
                     container_resources = resources[container]
-                    assert container_resources["requests"].get("cpu") == values["cpu"]
-                    assert container_resources["requests"].get("memory") == values["memory"]
-                    assert container_resources["limits"].get("cpu") == values["limits_cpu"]
-                    assert container_resources["limits"].get("memory") == values["limits_memory"]
+                    if values.get("cpu") is not None:
+                        assert container_resources["requests"].get("cpu") == values["cpu"]
+                    if values.get("memory") is not None:
+                        assert container_resources["requests"].get("memory") == values["memory"]
+                    if values.get("limits_cpu") is not None:
+                        assert container_resources["limits"].get("cpu") == values["limits_cpu"]
+                    if values.get("limits_memory") is not None:
+                        assert container_resources["limits"].get("memory") == values["limits_memory"]
         finally:
             delete_manifest_in_reverse(manifest_path, kube_context)

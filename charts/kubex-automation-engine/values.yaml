@@ -4,7 +4,7 @@ crdCheck:
   skip: false
   # Minimum version of the kubex-crds chart required before this chart can be installed/upgraded.
   # Bump this whenever a new CRD field or schema change is required.
-  minCRDsHelmVersion: "0.1.1"
+  minCRDsHelmVersion: "0.2.1"
 # -- Whether to create the kubex-gateway-config Secret automatically
 createSecrets: true
 
@@ -44,14 +44,17 @@ image:
   # -- Image pull policy
   pullPolicy: IfNotPresent
   # -- Image tag
-  tag: "0.1.3"
+  tag: "0.2.1"
+
+# -- Image pull secrets applied to the controller deployment and cleanup job
+imagePullSecrets: []
 
 cleanup:
   image:
     # -- Image repository for the pre-delete cleanup job.
     repository: "densify/kubex-automation-cleanup"
     # -- Image tag for the pre-delete cleanup job.
-    tag: "0.1.2"
+    tag: "0.2.1"
     # -- Image pull policy for the pre-delete cleanup job.
     pullPolicy: "IfNotPresent"
   # -- Optional pod security context for the pre-delete cleanup job
@@ -85,8 +88,7 @@ podAnnotations:
   kubectl.kubernetes.io/default-container: manager
 
 # -- Labels to add to the controller manager pod
-podLabels:
-  control-plane: controller-manager
+podLabels: {}
 
 # Platform-specific compatibility settings
 openshift:
@@ -100,6 +102,9 @@ openshift:
   supplementalGroups: []
 
 podSecurityContext:
+  fsGroup: 65534
+  runAsGroup: 65534
+  runAsUser: 65534
   runAsNonRoot: true
   seccompProfile:
     type: RuntimeDefault
@@ -293,7 +298,8 @@ globalConfiguration:
   # -- Dry-run pod configuration used for webhook health checks
   webhookProbe:
     # -- Container image used by the webhook probe pod. Defaults to the controller image.
-    image: ""
+    # Leave unset (null) to automatically use the controller image
+    image:
     # -- Additional labels applied to the webhook probe pod.
     labels: {}
     # -- Additional annotations applied to the webhook probe pod.

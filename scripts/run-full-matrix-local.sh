@@ -15,9 +15,13 @@ NEWER_NODE_IMAGE="${NEWER_NODE_IMAGE:-kindest/node:${NEWER_VERSION}}"
 OLDER_NODE_IMAGE="${OLDER_NODE_IMAGE:-kindest/node:${OLDER_VERSION}}"
 
 IMG="${IMG:-densify/automation-controller:latest}"
+CLEANUP_IMG="${CLEANUP_IMG:-registry.automation-controller.local:32000/kubex-cleanup:latest}"
 
 if [[ "$IMG" != *:* ]]; then
   IMG="${IMG}:latest"
+fi
+if [[ "$CLEANUP_IMG" != *:* ]]; then
+  CLEANUP_IMG="${CLEANUP_IMG}:latest"
 fi
 
 run_suite() {
@@ -42,12 +46,14 @@ run_suite() {
     HELM_REPO_URL="" \
     CONTROLLER_IMAGE_REPOSITORY="${IMG%:*}" \
     CONTROLLER_IMAGE_TAG="${IMG##*:}" \
+    CLEANUP_IMAGE_REPOSITORY="${CLEANUP_IMG%:*}" \
+    CLEANUP_IMAGE_TAG="${CLEANUP_IMG##*:}" \
     LOAD_KIND_IMAGES=true \
     "${E2E_ROOT}/scripts/run-full-suite.sh"
 }
 
 echo "==> Building local controller images"
-make -C "${CONTROLLER_ROOT}" docker-build docker-build-cleanup IMG="${IMG}"
+make -C "${CONTROLLER_ROOT}" docker-build docker-build-cleanup IMG="${IMG}" CLEANUP_IMG="${CLEANUP_IMG}"
 
 echo "==> Running the full Kind version matrix"
 run_suite "kubernetes-${NEWER_VERSION}" "${NEWER_CLUSTER_NAME}" "${NEWER_NODE_IMAGE}"

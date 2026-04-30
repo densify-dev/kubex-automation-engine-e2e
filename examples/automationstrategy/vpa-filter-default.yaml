@@ -76,4 +76,4 @@ spec:
     name: vpa-demo
   updatePolicy:
     updateMode: Auto
-  # No resourcePolicy => defaults to all containers, CPU+memory
+  # No resourcePolicy => VPA defaults to all containers, CPU+memory once recommendations are available
