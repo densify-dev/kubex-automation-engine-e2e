@@ -12,6 +12,7 @@ from helpers import (
     automation_strategy_manifest,
     create_deployment,
     delete_deployment,
+    delete_hpa,
     get_crd,
     get_deployment_pod,
     get_pod_resources,
@@ -123,9 +124,11 @@ class TestHPAFilter:
         )
 
     def test_memory_resize_blocked_when_memory_hpa_present(self, k8s_clients, test_namespace):
-        client.AutoscalingV2Api().delete_namespaced_horizontal_pod_autoscaler(
-            self.HPA_NAME, test_namespace
-        )
+        # Replace the CPU-based HPA with a memory-based one.  Use delete_hpa()
+        # so we block until the object is fully gone before recreating it with
+        # the same name — a bare delete is asynchronous and can cause an
+        # AlreadyExists error on the subsequent create.
+        delete_hpa(test_namespace, self.HPA_NAME)
         hpa = client.V2HorizontalPodAutoscaler(
             metadata=client.V1ObjectMeta(name=self.HPA_NAME, namespace=test_namespace),
             spec=client.V2HorizontalPodAutoscalerSpec(

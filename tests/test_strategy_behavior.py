@@ -14,11 +14,11 @@ from example_utils import (
 )
 from helpers import (
     GROUP,
+    STATIC_POLICY_ANNOTATION,
     VERSION,
     create_deployment,
     delete_deployment,
     get_pod_resources,
-    pod_is_ready,
     static_policy_manifest,
     wait_for,
 )
@@ -178,7 +178,7 @@ class TestStrategySchedulingBehavior:
             },
         }
 
-    @pytest.mark.timeout(600)
+    @pytest.mark.timeout(900)
     def test_scheduling_exclusion_window_blocks_runtime_resize(self, k8s_clients):
         k8s_clients.custom.create_namespaced_custom_object(
             GROUP,
@@ -229,5 +229,72 @@ class TestStrategySchedulingBehavior:
                 and resources["requests"].get("memory") == "64Mi"
             )
 
+        def deployment_has_static_policy_annotation():
+            try:
+                dep = k8s_clients.apps.read_namespaced_deployment(self.DEPLOYMENT, self.NAMESPACE)
+                return bool(
+                    dep.metadata.annotations
+                    and STATIC_POLICY_ANNOTATION in dep.metadata.annotations
+                )
+            except ApiException:
+                return False
+
+        # Wait until the StaticPolicy reconciler has written the desired-resource
+        # annotation to the Deployment.  This is the correct readiness gate for
+        # StaticPolicy workloads: RIGHTSIZING_ANNOTATION
+        # ("automation-webhook.kubex.ai/pod-rightsizing-info") is only written by
+        # the webhook at pod admission time and will never appear on a pod that was
+        # admitted before the policy existed.  The Deployment-level annotation
+        # "static.rightsizing.kubex.ai/desired-resource-requests" is written by
+        # policy_reconciler as soon as the StaticPolicy is reconciled and global
+        # config is ready (including the admission webhook probe).  The 180 s
+        # budget covers: controller leader-election (~30 s), global-config reconcile
+        # (~10 s requeue), webhook probe completion (~60 s on fresh clusters), and
+        # the policy reconcile itself.
+        wait_for(
+            deployment_has_static_policy_annotation,
+            timeout=180,
+            message="static policy annotation on deployment",
+        )
+
         time.sleep(20)
         assert resources_unchanged(), "resize should remain blocked by the active exclusion window"
+
+        # ── Phase 2: open the scheduling window and verify the deferred resize lands ──
+        # Switch the strategy from an always-blocked exclusion window to an
+        # always-open inclusion window.  The controller watches AutomationStrategy
+        # changes and re-enqueues affected pods; with resizeRetryInterval=5s the
+        # resize should arrive well within the budget below.
+        for attempt in range(5):
+            try:
+                existing = k8s_clients.custom.get_namespaced_custom_object(
+                    GROUP, VERSION, self.NAMESPACE, "automationstrategies", self.STRATEGY_NAME
+                )
+                open_strategy = self._strategy(self.STRATEGY_NAME, self.NAMESPACE, blocked=False)
+                open_strategy["metadata"]["resourceVersion"] = existing["metadata"]["resourceVersion"]
+                k8s_clients.custom.replace_namespaced_custom_object(
+                    GROUP,
+                    VERSION,
+                    self.NAMESPACE,
+                    "automationstrategies",
+                    self.STRATEGY_NAME,
+                    open_strategy,
+                )
+                break
+            except ApiException as exc:
+                if exc.status != 409 or attempt == 4:
+                    raise
+                time.sleep(1)
+
+        def resources_resized():
+            resources = latest_live_pod_resources()["app"]
+            return (
+                resources["requests"].get("cpu") == "150m"
+                and resources["requests"].get("memory") == "96Mi"
+            )
+
+        wait_for(
+            resources_resized,
+            timeout=450,
+            message="deferred resize applied after scheduling window opens",
+        )

@@ -96,6 +96,12 @@ class TestStrategyKnobMatrix:
                     (
                         "automationstrategy-node",
                         "node-allocatable-demo",
+                        # cpu is intentionally omitted: when the pod is created on a
+                        # fresh cluster the webhook may not yet have rightsizing
+                        # annotations and the pod schedules with the original 500m;
+                        # NodeCapacityFilter then blocks the cpu upsize at runtime
+                        # because the node lacks 50% headroom above 8 CPUs.  Either
+                        # way, the resize we CAN reliably assert is memory + limits.
                         {"app": {"memory": "16Gi", "limits_cpu": "12", "limits_memory": "24Gi"}},
                     ),
                 ],

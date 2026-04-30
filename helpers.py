@@ -20,6 +20,12 @@ DEFAULT_TIMEOUT = 60  # seconds
 
 RIGHTSIZING_ANNOTATION = "automation-webhook.kubex.ai/pod-rightsizing-info"
 
+# Written by policy_reconciler to Deployments and propagated to pods by
+# workloadrecommendation_controller.  Present on a running pod it means the
+# StaticPolicy reconcile + annotation-sync cycle has completed, so the
+# policyevaluation_controller can attempt an in-place resize.
+STATIC_POLICY_ANNOTATION = "static.rightsizing.kubex.ai/desired-resource-requests"
+
 
 # ---------------------------------------------------------------------------
 # Generic Kubernetes / shell helpers
@@ -182,6 +188,34 @@ def delete_deployment(apps: client.AppsV1Api, namespace: str, name: str) -> None
             f"available_replicas={getattr(status, 'available_replicas', None)!r}"
         )
     raise RuntimeError(f"timed out waiting for deployment {namespace}/{name} to be removed")
+
+
+def delete_hpa(namespace: str, name: str) -> None:
+    """Delete a HorizontalPodAutoscaler and block until it is fully gone (404).
+
+    This mirrors ``delete_deployment`` so callers do not reimplement the
+    async-deletion polling themselves, which would risk AlreadyExists races when
+    immediately recreating an object with the same name.
+    """
+    hpa_api = client.AutoscalingV2Api()
+    try:
+        hpa_api.delete_namespaced_horizontal_pod_autoscaler(name, namespace)
+    except ApiException as exc:
+        if exc.status == 404:
+            return
+        raise RuntimeError(f"failed to delete HPA {namespace}/{name}: {exc}") from exc
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        try:
+            hpa_api.read_namespaced_horizontal_pod_autoscaler(name, namespace)
+            time.sleep(1)
+        except ApiException as exc:
+            if exc.status == 404:
+                return
+            raise RuntimeError(
+                f"failed while waiting for HPA {namespace}/{name} removal: {exc}"
+            ) from exc
+    raise RuntimeError(f"timed out waiting for HPA {namespace}/{name} to be removed")
 
 
 def get_deployment_resources(apps: client.AppsV1Api, namespace: str, name: str) -> dict:
