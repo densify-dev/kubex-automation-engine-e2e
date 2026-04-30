@@ -64,6 +64,41 @@ class TestCRDValidation:
         )
         assert result.returncode != 0, "Expected rejection for missing automationStrategyRef"
 
+    def test_static_policy_nonexistent_strategy_ref_rejected(self, kube_context, test_namespace):
+        bad = {
+            "apiVersion": f"{GROUP}/{VERSION}",
+            "kind": "StaticPolicy",
+            "metadata": {"name": "missing-strategy", "namespace": test_namespace},
+            "spec": {"automationStrategyRef": {"name": "does-not-exist"}},
+        }
+        result = subprocess.run(
+            ["kubectl", "--context", kube_context, "apply", "-f", "-"],
+            input=json.dumps(bad),
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode != 0, "Expected rejection for nonexistent AutomationStrategy"
+        assert "does-not-exist" in result.stderr
+
+    def test_cluster_static_policy_nonexistent_strategy_ref_rejected(self, kube_context, test_namespace):
+        bad = {
+            "apiVersion": f"{GROUP}/{VERSION}",
+            "kind": "ClusterStaticPolicy",
+            "metadata": {"name": "missing-cluster-strategy"},
+            "spec": {
+                "automationStrategyRef": {"name": "does-not-exist"},
+                "scope": {"namespaceSelector": {"operator": "In", "values": [test_namespace]}},
+            },
+        }
+        result = subprocess.run(
+            ["kubectl", "--context", kube_context, "apply", "-f", "-"],
+            input=json.dumps(bad),
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode != 0, "Expected rejection for nonexistent ClusterAutomationStrategy"
+        assert "does-not-exist" in result.stderr
+
     def test_global_configuration_reload_interval_too_short(self, kube_context):
         bad = {
             "apiVersion": f"{GROUP}/{VERSION}",
@@ -78,3 +113,19 @@ class TestCRDValidation:
             text=True,
         )
         assert result.returncode != 0, "Expected rejection for interval < 1m"
+
+    def test_global_configuration_non_singleton_name_rejected(self, kube_context):
+        bad = {
+            "apiVersion": f"{GROUP}/{VERSION}",
+            "kind": "GlobalConfiguration",
+            "metadata": {"name": "another-global-config"},
+            "spec": {},
+        }
+        result = subprocess.run(
+            ["kubectl", "--context", kube_context, "apply", "-f", "-"],
+            input=json.dumps(bad),
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode != 0, "Expected rejection for non-singleton GlobalConfiguration"
+        assert "global-config" in result.stderr

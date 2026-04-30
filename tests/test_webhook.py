@@ -127,3 +127,66 @@ class TestWebhookAnnotations:
         if captured["annotation"]:
             assert captured["annotation"].strip()
         json.dumps(captured["resources"])
+
+
+class TestWebhookProbeConfiguration:
+    """Verify GlobalConfiguration webhookProbe customizations are accepted by live probing."""
+
+    def test_webhook_probe_custom_image_metadata_and_resources(self, k8s_clients):
+        original = get_crd(k8s_clients.custom, "globalconfigurations", "global-config")
+        original_spec = dict(original.get("spec", {}))
+        original_probe_time = (
+            original.get("status", {}).get("webhookHealth", {}).get("lastProbeTime")
+        )
+
+        updated = get_crd(k8s_clients.custom, "globalconfigurations", "global-config")
+        updated["spec"]["webhookHealth"] = {
+            "failureThreshold": 1,
+            "successThreshold": 1,
+            "transitionCheckInterval": "1s",
+        }
+        updated["spec"]["webhookProbe"] = {
+            "image": "registry.k8s.io/pause:3.10",
+            "labels": {"e2e.kubex.ai/probe-label": "configured"},
+            "annotations": {"e2e.kubex.ai/probe-annotation": "configured"},
+            "resources": {
+                "requests": {"cpu": "5m", "memory": "16Mi"},
+                "limits": {"cpu": "10m", "memory": "32Mi"},
+            },
+        }
+        k8s_clients.custom.replace_cluster_custom_object(
+            GROUP, VERSION, "globalconfigurations", "global-config", updated
+        )
+        try:
+            def customized_probe_succeeded():
+                gc = get_crd(k8s_clients.custom, "globalconfigurations", "global-config")
+                status = gc.get("status", {})
+                webhook_health = status.get("webhookHealth", {})
+                conditions = status.get("conditions", [])
+                return (
+                    webhook_health.get("lastProbeResult") == "Success"
+                    and webhook_health.get("lastProbeTime") != original_probe_time
+                    and any(
+                        c["type"] == "PodAdmissionWebhookHealthy" and c["status"] == "True"
+                        for c in conditions
+                    )
+                )
+
+            wait_for(
+                customized_probe_succeeded,
+                timeout=180,
+                message="customized webhook probe success",
+            )
+        finally:
+            for attempt in range(5):
+                try:
+                    gc = get_crd(k8s_clients.custom, "globalconfigurations", "global-config")
+                    gc["spec"] = original_spec
+                    k8s_clients.custom.replace_cluster_custom_object(
+                        GROUP, VERSION, "globalconfigurations", "global-config", gc
+                    )
+                    break
+                except ApiException as exc:
+                    if exc.status != 409 or attempt == 4:
+                        raise
+                    time.sleep(1)

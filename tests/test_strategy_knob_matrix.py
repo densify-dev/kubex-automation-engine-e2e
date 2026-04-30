@@ -102,7 +102,7 @@ class TestStrategyKnobMatrix:
                     (
                         "default",
                         "rightsizing-demo",
-                        {"demo": {"cpu": "200m", "memory": "256Mi", "limits_cpu": "400m", "limits_memory": "512Mi"}},
+                        {"demo": {"cpu": "200m", "memory": "296Mi", "limits_cpu": "400m", "limits_memory": "596Mi"}},
                     ),
                     (
                         "example",
@@ -134,7 +134,7 @@ class TestStrategyKnobMatrix:
                     (
                         "default",
                         "rightsizing-demo",
-                        {"demo": {"cpu": "200m", "memory": "256Mi", "limits_cpu": "400m", "limits_memory": "512Mi"}},
+                        {"demo": {"cpu": "200m", "memory": "296Mi", "limits_cpu": "400m", "limits_memory": "596Mi"}},
                     ),
                     (
                         "example",
@@ -171,7 +171,11 @@ class TestStrategyKnobMatrix:
             pytest.skip(reason)
 
         def apply_ordered_manifest(path):
-            if path != EXAMPLES_ROOT / "automationstrategy" / "min-ready-seconds.yaml":
+            ordered_paths = {
+                EXAMPLES_ROOT / "automationstrategy" / "min-ready-seconds.yaml",
+                EXAMPLES_ROOT / "automationstrategy" / "node-allocatable-headroom.yaml",
+            }
+            if path not in ordered_paths:
                 apply_manifest(path, kube_context)
                 return
 
@@ -182,28 +186,28 @@ class TestStrategyKnobMatrix:
             for doc in prerequisite_docs:
                 apply_manifest_object(doc, kube_context)
 
-            wait_for(
-                lambda: k8s_clients.custom.get_namespaced_custom_object(
-                    "rightsizing.kubex.ai",
-                    "v1alpha1",
-                    "automationstrategy-ready",
-                    "automationstrategies",
-                    "min-ready-strategy",
-                ),
-                timeout=60,
-                message="min-ready strategy availability",
-            )
-            wait_for(
-                lambda: k8s_clients.custom.get_namespaced_custom_object(
-                    "rightsizing.kubex.ai",
-                    "v1alpha1",
-                    "automationstrategy-ready",
-                    "staticpolicies",
-                    "min-ready-policy",
-                ),
-                timeout=60,
-                message="min-ready policy availability",
-            )
+            for doc in prerequisite_docs:
+                kind = doc["kind"]
+                metadata = doc["metadata"]
+                namespace = metadata.get("namespace")
+                name = metadata["name"]
+                plural = {
+                    "AutomationStrategy": "automationstrategies",
+                    "StaticPolicy": "staticpolicies",
+                }.get(kind)
+                if not plural:
+                    continue
+                wait_for(
+                    lambda ns=namespace, pl=plural, nm=name: k8s_clients.custom.get_namespaced_custom_object(
+                        "rightsizing.kubex.ai",
+                        "v1alpha1",
+                        ns,
+                        pl,
+                        nm,
+                    ),
+                    timeout=60,
+                    message=f"{kind} {namespace}/{name} availability",
+                )
 
             for doc in deployment_docs:
                 apply_manifest_object(doc, kube_context)

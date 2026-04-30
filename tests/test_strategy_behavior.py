@@ -1,8 +1,9 @@
-"""Tests: AutomationStrategy behavior from the mixed-scope example."""
+"""Tests: AutomationStrategy behavior from examples and live policy changes."""
 
-import json
+import time
 
 import pytest
+from kubernetes.client.rest import ApiException
 
 from example_utils import (
     EXAMPLES_ROOT,
@@ -11,7 +12,16 @@ from example_utils import (
     skip_reason,
     wait_for_declared_workloads_ready,
 )
-from helpers import get_pod_resources, pod_is_ready, wait_for
+from helpers import (
+    GROUP,
+    VERSION,
+    create_deployment,
+    delete_deployment,
+    get_pod_resources,
+    pod_is_ready,
+    static_policy_manifest,
+    wait_for,
+)
 
 
 class TestStrategyScopeBehavior:
@@ -64,9 +74,9 @@ class TestStrategyScopeBehavior:
             expected = {
                 "demo": {
                     "cpu": "200m",
-                    "memory": "256Mi",
+                    "memory": "296Mi",
                     "limits_cpu": "400m",
-                    "limits_memory": "512Mi",
+                    "limits_memory": "596Mi",
                 }
             }
             pod = current_pod("default", "rightsizing-demo", expected)
@@ -74,9 +84,9 @@ class TestStrategyScopeBehavior:
             values = resources["demo"]
             return (
                 values["requests"].get("cpu") == "200m"
-                and values["requests"].get("memory") == "256Mi"
+                and values["requests"].get("memory") == "296Mi"
                 and values["limits"].get("cpu") == "400m"
-                and values["limits"].get("memory") == "512Mi"
+                and values["limits"].get("memory") == "596Mi"
             )
 
         def example_workload_mutated():
@@ -109,3 +119,115 @@ class TestStrategyScopeBehavior:
             timeout=600,
             message="example namespace workload mutation",
         )
+
+
+class TestStrategySchedulingBehavior:
+    """Verify scheduling windows block and resume controller-driven resizing."""
+
+    STRATEGY_NAME = "e2e-scheduling-strategy"
+    POLICY_NAME = "e2e-scheduling-policy"
+    DEPLOYMENT = "e2e-scheduling-workload"
+    NAMESPACE = "default"
+
+    def _cleanup(self, k8s_clients):
+        for plural, name in [
+            ("staticpolicies", self.POLICY_NAME),
+        ]:
+            try:
+                k8s_clients.custom.delete_namespaced_custom_object(
+                    GROUP, VERSION, self.NAMESPACE, plural, name
+                )
+            except ApiException:
+                pass
+        delete_deployment(k8s_clients.apps, self.NAMESPACE, self.DEPLOYMENT)
+        try:
+            k8s_clients.custom.delete_namespaced_custom_object(
+                GROUP, VERSION, self.NAMESPACE, "automationstrategies", self.STRATEGY_NAME
+            )
+        except ApiException:
+            pass
+
+    @pytest.fixture(autouse=True)
+    def setup_teardown(self, k8s_clients):
+        self._cleanup(k8s_clients)
+        yield
+        self._cleanup(k8s_clients)
+
+    @staticmethod
+    def _strategy(name: str, namespace: str, blocked: bool) -> dict:
+        scheduling = {
+            "exclusionWindows": [
+                {"name": "always-block", "timezone": "UTC", "start": "00:00", "end": "24:00"}
+            ]
+        }
+        if not blocked:
+            scheduling = {
+                "inclusionWindows": [
+                    {"name": "always-open", "timezone": "UTC", "start": "00:00", "end": "24:00"}
+                ]
+            }
+        return {
+            "apiVersion": f"{GROUP}/{VERSION}",
+            "kind": "AutomationStrategy",
+            "metadata": {"name": name, "namespace": namespace},
+            "spec": {
+                "inPlaceResize": {"enabled": True},
+                "podEviction": {"enabled": True},
+                "scheduling": scheduling,
+                "safetyChecks": {"minReadyDuration": "0s", "resizeRetryInterval": "5s"},
+            },
+        }
+
+    @pytest.mark.timeout(600)
+    def test_scheduling_exclusion_window_blocks_runtime_resize(self, k8s_clients):
+        k8s_clients.custom.create_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            self.NAMESPACE,
+            "automationstrategies",
+            self._strategy(self.STRATEGY_NAME, self.NAMESPACE, blocked=True),
+        )
+        create_deployment(
+            k8s_clients.apps,
+            self.NAMESPACE,
+            self.DEPLOYMENT,
+            cpu_request="100m",
+            mem_request="64Mi",
+        )
+        k8s_clients.custom.create_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            self.NAMESPACE,
+            "staticpolicies",
+            static_policy_manifest(
+                self.POLICY_NAME,
+                self.NAMESPACE,
+                strategy_name=self.STRATEGY_NAME,
+                label_selector_app=self.DEPLOYMENT,
+                cpu_request="150m",
+                mem_request="96Mi",
+            ),
+        )
+
+        def latest_live_pod():
+            pods = k8s_clients.core.list_namespaced_pod(
+                self.NAMESPACE, label_selector=f"app={self.DEPLOYMENT}"
+            ).items
+            live_pods = [pod for pod in pods if pod.metadata.deletion_timestamp is None]
+            if not live_pods:
+                raise RuntimeError("no live scheduling test pod found")
+            return sorted(live_pods, key=lambda item: item.metadata.creation_timestamp)[-1]
+
+        def latest_live_pod_resources():
+            pod = latest_live_pod()
+            return get_pod_resources(k8s_clients.core, self.NAMESPACE, pod.metadata.name)
+
+        def resources_unchanged():
+            resources = latest_live_pod_resources()["app"]
+            return (
+                resources["requests"].get("cpu") == "100m"
+                and resources["requests"].get("memory") == "64Mi"
+            )
+
+        time.sleep(20)
+        assert resources_unchanged(), "resize should remain blocked by the active exclusion window"

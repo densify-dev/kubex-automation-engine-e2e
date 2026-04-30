@@ -30,7 +30,7 @@ class TestRecommendationBehavior:
 
     @pytest.fixture(autouse=True)
     def setup_teardown(self, k8s_clients):
-        for deployment in ["rightsizing-demo", "multi-container-demo"]:
+        for deployment in ["rightsizing-demo", "mixed-demo", "multi-container-demo"]:
             delete_deployment(k8s_clients.apps, "default", deployment)
 
         for name in self.CLEANUP_POLICIES:
@@ -56,7 +56,7 @@ class TestRecommendationBehavior:
             automation_strategy_manifest(self.STRATEGY_NAME, "default"),
         )
         yield
-        for deployment in ["rightsizing-demo", "multi-container-demo"]:
+        for deployment in ["rightsizing-demo", "mixed-demo", "multi-container-demo"]:
             delete_deployment(k8s_clients.apps, "default", deployment)
         for name in self.CLEANUP_POLICIES:
             try:
@@ -177,4 +177,57 @@ class TestRecommendationBehavior:
             selective_resize_applied,
             timeout=300,
             message="per-container KubexAutomation behavior for multi-container-demo",
+        )
+
+    @pytest.mark.timeout(600)
+    def test_per_container_memory_request_ceiling_clamps_recommendation(self, k8s_clients):
+        strategy = k8s_clients.custom.get_namespaced_custom_object(
+            GROUP, VERSION, "default", "automationstrategies", self.STRATEGY_NAME
+        )
+        strategy["spec"]["enablement"].setdefault("memory", {}).setdefault("requests", {})[
+            "containers"
+        ] = {"api": {"ceiling": "300Mi"}}
+        k8s_clients.custom.replace_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            "default",
+            "automationstrategies",
+            self.STRATEGY_NAME,
+            strategy,
+        )
+        k8s_clients.custom.create_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            "default",
+            "proactivepolicies",
+            proactive_policy_manifest(self.POLICY_NAME, "default", self.STRATEGY_NAME, 365),
+        )
+        create_multi_container_deployment(
+            k8s_clients.apps,
+            "default",
+            "mixed-demo",
+            containers=[
+                {
+                    "name": "api",
+                    "requests": {"cpu": "150m", "memory": "256Mi"},
+                    "limits": {"cpu": "300m", "memory": "512Mi"},
+                }
+            ],
+        )
+
+        def ceiling_applied():
+            pod = get_deployment_pod(k8s_clients.core, "default", "mixed-demo")
+            resources = get_pod_resources(k8s_clients.core, "default", pod.metadata.name)
+            return (
+                pod.metadata.deletion_timestamp is None
+                and resources["api"]["requests"].get("cpu") == "350m"
+                and resources["api"]["requests"].get("memory") == "300Mi"
+                and resources["api"]["limits"].get("cpu") == "700m"
+                and resources["api"]["limits"].get("memory") == "1Gi"
+            )
+
+        wait_for(
+            ceiling_applied,
+            timeout=300,
+            message="per-container memory request ceiling for mixed-demo/api",
         )
