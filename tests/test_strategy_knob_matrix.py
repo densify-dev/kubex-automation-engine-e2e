@@ -19,7 +19,7 @@ class TestStrategyKnobMatrix:
     """Verify common strategy knobs keep or change workloads as intended."""
 
     @pytest.mark.parametrize(
-        ("manifest_path", "assertions", "sleep_seconds"),
+        ("manifest_path", "assertions", "sleep_seconds", "skip_readiness"),
         [
             (
                 EXAMPLES_ROOT / "automationstrategy" / "vpa-filter-default.yaml",
@@ -27,6 +27,7 @@ class TestStrategyKnobMatrix:
                     ("automationstrategy-vpa-default", "vpa-demo", {"app": {"cpu": "200m", "memory": "256Mi", "limits_cpu": "400m", "limits_memory": "512Mi"}}),
                 ],
                 45,
+                False,
             ),
             (
                 EXAMPLES_ROOT / "automationstrategy" / "limit-range-filter.yaml",
@@ -38,6 +39,7 @@ class TestStrategyKnobMatrix:
                     ),
                 ],
                 20,
+                False,
             ),
             (
                 EXAMPLES_ROOT / "automationstrategy" / "pod-limit-range-filter.yaml",
@@ -62,6 +64,7 @@ class TestStrategyKnobMatrix:
                     ),
                 ],
                 20,
+                False,
             ),
             (
                 EXAMPLES_ROOT / "automationstrategy" / "min-change-thresholds.yaml",
@@ -73,6 +76,7 @@ class TestStrategyKnobMatrix:
                     ),
                 ],
                 20,
+                False,
             ),
             (
                 EXAMPLES_ROOT / "automationstrategy" / "min-ready-seconds.yaml",
@@ -84,6 +88,7 @@ class TestStrategyKnobMatrix:
                     ),
                 ],
                 20,
+                False,
             ),
             (
                 EXAMPLES_ROOT / "automationstrategy" / "node-allocatable-headroom.yaml",
@@ -94,7 +99,14 @@ class TestStrategyKnobMatrix:
                         {"app": {"memory": "16Gi", "limits_cpu": "12", "limits_memory": "24Gi"}},
                     ),
                 ],
+                # The admission webhook mutates pod resources at creation (before scheduling).
+                # On resource-constrained nodes (e.g. CI kind clusters) the pod remains
+                # Pending because 8 CPU / 16 Gi cannot be scheduled.  That is the intended
+                # behaviour of requireNodeAllocatable — we verify the webhook did its job
+                # by asserting the mutated spec values on the Pending pod, so skip the
+                # readiness gate.
                 20,
+                True,
             ),
             (
                 EXAMPLES_ROOT / "staticpolicy" / "namespaced-and-cluster.yaml",
@@ -111,6 +123,7 @@ class TestStrategyKnobMatrix:
                     ),
                 ],
                 20,
+                False,
             ),
             (
                 EXAMPLES_ROOT / "staticpolicy" / "namespaced-and-cluster-namespace-wins.yaml",
@@ -127,6 +140,7 @@ class TestStrategyKnobMatrix:
                     ),
                 ],
                 20,
+                False,
             ),
             (
                 EXAMPLES_ROOT / "staticpolicy" / "namespaced-and-cluster-same-weight.yaml",
@@ -143,6 +157,7 @@ class TestStrategyKnobMatrix:
                     ),
                 ],
                 20,
+                False,
             ),
         ],
         ids=[
@@ -163,6 +178,7 @@ class TestStrategyKnobMatrix:
         manifest_path,
         assertions,
         sleep_seconds,
+        skip_readiness,
         kube_context,
         k8s_clients,
     ):
@@ -260,12 +276,13 @@ class TestStrategyKnobMatrix:
                 return sorted(ready_pods, key=lambda pod: pod.metadata.creation_timestamp)[-1]
 
             time.sleep(5)
-            for namespace, deployment, _ in assertions:
-                wait_for(
-                    lambda ns=namespace, dep=deployment: pod_is_ready(current_pod(ns, dep)),
-                    timeout=180,
-                    message=f"workload readiness for {namespace}/{deployment}",
-                )
+            if not skip_readiness:
+                for namespace, deployment, _ in assertions:
+                    wait_for(
+                        lambda ns=namespace, dep=deployment: pod_is_ready(current_pod(ns, dep)),
+                        timeout=180,
+                        message=f"workload readiness for {namespace}/{deployment}",
+                    )
 
             time.sleep(sleep_seconds)
 
