@@ -34,6 +34,7 @@ OPTIONAL_API_GROUPS = {
         EXAMPLES_ROOT / "automationstrategy" / "vpa-filter-default.yaml",
         EXAMPLES_ROOT / "automationstrategy" / "vpa-filter-explicit-containers.yaml",
         EXAMPLES_ROOT / "automationstrategy" / "vpa-filter-recommendation-managed.yaml",
+        EXAMPLES_ROOT / "automationstrategy" / "vpa-filter-prevpa.yaml",
     ],
     "keda.sh": [
         EXAMPLES_ROOT / "staticpolicy" / "with-keda-hpa-filter.yaml",

@@ -12,34 +12,48 @@ from example_utils import (
     skip_reason,
 )
 from helpers import apply_manifest as apply_manifest_object
-from helpers import get_pod_resources, pod_is_ready, wait_for
+from helpers import get_pod_resources, pod_is_ready, wait_for, wait_for_vpa_recommendation
 
 
 class TestStrategyKnobMatrix:
     """Verify common strategy knobs keep or change workloads as intended."""
 
     @pytest.mark.parametrize(
-        ("manifest_path", "assertions", "sleep_seconds", "skip_readiness"),
+        ("manifest_path", "assertions", "sleep_seconds", "skip_readiness", "pre_warm_manifest_path"),
         [
             (
                 EXAMPLES_ROOT / "automationstrategy" / "vpa-filter-default.yaml",
                 [
+                    # The VPA filter (enableVpaFilter: true) blocks resources that VPA is
+                    # *actively managing* — i.e. when the VPA has a live
+                    # RecommendationProvided=True status condition.  To make this
+                    # deterministic, the test pre-warms the VPA (applying Namespace +
+                    # Deployment + VPA without AutomationStrategy first, then waiting for
+                    # RecommendationProvided=True) before applying the full manifest.  The
+                    # resize is therefore always blocked and the pod retains its original
+                    # resource values.
                     ("automationstrategy-vpa-default", "vpa-demo", {"app": {"cpu": "200m", "memory": "256Mi", "limits_cpu": "400m", "limits_memory": "512Mi"}}),
                 ],
                 45,
                 False,
+                EXAMPLES_ROOT / "automationstrategy" / "vpa-filter-prevpa.yaml",
             ),
             (
                 EXAMPLES_ROOT / "automationstrategy" / "limit-range-filter.yaml",
                 [
+                    # The LimitRange filter blocks per-action: limits cpu 800m and
+                    # memory 1024Mi exceed the namespace max (700m / 900Mi) so they are
+                    # dropped.  Requests (100m / 128Mi) are within the allowed range and
+                    # are applied.  Original limits (600m / 768Mi) are preserved.
                     (
                         "automationstrategy-limitrange",
                         "limitrange-demo",
-                        {"app": {"cpu": "300m", "memory": "384Mi", "limits_cpu": "600m", "limits_memory": "768Mi"}},
+                        {"app": {"cpu": "100m", "memory": "128Mi", "limits_cpu": "600m", "limits_memory": "768Mi"}},
                     ),
                 ],
                 20,
                 False,
+                None,
             ),
             (
                 EXAMPLES_ROOT / "automationstrategy" / "pod-limit-range-filter.yaml",
@@ -65,6 +79,7 @@ class TestStrategyKnobMatrix:
                 ],
                 20,
                 False,
+                None,
             ),
             (
                 EXAMPLES_ROOT / "automationstrategy" / "min-change-thresholds.yaml",
@@ -77,6 +92,7 @@ class TestStrategyKnobMatrix:
                 ],
                 20,
                 False,
+                None,
             ),
             (
                 EXAMPLES_ROOT / "automationstrategy" / "min-ready-seconds.yaml",
@@ -89,6 +105,7 @@ class TestStrategyKnobMatrix:
                 ],
                 20,
                 False,
+                None,
             ),
             (
                 EXAMPLES_ROOT / "automationstrategy" / "node-allocatable-headroom.yaml",
@@ -113,6 +130,7 @@ class TestStrategyKnobMatrix:
                 # readiness gate.
                 20,
                 True,
+                None,
             ),
             (
                 EXAMPLES_ROOT / "staticpolicy" / "namespaced-and-cluster.yaml",
@@ -130,6 +148,7 @@ class TestStrategyKnobMatrix:
                 ],
                 20,
                 False,
+                None,
             ),
             (
                 EXAMPLES_ROOT / "staticpolicy" / "namespaced-and-cluster-namespace-wins.yaml",
@@ -147,6 +166,7 @@ class TestStrategyKnobMatrix:
                 ],
                 20,
                 False,
+                None,
             ),
             (
                 EXAMPLES_ROOT / "staticpolicy" / "namespaced-and-cluster-same-weight.yaml",
@@ -164,6 +184,7 @@ class TestStrategyKnobMatrix:
                 ],
                 20,
                 False,
+                None,
             ),
         ],
         ids=[
@@ -185,6 +206,7 @@ class TestStrategyKnobMatrix:
         assertions,
         sleep_seconds,
         skip_readiness,
+        pre_warm_manifest_path,
         kube_context,
         k8s_clients,
     ):
@@ -235,6 +257,22 @@ class TestStrategyKnobMatrix:
                 apply_manifest_object(doc, kube_context)
 
         try:
+            if pre_warm_manifest_path is not None:
+                # Phase 1: apply Namespace + Deployment + VPA (no AutomationStrategy).
+                # Wait for VPA to produce its first recommendation so that the filter
+                # is guaranteed to fire on the very first policyevaluation pass.
+                apply_manifest(pre_warm_manifest_path, kube_context)
+                for namespace, deployment, _ in assertions:
+                    wait_for_vpa_recommendation(
+                        kube_context,
+                        namespace,
+                        deployment,
+                        timeout=600,
+                    )
+
+            # Phase 2 (or only phase when pre_warm_manifest_path is None): apply
+            # the full manifest.  kubectl apply is idempotent so any objects
+            # already created by the pre-warm step are simply confirmed.
             apply_ordered_manifest(manifest_path)
 
             def current_pod(namespace: str, deployment: str, expected=None):

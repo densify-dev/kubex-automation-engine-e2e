@@ -68,6 +68,39 @@ def wait_for(condition_fn, timeout=DEFAULT_TIMEOUT, interval=POLL_INTERVAL, mess
     raise TimeoutError(f"Timed out waiting for {message}. Last exception: {last_exc}")
 
 
+def wait_for_vpa_recommendation(kube_context: str, namespace: str, vpa_name: str, timeout: int = 600) -> None:
+    """Block until the VPA has generated its first recommendation (RecommendationProvided=True).
+
+    The VPA recommender needs to observe at least one metrics sample before it
+    can produce a recommendation.  On a warm cluster this typically happens
+    within a minute; on a freshly provisioned kind node it can take several
+    minutes.  The test uses this to ensure the VPA filter fires on the very
+    first policyevaluation pass, making the "filter blocks resize" assertion
+    deterministic.
+    """
+
+    def _has_recommendation():
+        out = kubectl(
+            "get",
+            "vpa",
+            vpa_name,
+            "-n",
+            namespace,
+            "-o",
+            "jsonpath={.status.conditions[?(@.type=='RecommendationProvided')].status}",
+            context=kube_context,
+            check=False,
+        )
+        return out.strip() == "True"
+
+    wait_for(
+        _has_recommendation,
+        timeout=timeout,
+        interval=10,
+        message=f"VPA recommendation for {namespace}/{vpa_name}",
+    )
+
+
 def get_crd(custom: client.CustomObjectsApi, plural: str, name: str, namespace: str = None) -> dict:
     """Fetch a CRD instance. Uses cluster scope when namespace is None."""
     if namespace:
@@ -101,7 +134,7 @@ def create_deployment(
 ) -> client.V1Deployment:
     """Create a minimal Deployment for testing resource mutation."""
     deployment = client.V1Deployment(
-        metadata=client.V1ObjectMeta(name=name, namespace=namespace),
+        metadata=client.V1ObjectMeta(name=name, namespace=namespace, labels={"app": name}),
         spec=client.V1DeploymentSpec(
             replicas=1,
             selector=client.V1LabelSelector(match_labels={"app": name}),
