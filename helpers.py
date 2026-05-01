@@ -79,25 +79,38 @@ def wait_for_vpa_recommendation(kube_context: str, namespace: str, vpa_name: str
     deterministic.
     """
 
-    def _has_recommendation():
-        out = kubectl(
-            "get",
-            "vpa",
-            vpa_name,
-            "-n",
-            namespace,
-            "-o",
-            "jsonpath={.status.conditions[?(@.type=='RecommendationProvided')].status}",
-            context=kube_context,
-            check=False,
-        )
-        return out.strip() == "True"
-
-    wait_for(
-        _has_recommendation,
-        timeout=timeout,
-        interval=10,
-        message=f"VPA recommendation for {namespace}/{vpa_name}",
+    cmd = [
+        "kubectl",
+        "--context",
+        kube_context,
+        "get",
+        "vpa",
+        vpa_name,
+        "-n",
+        namespace,
+        "-o",
+        "jsonpath={.status.conditions[?(@.type=='RecommendationProvided')].status}",
+    ]
+    deadline = time.time() + timeout
+    last_stderr = ""
+    while time.time() < deadline:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0 and result.stdout.strip() == "True":
+            return
+        if result.returncode != 0:
+            last_stderr = result.stderr.strip()
+            lower_stderr = last_stderr.lower()
+            if (
+                "no kind" in lower_stderr
+                or "server doesn't have a resource type" in lower_stderr
+            ):
+                raise RuntimeError(f"VPA CRD not available: {last_stderr}")
+            if "notfound" not in lower_stderr and "not found" not in lower_stderr:
+                raise RuntimeError(f"kubectl get VPA failed: {last_stderr}")
+        time.sleep(10)
+    raise TimeoutError(
+        f"Timed out waiting for VPA recommendation for {namespace}/{vpa_name}. "
+        f"Last kubectl error: {last_stderr}"
     )
 
 
@@ -168,7 +181,7 @@ def create_multi_container_deployment(
 ) -> client.V1Deployment:
     """Create a deployment with multiple named containers for recommendation tests."""
     deployment = client.V1Deployment(
-        metadata=client.V1ObjectMeta(name=name, namespace=namespace),
+        metadata=client.V1ObjectMeta(name=name, namespace=namespace, labels={"app": name}),
         spec=client.V1DeploymentSpec(
             replicas=1,
             selector=client.V1LabelSelector(match_labels={"app": name}),

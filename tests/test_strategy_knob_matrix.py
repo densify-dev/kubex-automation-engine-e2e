@@ -263,6 +263,7 @@ class TestStrategyKnobMatrix:
                 # is guaranteed to fire on the very first policyevaluation pass.
                 apply_manifest(pre_warm_manifest_path, kube_context)
                 for namespace, deployment, _ in assertions:
+                    # The pre-warm manifest names the VPA after the Deployment.
                     wait_for_vpa_recommendation(
                         kube_context,
                         namespace,
@@ -350,3 +351,5 @@ class TestStrategyKnobMatrix:
                         assert container_resources["limits"].get("memory") == values["limits_memory"]
         finally:
             delete_manifest_in_reverse(manifest_path, kube_context)
+            if pre_warm_manifest_path is not None:
+                delete_manifest_in_reverse(pre_warm_manifest_path, kube_context)
