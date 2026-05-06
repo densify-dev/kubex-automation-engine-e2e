@@ -68,6 +68,29 @@ def wait_for(condition_fn, timeout=DEFAULT_TIMEOUT, interval=POLL_INTERVAL, mess
     raise TimeoutError(f"Timed out waiting for {message}. Last exception: {last_exc}")
 
 
+def update_namespace_annotations(k8s_clients, namespace_name: str, mutate_annotations) -> None:
+    """Retry namespace annotation updates through resource-version conflicts."""
+    for attempt in range(5):
+        namespace = k8s_clients.core.read_namespace(namespace_name)
+        annotations = dict(namespace.metadata.annotations or {})
+        mutate_annotations(annotations)
+        namespace.metadata.annotations = annotations or None
+        try:
+            k8s_clients.core.replace_namespace(namespace_name, namespace)
+            return
+        except ApiException as exc:
+            if exc.status != 409 or attempt == 4:
+                raise
+            time.sleep(1)
+    raise RuntimeError(f"failed to update namespace annotations for {namespace_name}")
+
+
+def clear_pause_annotations(annotations: dict[str, str]) -> None:
+    """Remove namespace-level pause annotations used by the E2E tests."""
+    annotations.pop("rightsizing.kubex.ai/pause-until", None)
+    annotations.pop("rightsizing.kubex.ai/pause-reason", None)
+
+
 def wait_for_vpa_recommendation(kube_context: str, namespace: str, vpa_name: str, timeout: int = 600) -> None:
     """Block until the VPA has generated its first recommendation (RecommendationProvided=True).
 

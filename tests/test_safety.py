@@ -7,7 +7,9 @@ from kubernetes import client
 from kubernetes.client.rest import ApiException
 
 from helpers import (
+    clear_pause_annotations,
     GROUP,
+    STATIC_POLICY_ANNOTATION,
     VERSION,
     automation_strategy_manifest,
     create_deployment,
@@ -17,6 +19,7 @@ from helpers import (
     get_deployment_pod,
     get_pod_resources,
     static_policy_manifest,
+    update_namespace_annotations,
     wait_for,
 )
 
@@ -202,3 +205,154 @@ class TestProtectedNamespace:
                     if e.status != 409 or attempt == 4:
                         raise
                     time.sleep(1)
+
+
+class TestNamespacePauseUntil:
+    """Verify namespace-level pause annotations block and later resume resizing."""
+
+    STRATEGY_NAME = "e2e-namespace-pause-strategy"
+    POLICY_NAME = "e2e-namespace-pause-policy"
+    DEPLOYMENT = "e2e-namespace-pause-workload"
+
+    def _cleanup(self, k8s_clients, test_namespace):
+        delete_deployment(k8s_clients.apps, test_namespace, self.DEPLOYMENT)
+        for plural, name in [
+            ("staticpolicies", self.POLICY_NAME),
+            ("automationstrategies", self.STRATEGY_NAME),
+        ]:
+            try:
+                k8s_clients.custom.delete_namespaced_custom_object(
+                    GROUP, VERSION, test_namespace, plural, name
+                )
+            except ApiException:
+                pass
+
+    @pytest.fixture(autouse=True)
+    def setup_teardown(self, k8s_clients, test_namespace):
+        self._cleanup(k8s_clients, test_namespace)
+        update_namespace_annotations(
+            k8s_clients, test_namespace, clear_pause_annotations
+        )
+        yield
+        update_namespace_annotations(
+            k8s_clients, test_namespace, clear_pause_annotations
+        )
+        self._cleanup(k8s_clients, test_namespace)
+
+    @pytest.mark.timeout(900)
+    def test_namespace_pause_blocks_then_resumes_resize(self, k8s_clients, test_namespace):
+        strategy = automation_strategy_manifest(self.STRATEGY_NAME, test_namespace)
+        strategy["spec"]["safetyChecks"] = {
+            "enablePauseUntilAnnotationCheck": True,
+            "minReadyDuration": "0s",
+        }
+        k8s_clients.custom.create_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            test_namespace,
+            "automationstrategies",
+            strategy,
+        )
+
+        update_namespace_annotations(
+            k8s_clients,
+            test_namespace,
+            lambda annotations: annotations.update(
+                {
+                    "rightsizing.kubex.ai/pause-until": "infinite",
+                    "rightsizing.kubex.ai/pause-reason": "team freeze",
+                }
+            ),
+        )
+
+        create_deployment(
+            k8s_clients.apps,
+            test_namespace,
+            self.DEPLOYMENT,
+            cpu_request="100m",
+            mem_request="64Mi",
+        )
+        policy = static_policy_manifest(
+            self.POLICY_NAME,
+            test_namespace,
+            strategy_name=self.STRATEGY_NAME,
+            label_selector_app=self.DEPLOYMENT,
+            cpu_request="150m",
+            mem_request="96Mi",
+        )
+        k8s_clients.custom.create_namespaced_custom_object(
+            GROUP, VERSION, test_namespace, "staticpolicies", policy
+        )
+
+        def deployment_has_static_policy_annotation():
+            try:
+                deployment = k8s_clients.apps.read_namespaced_deployment(
+                    self.DEPLOYMENT, test_namespace
+                )
+                return bool(
+                    deployment.metadata.annotations
+                    and STATIC_POLICY_ANNOTATION in deployment.metadata.annotations
+                )
+            except ApiException:
+                return False
+
+        wait_for(
+            deployment_has_static_policy_annotation,
+            timeout=180,
+            message="static policy annotation on paused deployment",
+        )
+
+        def pause_precheck_failed_for_pod():
+            pod = get_deployment_pod(k8s_clients.core, test_namespace, self.DEPLOYMENT)
+            events = k8s_clients.core.list_namespaced_event(test_namespace).items
+            return any(
+                event.reason == "PrecheckFailed"
+                and "automation paused" in (event.message or "")
+                and event.involved_object
+                and event.involved_object.kind == "Pod"
+                and event.involved_object.name == pod.metadata.name
+                and event.involved_object.uid == pod.metadata.uid
+                for event in events
+            )
+
+        wait_for(
+            pause_precheck_failed_for_pod,
+            timeout=180,
+            message="pause precheck failure event for paused pod",
+        )
+
+        pod = get_deployment_pod(k8s_clients.core, test_namespace, self.DEPLOYMENT)
+        resources = get_pod_resources(k8s_clients.core, test_namespace, pod.metadata.name)
+        assert resources["app"]["requests"].get("cpu") == "100m", (
+            "CPU request should stay unchanged while the namespace pause is active"
+        )
+        assert resources["app"]["requests"].get("memory") == "64Mi", (
+            "Memory request should stay unchanged while the namespace pause is active"
+        )
+        annotations = pod.metadata.annotations or {}
+        assert "rightsizing.kubex.ai/pause-until" not in annotations, (
+            "namespace pause annotations should be evaluated at runtime, not copied to pods"
+        )
+        assert "rightsizing.kubex.ai/pause-reason" not in annotations, (
+            "namespace pause reasons should not be copied to pods"
+        )
+
+        update_namespace_annotations(
+            k8s_clients, test_namespace, clear_pause_annotations
+        )
+
+        def resources_resized():
+            live_pod = get_deployment_pod(k8s_clients.core, test_namespace, self.DEPLOYMENT)
+            current_resources = get_pod_resources(
+                k8s_clients.core, test_namespace, live_pod.metadata.name
+            )
+            return (
+                current_resources["app"]["requests"].get("cpu") == "150m"
+                and current_resources["app"]["requests"].get("memory") == "96Mi"
+            )
+
+        wait_for(
+            resources_resized,
+            timeout=450,
+            message="resize applied after namespace pause removed",
+        )

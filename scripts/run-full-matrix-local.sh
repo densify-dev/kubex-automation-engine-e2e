@@ -31,6 +31,7 @@ run_suite() {
   local with_metrics_server="${4:-true}"
   local with_keda="${5:-true}"
   local with_vpa="${6:-true}"
+  local pytest_targets=("${@:7}")
 
   echo
   echo "=== Running ${label} via run-full-suite.sh on cluster ${cluster_name} (${node_image}) ==="
@@ -49,12 +50,12 @@ run_suite() {
     CLEANUP_IMAGE_REPOSITORY="${CLEANUP_IMG%:*}" \
     CLEANUP_IMAGE_TAG="${CLEANUP_IMG##*:}" \
     LOAD_KIND_IMAGES=true \
-    "${E2E_ROOT}/scripts/run-full-suite.sh"
+    "${E2E_ROOT}/scripts/run-full-suite.sh" ${pytest_targets[@]+"${pytest_targets[@]}"}
 }
 
 echo "==> Building local controller images"
 make -C "${CONTROLLER_ROOT}" docker-build docker-build-cleanup IMG="${IMG}" CLEANUP_IMG="${CLEANUP_IMG}"
 
 echo "==> Running the full Kind version matrix"
-run_suite "kubernetes-${NEWER_VERSION}" "${NEWER_CLUSTER_NAME}" "${NEWER_NODE_IMAGE}"
-run_suite "kubernetes-${OLDER_VERSION}" "${OLDER_CLUSTER_NAME}" "${OLDER_NODE_IMAGE}" "true" "false" "false"
+run_suite "kubernetes-${NEWER_VERSION}" "${NEWER_CLUSTER_NAME}" "${NEWER_NODE_IMAGE}" "true" "true" "true" "$@"
+run_suite "kubernetes-${OLDER_VERSION}" "${OLDER_CLUSTER_NAME}" "${OLDER_NODE_IMAGE}" "true" "false" "false" "$@"

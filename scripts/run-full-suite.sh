@@ -171,8 +171,12 @@ bootstrap_cluster() {
 }
 
 run_functional_suite() {
+  local pytest_targets=("$@")
+  if [[ ${#pytest_targets[@]} -eq 0 ]]; then
+    pytest_targets=(tests/)
+  fi
+
   local args=(
-    tests/
     -v
     -rs
     --skip-kind-bootstrap
@@ -214,6 +218,8 @@ run_functional_suite() {
   if [[ "$KEEP_KIND_CLUSTER" == "1" ]] || [[ "$KEEP_KIND_CLUSTER" == "true" ]]; then
     args+=(--keep-kind-cluster)
   fi
+  # pytest_targets is guaranteed non-empty here by the default branch above.
+  args+=("${pytest_targets[@]}")
 
   log "Running functional suite on ${KUBE_CONTEXT}"
   echo "+ ${PYTEST_BIN} -m pytest $(printf '%q ' "${args[@]}")"
@@ -249,7 +255,7 @@ verify_uninstall() {
 
 ensure_python_env
 bootstrap_cluster
-run_functional_suite
+run_functional_suite "$@"
 if [[ "$KEEP_KIND_CLUSTER" == "1" ]] || [[ "$KEEP_KIND_CLUSTER" == "true" ]]; then
   log "KEEP_KIND_CLUSTER set — skipping uninstall and cluster teardown"
 else

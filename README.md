@@ -64,6 +64,14 @@ pytest tests/ -v \
 # v1.32.0 (metrics-server only)
 ./scripts/run-full-matrix-local.sh
 
+# Run a subset of tests through the matrix bootstrap
+./scripts/run-full-matrix-local.sh tests/test_automation_strategy.py
+./scripts/run-full-matrix-local.sh tests/test_policies.py::TestProactivePolicy::test_create_proactive_policy
+./scripts/run-full-matrix-local.sh tests/test_automation_strategy.py tests/test_policies.py
+
+# Keep the cluster alive between subset reruns while debugging
+KEEP_KIND_CLUSTER=1 ./scripts/run-full-matrix-local.sh tests/test_policies.py::TestProactivePolicy::test_create_proactive_policy
+
 
 # Pin a single run to a specific Kind node image
 NODE_IMAGE=kindest/node:v1.35.0 \
@@ -187,7 +195,7 @@ e2e-testing/
 
 - Kind bootstrap is handled by [bootstrap.py](bootstrap.py).
 - The main local entry point is [scripts/run-full-suite.sh](scripts/run-full-suite.sh).
-- [scripts/run-full-matrix-local.sh](scripts/run-full-matrix-local.sh) builds the local controller images, then runs the full-suite flow twice: once for `v1.35.0` with the full stack (metrics-server, KEDA, VPA) and once for `v1.32.0` with metrics-server only (KEDA and VPA skipped).
+- [scripts/run-full-matrix-local.sh](scripts/run-full-matrix-local.sh) builds the local controller images, then runs the full-suite flow twice: once for `v1.35.0` with the full stack (metrics-server, KEDA, VPA) and once for `v1.32.0` with metrics-server only (KEDA and VPA skipped). Pass one or more pytest nodeids/paths to run only that subset through the matrix bootstrap.
 - The full-suite runner verifies install through the functional tests, then uninstalls the controller Helm release and `kubex-crds` and verifies their removal.
 - The bootstrap flow installs `metrics-server`, `KEDA`, and VPA by default. Set `WITH_KEDA=false`, `WITH_VPA=false`, or `WITH_METRICS_SERVER=false` to skip individual addons. The CI matrix uses the full stack on v1.35.0 and metrics-server only on v1.32.0 (`WITH_KEDA=false WITH_VPA=false`).
 - The default full-suite runner is serial because many tests mutate shared cluster state and vendored example resources; set `PYTEST_WORKERS` only after isolating those tests.
