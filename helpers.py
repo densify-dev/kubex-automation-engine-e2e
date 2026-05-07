@@ -373,16 +373,14 @@ def static_policy_manifest(
     label_selector_app: str | None = None,
     cpu_request: str = None,
     mem_request: str = None,
+    cpu_limit: str = None,
+    mem_limit: str = None,
     weight: int = 0,
 ) -> dict:
     containers: dict[str, Any] = {}
-    if cpu_request or mem_request:
-        req: dict = {}
-        if cpu_request:
-            req["cpu"] = cpu_request
-        if mem_request:
-            req["memory"] = mem_request
-        containers["*"] = {"requests": req}
+    container_resources = _container_resources(cpu_request, mem_request, cpu_limit, mem_limit)
+    if container_resources:
+        containers["*"] = container_resources
 
     strategy_ref: dict = {"name": strategy_name}
     if strategy_namespace:
@@ -411,18 +409,16 @@ def cluster_static_policy_manifest(
     label_selector_app: str | None = None,
     cpu_request: str = None,
     mem_request: str = None,
+    cpu_limit: str = None,
+    mem_limit: str = None,
     namespace_operator: str = "In",
     namespace_values: list = None,
     weight: int = 0,
 ) -> dict:
     containers: dict[str, Any] = {}
-    if cpu_request or mem_request:
-        req: dict = {}
-        if cpu_request:
-            req["cpu"] = cpu_request
-        if mem_request:
-            req["memory"] = mem_request
-        containers["*"] = {"requests": req}
+    container_resources = _container_resources(cpu_request, mem_request, cpu_limit, mem_limit)
+    if container_resources:
+        containers["*"] = container_resources
 
     scope: dict[str, Any] = {
         "namespaceSelector": {
@@ -444,6 +440,36 @@ def cluster_static_policy_manifest(
             **({"resources": {"containers": containers}} if containers else {}),
         },
     }
+
+
+def _container_resources(
+    cpu_request: str = None,
+    mem_request: str = None,
+    cpu_limit: str = None,
+    mem_limit: str = None,
+) -> dict[str, Any] | None:
+    if not (cpu_request or mem_request or cpu_limit or mem_limit):
+        return None
+
+    container_resources: dict[str, Any] = {}
+
+    requests: dict[str, str] = {}
+    if cpu_request:
+        requests["cpu"] = cpu_request
+    if mem_request:
+        requests["memory"] = mem_request
+    if requests:
+        container_resources["requests"] = requests
+
+    limits: dict[str, str] = {}
+    if cpu_limit:
+        limits["cpu"] = cpu_limit
+    if mem_limit:
+        limits["memory"] = mem_limit
+    if limits:
+        container_resources["limits"] = limits
+
+    return container_resources
 
 
 def proactive_policy_manifest(

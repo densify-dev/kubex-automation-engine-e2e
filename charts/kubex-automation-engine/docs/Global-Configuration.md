@@ -119,6 +119,12 @@ Legacy `deployment.controllerEnv` values still act as fallbacks for the default 
 
 If both the new `globalConfiguration.*` value and the legacy value are set, the `globalConfiguration.*` value wins.
 
+## Heartbeat Reporting
+
+The controller periodically sends health and activity status to Kubex. This allows the Kubex platform to monitor controller health, display the running version, and track automation activity across your clusters.
+
+The controller version included in heartbeat payloads is read from the `IMAGE_TAG` environment variable, which the Helm chart automatically injects into the manager container from the `image.tag` Helm value. In airgapped environments, ensure this value matches your mirrored image tag so Kubex can accurately report the running version.
+
 ## Webhook Probe Pod Settings
 
 The pod admission webhook health probe creates a dry-run Pod using `spec.webhookProbe`.
@@ -128,8 +134,6 @@ The pod admission webhook health probe creates a dry-run Pod using `spec.webhook
 - `spec.webhookProbe.resources`, `spec.webhookProbe.podSecurityContext`, and `spec.webhookProbe.securityContext` help satisfy admission policies that require explicit resource or security settings
 
 When `spec.webhookProbe.image` is unset, the Helm chart defaults it to the controller image (`image.repository:image.tag`). This allows airgapped environments to mirror only the controller image and have probe admissions use that same image by default.
-
-Heartbeat payloads also use the controller `image.tag`, injected into the manager container as `IMAGE_TAG`, so Kubex can display the running controller version with each report.
 
 On EKS clusters, the probe pod is labeled with `eks.amazonaws.com/skip-pod-identity-webhook: "true"` so the AWS-managed pod identity webhook skips this dry-run probe admission.
 

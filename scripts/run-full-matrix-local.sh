@@ -24,6 +24,18 @@ if [[ "$CLEANUP_IMG" != *:* ]]; then
   CLEANUP_IMG="${CLEANUP_IMG}:latest"
 fi
 
+reset_cluster() {
+  local cluster_name="$1"
+
+  if kind get clusters | grep -Fxq "${cluster_name}"; then
+    echo "==> Deleting existing Kind cluster ${cluster_name}"
+    if ! kind delete cluster --name "${cluster_name}"; then
+      echo "ERROR: Failed to delete Kind cluster '${cluster_name}'. Aborting." >&2
+      exit 1
+    fi
+  fi
+}
+
 run_suite() {
   local label="$1"
   local cluster_name="$2"
@@ -57,5 +69,7 @@ echo "==> Building local controller images"
 make -C "${CONTROLLER_ROOT}" docker-build docker-build-cleanup IMG="${IMG}" CLEANUP_IMG="${CLEANUP_IMG}"
 
 echo "==> Running the full Kind version matrix"
+reset_cluster "${NEWER_CLUSTER_NAME}"
 run_suite "kubernetes-${NEWER_VERSION}" "${NEWER_CLUSTER_NAME}" "${NEWER_NODE_IMAGE}" "true" "true" "true" "$@"
+reset_cluster "${OLDER_CLUSTER_NAME}"
 run_suite "kubernetes-${OLDER_VERSION}" "${OLDER_CLUSTER_NAME}" "${OLDER_NODE_IMAGE}" "true" "false" "false" "$@"

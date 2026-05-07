@@ -65,6 +65,8 @@ class TestWebhookAnnotations:
                 label_selector_app="rightsizing-demo",
                 cpu_request="250m",
                 mem_request="256Mi",
+                cpu_limit="400m",
+                mem_limit="512Mi",
             ),
         )
         create_multi_container_deployment(
@@ -268,6 +270,8 @@ class TestWebhookNamespacePause:
                 label_selector_app=self.DEPLOYMENT,
                 cpu_request="250m",
                 mem_request="256Mi",
+                cpu_limit="400m",
+                mem_limit="512Mi",
             ),
         )
 
