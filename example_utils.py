@@ -27,6 +27,9 @@ else:
     REPO_ROOT = _discover_repo_root(Path(__file__).resolve().parent)
     EXAMPLES_ROOT = (REPO_ROOT / "examples").resolve()
 INVALID_EXAMPLES_ROOT = EXAMPLES_ROOT / "invalid"
+EXCLUDED_VALID_EXAMPLE_ROOTS = {
+    EXAMPLES_ROOT / "gpus",
+}
 
 OPTIONAL_API_GROUPS = {
     "autoscaling.k8s.io": [
@@ -47,6 +50,7 @@ def all_valid_example_manifests() -> list[Path]:
         path
         for path in EXAMPLES_ROOT.rglob("*.yaml")
         if INVALID_EXAMPLES_ROOT not in path.parents
+        and not any(excluded in path.parents for excluded in EXCLUDED_VALID_EXAMPLE_ROOTS)
     )
 
 

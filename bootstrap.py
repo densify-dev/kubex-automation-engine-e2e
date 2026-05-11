@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
-import time
 import tempfile
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,9 +39,12 @@ class BootstrapConfig:
     install_vpa: bool = True
     cluster_name_value: str | None = None
     kubex_username: str = "dummy"
-    kubex_epassword: str = "dummy"
+    kubex_epassword: str | None = None
+    kubex_url_host: str | None = None
+    kubex_url_scheme: str | None = None
     recommendations_file: str | None = None
     load_kind_images: bool = False
+    deploy_kubex_stub: bool = False
 
 
 def run(
@@ -100,7 +104,7 @@ def ensure_namespace(config: BootstrapConfig) -> None:
 
 
 def ensure_recommendations_configmap(config: BootstrapConfig) -> None:
-    if not config.recommendations_file:
+    if not config.recommendations_file or config.deploy_kubex_stub:
         return
 
     ensure_namespace(config)
@@ -131,6 +135,148 @@ def ensure_recommendations_configmap(config: BootstrapConfig) -> None:
         "-f",
         "-",
         input_text=manifest,
+    )
+
+
+def ensure_kubex_stub(config: BootstrapConfig) -> None:
+    if not config.deploy_kubex_stub:
+        return
+
+    ensure_namespace(config)
+    server_path = Path(__file__).with_name("mock_kubex_server.py")
+    if not server_path.is_file():
+        raise RuntimeError(f"mock Kubex server not found: {server_path}")
+
+    script_manifest = run(
+        "kubectl",
+        "--context",
+        config.kube_context,
+        "create",
+        "configmap",
+        "kubex-stub-server",
+        "--namespace",
+        config.namespace,
+        f"--from-file=mock_kubex_server.py={server_path}",
+        "--dry-run=client",
+        "-o",
+        "yaml",
+        capture_output=True,
+    ).stdout
+    run(
+        "kubectl",
+        "--context",
+        config.kube_context,
+        "apply",
+        "-f",
+        "-",
+        input_text=script_manifest,
+    )
+
+    fixture_source = config.recommendations_file or str(
+        Path(__file__).resolve().parents[2] / "examples" / "recommendations.json"
+    )
+    fixture_path = Path(fixture_source).resolve()
+    if not fixture_path.is_file():
+        raise RuntimeError(f"recommendations fixture not found: {fixture_path}")
+
+    fixture_manifest = run(
+        "kubectl",
+        "--context",
+        config.kube_context,
+        "create",
+        "configmap",
+        "kubex-stub-fixtures",
+        "--namespace",
+        config.namespace,
+        f"--from-file=recommendations.json={fixture_path}",
+        "--dry-run=client",
+        "-o",
+        "yaml",
+        capture_output=True,
+    ).stdout
+    run(
+        "kubectl",
+        "--context",
+        config.kube_context,
+        "apply",
+        "-f",
+        "-",
+        input_text=fixture_manifest,
+    )
+
+    manifest = {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {"name": "kubex-stub", "namespace": config.namespace},
+        "spec": {
+            "replicas": 1,
+            "selector": {"matchLabels": {"app": "kubex-stub"}},
+            "template": {
+                "metadata": {"labels": {"app": "kubex-stub"}},
+                "spec": {
+                    "containers": [
+                        {
+                            "name": "mock",
+                            "image": "python:3.12-alpine",
+                            "command": ["python", "/app/mock_kubex_server.py"],
+                            "ports": [{"containerPort": 8080, "name": "http"}],
+                            "env": [
+                                {
+                                    "name": "KUBEX_RECOMMENDATIONS_FILE",
+                                    "value": "/fixtures/recommendations.json",
+                                }
+                            ],
+                            "volumeMounts": [
+                                {"name": "server", "mountPath": "/app", "readOnly": True},
+                                {"name": "fixtures", "mountPath": "/fixtures", "readOnly": True},
+                            ],
+                        }
+                    ],
+                    "volumes": [
+                        {"name": "server", "configMap": {"name": "kubex-stub-server"}},
+                        {"name": "fixtures", "configMap": {"name": "kubex-stub-fixtures"}},
+                    ],
+                },
+            },
+        },
+    }
+    service = {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {"name": "kubex-stub", "namespace": config.namespace},
+        "spec": {
+            "selector": {"app": "kubex-stub"},
+            "ports": [{"name": "http", "port": 8080, "targetPort": 8080}],
+        },
+    }
+    run(
+        "kubectl",
+        "--context",
+        config.kube_context,
+        "apply",
+        "-f",
+        "-",
+        input_text=json.dumps(manifest),
+    )
+    run(
+        "kubectl",
+        "--context",
+        config.kube_context,
+        "apply",
+        "-f",
+        "-",
+        input_text=json.dumps(service),
+    )
+    run(
+        "kubectl",
+        "--context",
+        config.kube_context,
+        "rollout",
+        "status",
+        "deployment/kubex-stub",
+        "--namespace",
+        config.namespace,
+        "--timeout=180s",
     )
 
 
@@ -175,7 +321,7 @@ def install_metrics_server(config: BootstrapConfig) -> None:
                     str(values_path),
                 )
                 return
-            except RuntimeError as exc:
+            except RuntimeError:
                 if attempt == 3:
                     raise
                 print(f"metrics-server install failed on attempt {attempt}; retrying", flush=True)
@@ -321,7 +467,11 @@ def _import_kind_image_via_ctr(kind_cluster_name: str, image: str) -> None:
         raise RuntimeError(f"no Kind nodes found for cluster {kind_cluster_name}")
 
     for node in nodes:
-        print(f"+ docker save {image} | docker exec -i {node} ctr -n=k8s.io images import --all-platforms -", flush=True)
+        print(
+            "+ docker save "
+            f"{image} | docker exec -i {node} ctr -n=k8s.io images import --all-platforms -",
+            flush=True,
+        )
         docker_save = subprocess.Popen(
             ["docker", "save", image],
             stdout=subprocess.PIPE,
@@ -352,7 +502,9 @@ def _import_kind_image_via_ctr(kind_cluster_name: str, image: str) -> None:
         _, docker_save_stderr = docker_save.communicate()
         if docker_save.returncode != 0:
             detail = docker_save_stderr.decode(errors="replace")
-            raise RuntimeError(f"docker save failed for {image} (exit {docker_save.returncode})\n{detail}")
+            raise RuntimeError(
+                f"docker save failed for {image} (exit {docker_save.returncode})\n{detail}"
+            )
         if docker_exec_return != 0:
             raise RuntimeError(
                 f"ctr images import failed for {image} on node {node} (exit {docker_exec_return})"
@@ -372,36 +524,42 @@ def _helm_install_args(chart: str, version: str | None) -> list[str]:
 
 def _controller_values(config: BootstrapConfig) -> dict:
     cluster_name = config.cluster_name_value or config.kind_cluster_name
-    if config.recommendations_file and not config.cluster_name_value:
+    if (
+        config.recommendations_file
+        and not config.cluster_name_value
+        and not config.deploy_kubex_stub
+    ):
         cluster_name = "local-cluster"
+
+    kubex_url_host = config.kubex_url_host or "localhost"
+    kubex_url_scheme = config.kubex_url_scheme or "https"
+    if config.deploy_kubex_stub:
+        kubex_url_host = f"kubex-stub.{config.namespace}.svc.cluster.local:8080"
+        kubex_url_scheme = "http"
 
     values = {
         "createSecrets": True,
         "kubex": {
-            "url": {"host": "localhost"},
+            "url": {"host": kubex_url_host, "scheme": kubex_url_scheme},
             "clusterName": cluster_name,
         },
         "kubexCredentials": {
             "username": config.kubex_username,
-            "epassword": config.kubex_epassword,
+            "epassword": config.kubex_epassword
+            or os.environ.get("KUBE_E2E_EPASSWORD")
+            or os.environ.get("KUBEX_E2E_EPASSWORD", ""),
         },
         "webhook": {"certManager": {"enabled": False}},
         "defaultAutomationStrategy": {"enabled": False},
+        "globalConfiguration": {"recommendationReloadInterval": "1m"},
     }
-    if config.recommendations_file:
+    if config.recommendations_file and not config.deploy_kubex_stub:
         values["localRecommendations"] = {
             "enabled": True,
             "configMapName": "recommendations",
             "fileName": "recommendations.json",
         }
-        values["globalConfiguration"] = {"suppressFetchRecommendations": True}
-        values["gateway"] = {
-            "image": {
-                "repository": "registry.k8s.io/pause",
-                "tag": "3.10",
-                "pullPolicy": "IfNotPresent",
-            }
-        }
+        values["globalConfiguration"]["suppressFetchRecommendations"] = True
     if config.controller_image_repository or config.controller_image_tag:
         if not (config.controller_image_repository and config.controller_image_tag):
             raise RuntimeError("controller image repository and tag must be set together")
@@ -437,7 +595,10 @@ def controller_values_file(config: BootstrapConfig):
 
 
 def install_controller(config: BootstrapConfig) -> None:
-    if not (_chart_is_local(config.helm_crds_chart) and _chart_is_local(config.helm_controller_chart)):
+    if not (
+        _chart_is_local(config.helm_crds_chart)
+        and _chart_is_local(config.helm_controller_chart)
+    ):
         run("helm", "repo", "add", "--force-update", config.helm_repo_name, config.helm_repo_url)
         run("helm", "repo", "update")
     ensure_namespace(config)
@@ -529,6 +690,8 @@ def bootstrap(config: BootstrapConfig) -> None:
         install_keda(config)
     if config.install_vpa:
         install_vpa(config)
+    if config.deploy_kubex_stub:
+        ensure_kubex_stub(config)
     if config.install_controller:
         install_controller(config)
 
@@ -551,7 +714,10 @@ def parse_args() -> BootstrapConfig:
     parser.add_argument("--cleanup-image-repository")
     parser.add_argument("--cleanup-image-tag")
     parser.add_argument("--cleanup-image-pull-policy", default="IfNotPresent")
+    parser.add_argument("--kubex-url-host")
+    parser.add_argument("--kubex-url-scheme")
     parser.add_argument("--recommendations-file")
+    parser.add_argument("--deploy-kubex-stub", action="store_true")
     parser.add_argument("--kind-node-image", default="kindest/node:v1.35.0")
     parser.add_argument("--load-kind-images", action="store_true")
     parser.add_argument("--no-controller", action="store_true")
@@ -576,9 +742,14 @@ def parse_args() -> BootstrapConfig:
         cleanup_image_repository=args.cleanup_image_repository,
         cleanup_image_tag=args.cleanup_image_tag,
         cleanup_image_pull_policy=args.cleanup_image_pull_policy,
+        kubex_epassword=os.environ.get("KUBE_E2E_EPASSWORD")
+        or os.environ.get("KUBEX_E2E_EPASSWORD"),
+        kubex_url_host=args.kubex_url_host,
+        kubex_url_scheme=args.kubex_url_scheme,
         recommendations_file=args.recommendations_file,
         kind_node_image=args.kind_node_image,
         load_kind_images=args.load_kind_images,
+        deploy_kubex_stub=args.deploy_kubex_stub,
         install_controller=not args.no_controller,
         install_metrics_server=not args.without_metrics_server,
         install_keda=not args.without_keda,

@@ -1,0 +1,33 @@
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: GpuConsolidationPolicy
+metadata:
+  name: gpu-consolidation-pool-a
+spec:
+  experimental:
+    gpuKaiContract: v1alpha1-2026-04
+  nodeSelector:
+    matchLabels:
+      kubex.ai/gpu-pool: pool-a
+  utilizationThresholdPercent: 75
+  requeueAfter: 1m
+
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: GpuConsolidationPolicy
+metadata:
+  name: gpu-consolidation-pool-b-l40s
+spec:
+  experimental:
+    gpuKaiContract: v1alpha1-2026-04
+  nodeSelector:
+    matchExpressions:
+    - key: kubex.ai/gpu-pool
+      operator: In
+      values:
+      - pool-b
+    - key: accelerator.nvidia.com/class
+      operator: In
+      values:
+      - l40s
+  utilizationThresholdPercent: 70
+  requeueAfter: 2m

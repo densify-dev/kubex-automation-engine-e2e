@@ -2,7 +2,10 @@
 
 import json
 import subprocess
+import socket
 import time
+import urllib.request
+from contextlib import contextmanager
 from typing import Any
 
 from kubernetes import client
@@ -152,6 +155,83 @@ def apply_manifest(manifest: dict, context: str) -> str:
     if result.returncode != 0:
         raise RuntimeError(f"kubectl apply failed:\n{result.stderr}")
     return result.stdout.strip()
+
+
+@contextmanager
+def port_forward_service(
+    kube_context: str,
+    namespace: str,
+    service_name: str,
+    local_port: int,
+    remote_port: int,
+):
+    proc = subprocess.Popen(
+        [
+            "kubectl",
+            "--context",
+            kube_context,
+            "port-forward",
+            f"svc/{service_name}",
+            f"{local_port}:{remote_port}",
+            "-n",
+            namespace,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                with socket.create_connection(("127.0.0.1", local_port), timeout=0.5):
+                    break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(
+                        f"port-forward to 127.0.0.1:{local_port} did not become ready within 10s"
+                    )
+                time.sleep(0.2)
+        yield
+    finally:
+        proc.terminate()
+
+
+def mock_kubex_request(
+    kube_context: str,
+    namespace: str,
+    method: str,
+    path: str,
+    payload: Any = None,
+    local_port: int = 18080,
+):
+    data = None
+    headers = {}
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    with port_forward_service(kube_context, namespace, "kubex-stub", local_port, 8080):
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{local_port}{path}",
+            data=data,
+            headers=headers,
+            method=method,
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            body = response.read().decode("utf-8")
+            if not body:
+                return None
+            return json.loads(body)
+
+
+def reset_mock_kubex_state(kube_context: str, namespace: str) -> None:
+    mock_kubex_request(kube_context, namespace, "POST", "/debug/reset", payload={})
+
+
+def get_mock_kubex_state(kube_context: str, namespace: str) -> dict[str, Any]:
+    state = mock_kubex_request(kube_context, namespace, "GET", "/debug/state")
+    if not isinstance(state, dict):
+        raise RuntimeError(f"unexpected mock state payload: {state!r}")
+    return state
 
 
 # ---------------------------------------------------------------------------

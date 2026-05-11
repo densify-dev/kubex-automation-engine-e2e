@@ -19,6 +19,7 @@ This document maps the current Helm chart values to the resources created by the
 | --- | --- |
 | `Deployment` | Runs the controller manager and gateway sidecar |
 | `Service` | Exposes metrics and webhook endpoints |
+| `ServiceMonitor` | Optional Prometheus scrape target for the metrics Service |
 | `MutatingWebhookConfiguration` | Registers pod mutation webhook |
 | `ValidatingWebhookConfiguration` | Registers validation webhook |
 | `Secret` | Stores gateway credentials and TLS material when `createSecrets=true` |
@@ -45,6 +46,7 @@ This document maps the current Helm chart values to the resources created by the
 | Key | Description |
 | --- | --- |
 | `kubex.url.host` | Kubex hostname, for example `example.kubex.ai` |
+| `kubex.url.scheme` | Scheme used when deriving `DENSIFY_BASE_URL` from `kubex.url.host` |
 | `kubex.clusterName` | Cluster identifier presented to Kubex |
 | `kubexCredentials.username` | Required when `createSecrets=true` |
 | `kubexCredentials.epassword` | Required when `createSecrets=true` |
@@ -87,6 +89,8 @@ stringData:
 
 Keep `kubex.url.host` set in your values file so the release configuration still documents the target Kubex instance, even when the secret is managed outside Helm.
 
+For non-TLS upstream endpoints, set `kubex.url.scheme` to `http`.
+
 Note: `kubexCredentials.userSecretName` is currently not consumed by this chart. When `createSecrets=false`, set `gateway.configSecretName` instead.
 
 ## Core Operational Values
@@ -103,10 +107,16 @@ Note: `kubexCredentials.userSecretName` is currently not consumed by this chart.
 | `webhook.certManager.enabled` | `false` | Use cert-manager instead of self-signed TLS |
 | `selfSignedCert.validity` | `3650` | Self-signed certificate validity in days |
 | `controllerManager.globalConfigReconcileInterval` | `1m` | Base reconcile cadence for global config controller |
+| `controllerManager.metricsBindAddress` | `:8080` | Metrics bind address used by the controller manager |
 | `kubex.requestTimeout` | `30s` | Kubex API request timeout |
 | `podSecurityContext` | chart default | Pod-level security context for the controller Deployment; defaults to `65534` for `runAsUser`, `runAsGroup`, and `fsGroup`, plus `runAsNonRoot=true` and `seccompProfile.type=RuntimeDefault` |
 | `openshift.enabled` | `false` | Enable OpenShift-oriented pod security context defaults and cleanup job settings without changing the default Kubernetes installation path |
 | `openshift.fsGroup` | `null` | Optional `fsGroup` applied when `openshift.enabled=true` unless already set in `podSecurityContext` |
+| `metrics.serviceMonitor.enabled` | `false` | Create a Prometheus Operator `ServiceMonitor` for the metrics Service |
+| `metrics.port` | `8080` | Service port for the metrics Service |
+| `metrics.serviceMonitor.namespaceSelector` | `[]` | Namespace names to watch from the ServiceMonitor; empty means all namespaces |
+| `metrics.serviceMonitor.scheme` | `http` | Scrape scheme for the controller metrics endpoint; HTTP pairs with `--metrics-secure=false` in the manager args |
+| `metrics.serviceMonitor.scrapeTimeout` | `""` | Optional scrape timeout; must be less than or equal to `metrics.serviceMonitor.interval` when set |
 | `gateway.securityContext` | chart default | Gateway sidecar container security context |
 | `cleanup.podSecurityContext` | `{}` | Optional pod security context for the pre-delete cleanup job |
 | `cleanup.securityContext` | chart default | Container security context for the pre-delete cleanup job |
@@ -144,6 +154,7 @@ Use [Global Configuration Reference](./Global-Configuration.md) for the CR field
 | `globalConfiguration.webhookProbe.resources` | `{}` | Resource requests and limits for the dry-run webhook probe container |
 | `globalConfiguration.webhookProbe.podSecurityContext` | `{}` | Pod security context for the dry-run webhook probe Pod |
 | `globalConfiguration.webhookProbe.securityContext` | `{}` | Container security context for the dry-run webhook probe container |
+| `experimental.gpuKaiContract` | `v1alpha1-2026-04` | Required acknowledgement token for experimental GPU/KAI CR fields rendered by the chart |
 
 ## Helm-Managed Policy Values
 

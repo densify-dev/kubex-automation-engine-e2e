@@ -23,12 +23,26 @@ CONTROLLER_IMAGE_PULL_POLICY="${CONTROLLER_IMAGE_PULL_POLICY:-IfNotPresent}"
 CLEANUP_IMAGE_REPOSITORY="${CLEANUP_IMAGE_REPOSITORY:-}"
 CLEANUP_IMAGE_TAG="${CLEANUP_IMAGE_TAG:-}"
 CLEANUP_IMAGE_PULL_POLICY="${CLEANUP_IMAGE_PULL_POLICY:-IfNotPresent}"
-RECOMMENDATIONS_FILE="${RECOMMENDATIONS_FILE:-${REPO_ROOT}/examples/recommendations.json}"
 LOAD_KIND_IMAGES="${LOAD_KIND_IMAGES:-}"
 HELM_CRDS_CHART="${HELM_CRDS_CHART:-}"
 HELM_CONTROLLER_CHART="${HELM_CONTROLLER_CHART:-}"
 HELM_CRDS_CHART_VERSION="${HELM_CRDS_CHART_VERSION:-}"
 HELM_CONTROLLER_CHART_VERSION="${HELM_CONTROLLER_CHART_VERSION:-}"
+KUBEX_URL_HOST="${KUBEX_URL_HOST:-}"
+KUBEX_URL_SCHEME="${KUBEX_URL_SCHEME:-}"
+DEPLOY_KUBEX_STUB="${DEPLOY_KUBEX_STUB:-true}"
+
+is_true() {
+  [[ "$1" == "1" ]] || [[ "$1" == "true" ]]
+}
+
+if [[ -z "${RECOMMENDATIONS_FILE:-}" ]]; then
+  if is_true "$DEPLOY_KUBEX_STUB"; then
+    RECOMMENDATIONS_FILE=""
+  else
+    RECOMMENDATIONS_FILE="${REPO_ROOT}/examples/recommendations.json"
+  fi
+fi
 
 WITH_METRICS_SERVER="${WITH_METRICS_SERVER:-true}"
 WITH_KEDA="${WITH_KEDA:-true}"
@@ -153,16 +167,25 @@ bootstrap_cluster() {
   if [[ -n "$HELM_CONTROLLER_CHART_VERSION" ]]; then
     bootstrap_args+=(--helm-controller-chart-version "$HELM_CONTROLLER_CHART_VERSION")
   fi
-  if [[ "$LOAD_KIND_IMAGES" == "1" ]] || [[ "$LOAD_KIND_IMAGES" == "true" ]]; then
+  if [[ -n "$KUBEX_URL_HOST" ]]; then
+    bootstrap_args+=(--kubex-url-host "$KUBEX_URL_HOST")
+  fi
+  if [[ -n "$KUBEX_URL_SCHEME" ]]; then
+    bootstrap_args+=(--kubex-url-scheme "$KUBEX_URL_SCHEME")
+  fi
+  if is_true "$DEPLOY_KUBEX_STUB"; then
+    bootstrap_args+=(--deploy-kubex-stub)
+  fi
+  if is_true "$LOAD_KIND_IMAGES"; then
     bootstrap_args+=(--load-kind-images)
   fi
-  if [[ "$WITH_METRICS_SERVER" != "1" ]] && [[ "$WITH_METRICS_SERVER" != "true" ]]; then
+  if ! is_true "$WITH_METRICS_SERVER"; then
     bootstrap_args+=(--without-metrics-server)
   fi
-  if [[ "$WITH_KEDA" != "1" ]] && [[ "$WITH_KEDA" != "true" ]]; then
+  if ! is_true "$WITH_KEDA"; then
     bootstrap_args+=(--without-keda)
   fi
-  if [[ "$WITH_VPA" != "1" ]] && [[ "$WITH_VPA" != "true" ]]; then
+  if ! is_true "$WITH_VPA"; then
     bootstrap_args+=(--without-vpa)
   fi
 
@@ -215,7 +238,16 @@ run_functional_suite() {
   if [[ -n "$HELM_CONTROLLER_CHART_VERSION" ]]; then
     args+=(--helm-controller-chart-version "$HELM_CONTROLLER_CHART_VERSION")
   fi
-  if [[ "$KEEP_KIND_CLUSTER" == "1" ]] || [[ "$KEEP_KIND_CLUSTER" == "true" ]]; then
+  if [[ -n "$KUBEX_URL_HOST" ]]; then
+    args+=(--kubex-url-host "$KUBEX_URL_HOST")
+  fi
+  if [[ -n "$KUBEX_URL_SCHEME" ]]; then
+    args+=(--kubex-url-scheme "$KUBEX_URL_SCHEME")
+  fi
+  if is_true "$DEPLOY_KUBEX_STUB"; then
+    args+=(--deploy-kubex-stub)
+  fi
+  if is_true "$KEEP_KIND_CLUSTER"; then
     args+=(--keep-kind-cluster)
   fi
   # pytest_targets is guaranteed non-empty here by the default branch above.

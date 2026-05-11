@@ -4,7 +4,7 @@ Validate kubexCredentials.epassword is provided if createSecrets is true
 {{- define "kubex-automation-engine.kubexEpassword" -}}
 {{- if .Values.createSecrets }}
 {{- .Values.kubexCredentials.epassword | required "An epassword must be provided in values.yaml under kubexCredentials.epassword" -}}
-{{- end }}
+{{- end -}}
 {{- end }}
 
 {{/*
@@ -119,9 +119,19 @@ Controller manager container args
 - --health-probe-bind-address={{ .Values.controllerManager.healthProbeBindAddress }}
 {{- if .Values.metrics.enabled }}
 - --metrics-bind-address={{ .Values.controllerManager.metricsBindAddress }}
+{{- include "kubex-automation-engine.metricsSecureArg" . }}
 {{- end }}
 {{- range .Values.controllerManager.extraArgs }}
 - {{ . }}
+{{- end }}
+{{- end }}
+
+{{/*
+Controller metrics security flag.
+*/}}
+{{- define "kubex-automation-engine.metricsSecureArg" -}}
+{{- if and .Values.metrics.enabled (eq .Values.metrics.serviceMonitor.scheme "http") }}
+- --metrics-secure=false
 {{- end }}
 {{- end }}
 

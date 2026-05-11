@@ -85,6 +85,21 @@ def pytest_addoption(parser):
         "--recommendations-file", default=None, help="Path to a recommendations JSON fixture file"
     )
     parser.addoption(
+        "--kubex-url-host",
+        default=None,
+        help="Override the upstream host used by the gateway sidecar",
+    )
+    parser.addoption(
+        "--kubex-url-scheme",
+        default=None,
+        help="Override the upstream scheme used by the gateway sidecar",
+    )
+    parser.addoption(
+        "--deploy-kubex-stub",
+        action="store_true",
+        help="Deploy the in-cluster mock Kubex stub and point the gateway sidecar at it",
+    )
+    parser.addoption(
         "--keep-kind-cluster",
         action="store_true",
         help="Keep the Kind cluster after the test session",
@@ -230,8 +245,11 @@ def kind_cluster(
             controller_image_repository=controller_image_repository,
             controller_image_tag=controller_image_tag,
             controller_image_pull_policy=controller_image_pull_policy,
+            kubex_url_host=request.config.getoption("--kubex-url-host"),
+            kubex_url_scheme=request.config.getoption("--kubex-url-scheme"),
             recommendations_file=request.config.getoption("--recommendations-file"),
             kind_node_image=request.config.getoption("--kind-node-image"),
+            deploy_kubex_stub=request.config.getoption("--deploy-kubex-stub"),
             install_controller=True,
             install_metrics_server=not request.config.getoption("--without-metrics-server"),
             install_keda=not request.config.getoption("--without-keda"),

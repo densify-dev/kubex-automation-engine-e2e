@@ -53,7 +53,6 @@ run_suite() {
     WITH_KEDA="${with_keda}" \
     WITH_VPA="${with_vpa}" \
     EXAMPLES_ROOT="${CONTROLLER_ROOT}/examples" \
-    RECOMMENDATIONS_FILE="${CONTROLLER_ROOT}/examples/recommendations.json" \
     HELM_CRDS_CHART="${CONTROLLER_ROOT}/charts/kubex-crds" \
     HELM_CONTROLLER_CHART="${CONTROLLER_ROOT}/charts/kubex-automation-engine" \
     HELM_REPO_URL="" \

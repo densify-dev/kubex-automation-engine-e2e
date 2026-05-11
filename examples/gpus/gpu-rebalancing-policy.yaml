@@ -1,0 +1,63 @@
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: gpu-rebalancing-strategy
+  namespace: default
+spec:
+  experimental:
+    gpuKaiContract: v1alpha1-2026-04
+  enablement:
+    gpu:
+      overrideScheduler: none
+      requests:
+        upsize: true
+        downsize: true
+        setFromUnspecified: false
+
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: GpuRebalancingPolicy
+metadata:
+  name: gpu-rebalancing-policy
+  namespace: default
+spec:
+  experimental:
+    gpuKaiContract: v1alpha1-2026-04
+  scope:
+    labelSelector:
+      matchLabels:
+        app: gpu-vanilla-2kai-demo
+  minPodMetricsAge: 1m
+  metrics:
+    compute:
+      upsize:
+        thresholdPercent: 125
+        metricsWindow: 2m
+        headroomPercent: 20
+        maxPercent: 200
+      scaleBack:
+        thresholdPercent: 75
+        metricsWindow: 2m
+        headroomPercent: 20
+      prometheus:
+        metric: kubex_gpu_container_compute_utilization_percent
+        namespaceLabel: namespace
+        podLabel: pod
+        containerLabel: container
+    memory:
+      upsize:
+        thresholdPercent: 125
+        metricsWindow: 2m
+        headroomPercent: 20
+        maxPercent: 200
+      scaleBack:
+        thresholdPercent: 75
+        metricsWindow: 2m
+        headroomPercent: 20
+      prometheus:
+        metric: kubex_gpu_container_memory_utilization_percent
+        namespaceLabel: namespace
+        podLabel: pod
+        containerLabel: container
+  automationStrategyRef:
+    name: gpu-rebalancing-strategy
