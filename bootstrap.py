@@ -68,6 +68,13 @@ def run(
     return result
 
 
+def _discover_repo_root(start: Path) -> Path:
+    for candidate in (start, *start.parents):
+        if (candidate / "examples" / "recommendations.json").is_file():
+            return candidate
+    raise RuntimeError("unable to locate repo root for recommendations fixture")
+
+
 def ensure_kind_cluster(config: BootstrapConfig) -> None:
     clusters = run("kind", "get", "clusters", capture_output=True).stdout.splitlines()
     if config.kind_cluster_name in clusters:
@@ -173,7 +180,7 @@ def ensure_kubex_stub(config: BootstrapConfig) -> None:
     )
 
     fixture_source = config.recommendations_file or str(
-        Path(__file__).resolve().parents[2] / "examples" / "recommendations.json"
+        _discover_repo_root(Path(__file__).resolve().parent) / "examples" / "recommendations.json"
     )
     fixture_path = Path(fixture_source).resolve()
     if not fixture_path.is_file():
@@ -546,7 +553,6 @@ def _controller_values(config: BootstrapConfig) -> dict:
         "kubexCredentials": {
             "username": config.kubex_username,
             "epassword": config.kubex_epassword
-            or os.environ.get("KUBE_E2E_EPASSWORD")
             or os.environ.get("KUBEX_E2E_EPASSWORD", ""),
         },
         "webhook": {"certManager": {"enabled": False}},
@@ -742,8 +748,7 @@ def parse_args() -> BootstrapConfig:
         cleanup_image_repository=args.cleanup_image_repository,
         cleanup_image_tag=args.cleanup_image_tag,
         cleanup_image_pull_policy=args.cleanup_image_pull_policy,
-        kubex_epassword=os.environ.get("KUBE_E2E_EPASSWORD")
-        or os.environ.get("KUBEX_E2E_EPASSWORD"),
+        kubex_epassword=os.environ.get("KUBEX_E2E_EPASSWORD"),
         kubex_url_host=args.kubex_url_host,
         kubex_url_scheme=args.kubex_url_scheme,
         recommendations_file=args.recommendations_file,
