@@ -69,7 +69,7 @@ class TestMetrics:
                 kube_context,
                 "port-forward",
                 f"svc/{svc_name}",
-                "18444:8443",
+                "18444:8080",
                 "-n",
                 controller_namespace,
             ],
@@ -78,7 +78,7 @@ class TestMetrics:
         )
         try:
             time.sleep(3)
-            # Metrics endpoint is plain HTTP despite the 8443 port name
+            # Metrics endpoint is plain HTTP on the service port.
             result = subprocess.run(
                 ["curl", "-s", "http://localhost:18444/metrics"],
                 capture_output=True,
