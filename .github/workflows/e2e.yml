@@ -64,6 +64,7 @@ jobs:
       HELM_CONTROLLER_CHART: charts/kubex-automation-engine
       HELM_CRDS_CHART_VERSION: ${{ github.event.inputs.crds_chart_version }}
       HELM_CONTROLLER_CHART_VERSION: ${{ github.event.inputs.controller_chart_version }}
+      KUBEX_E2E_EPASSWORD: ${{ secrets.KUBE_E2E_EPASSWORD }}
       CLUSTER_NAME: ${{ matrix.kubernetes.cluster_name }}
       NODE_IMAGE: kindest/node:${{ matrix.kubernetes.version }}
       WITH_METRICS_SERVER: ${{ matrix.kubernetes.with_metrics_server }}
@@ -119,6 +120,13 @@ jobs:
       - name: Install kubectl
         uses: azure/setup-kubectl@v4
 
+      - name: Validate e2e password secret
+        run: |
+          if [[ -z "${KUBEX_E2E_EPASSWORD:-}" ]]; then
+            echo "KUBEX_E2E_EPASSWORD secret is required"
+            exit 1
+          fi
+
       - name: Run full suite
         run: ./scripts/run-full-suite.sh
         env:
@@ -128,7 +136,7 @@ jobs:
           HELM_NAMESPACE: ${{ env.HELM_NAMESPACE }}
           CONTROLLER_IMAGE_REPOSITORY: ${{ env.CONTROLLER_IMAGE_REPOSITORY }}
           CONTROLLER_IMAGE_TAG: ${{ env.CONTROLLER_IMAGE_TAG }}
-          KUBE_E2E_EPASSWORD: ${{ secrets.KUBE_E2E_EPASSWORD }}
+          KUBEX_E2E_EPASSWORD: ${{ env.KUBEX_E2E_EPASSWORD }}
           HELM_REPO_URL: ${{ env.HELM_REPO_URL }}
           HELM_CRDS_CHART: ${{ env.HELM_CRDS_CHART }}
           HELM_CONTROLLER_CHART: ${{ env.HELM_CONTROLLER_CHART }}
