@@ -72,3 +72,4 @@ reset_cluster "${NEWER_CLUSTER_NAME}"
 run_suite "kubernetes-${NEWER_VERSION}" "${NEWER_CLUSTER_NAME}" "${NEWER_NODE_IMAGE}" "true" "true" "true" "$@"
 reset_cluster "${OLDER_CLUSTER_NAME}"
 run_suite "kubernetes-${OLDER_VERSION}" "${OLDER_CLUSTER_NAME}" "${OLDER_NODE_IMAGE}" "true" "false" "false" "$@"
+
