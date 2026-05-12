@@ -4,8 +4,10 @@ import json
 import subprocess
 import socket
 import time
+import urllib.error
 import urllib.request
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from typing import Any
 
 from kubernetes import client
@@ -216,11 +218,24 @@ def mock_kubex_request(
             headers=headers,
             method=method,
         )
-        with urllib.request.urlopen(request, timeout=10) as response:
-            body = response.read().decode("utf-8")
-            if not body:
-                return None
-            return json.loads(body)
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                with urllib.request.urlopen(request, timeout=10) as response:
+                    body = response.read().decode("utf-8")
+                    if not body:
+                        return None
+                    return json.loads(body)
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.2)
+            except urllib.error.URLError as exc:
+                if isinstance(exc, urllib.error.HTTPError):
+                    raise
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.2)
 
 
 def reset_mock_kubex_state(kube_context: str, namespace: str) -> None:
@@ -392,7 +407,15 @@ def get_deployment_pod(core: client.CoreV1Api, namespace: str, deployment_name: 
     ).items
     if not pods:
         raise RuntimeError(f"no pod found for deployment {deployment_name}")
-    return sorted(pods, key=lambda pod: pod.metadata.name)[0]
+    active_pods = [pod for pod in pods if not pod.metadata.deletion_timestamp]
+    candidates = active_pods or pods
+    return max(
+        candidates,
+        key=lambda pod: (
+            pod.metadata.creation_timestamp or datetime.min.replace(tzinfo=timezone.utc),
+            pod.metadata.name,
+        ),
+    )
 
 
 def get_pod_resources(core: client.CoreV1Api, namespace: str, pod_name: str) -> dict:

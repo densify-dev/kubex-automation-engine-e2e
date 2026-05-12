@@ -93,6 +93,8 @@ class TestKubexMock:
     def test_mock_receives_heartbeat_policy_and_mutations(
         self, k8s_clients, kube_context, controller_namespace
     ):
+        captured = {"state": None}
+
         k8s_clients.custom.create_namespaced_custom_object(
             GROUP,
             VERSION,
@@ -122,6 +124,7 @@ class TestKubexMock:
 
         def uploads_observed():
             state = get_mock_kubex_state(kube_context, controller_namespace)
+            captured["state"] = state
             return (
                 len(state["heartbeats"]) > 0
                 and len(state["policies"]) > 0
@@ -134,7 +137,8 @@ class TestKubexMock:
             message="heartbeat, policy snapshot, and mutation uploads to Kubex mock",
         )
 
-        state = get_mock_kubex_state(kube_context, controller_namespace)
+        state = captured["state"]
+        assert state is not None
         heartbeat_payload = state["heartbeats"][-1]["payload"]
         assert heartbeat_payload.get("imageTag")
         assert "recommendationReload" in heartbeat_payload
