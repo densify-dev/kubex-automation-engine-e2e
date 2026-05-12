@@ -222,13 +222,6 @@ class TestStrategySchedulingBehavior:
             pod = latest_live_pod()
             return get_pod_resources(k8s_clients.core, self.NAMESPACE, pod.metadata.name)
 
-        def resources_unchanged():
-            resources = latest_live_pod_resources()["app"]
-            return (
-                resources["requests"].get("cpu") == "100m"
-                and resources["requests"].get("memory") == "64Mi"
-            )
-
         def deployment_has_static_policy_annotation():
             try:
                 dep = k8s_clients.apps.read_namespaced_deployment(self.DEPLOYMENT, self.NAMESPACE)
@@ -257,8 +250,15 @@ class TestStrategySchedulingBehavior:
             message="static policy annotation on deployment",
         )
 
+        initial_pod = latest_live_pod()
+        initial_pod_name = initial_pod.metadata.name
+
         time.sleep(20)
-        assert resources_unchanged(), "resize should remain blocked by the active exclusion window"
+        resources = get_pod_resources(k8s_clients.core, self.NAMESPACE, initial_pod_name)["app"]
+        assert (
+            resources["requests"].get("cpu") == "100m"
+            and resources["requests"].get("memory") == "64Mi"
+        ), "resize should remain blocked by the active exclusion window"
 
         # ── Phase 2: open the scheduling window and verify the deferred resize lands ──
         # Switch the strategy from an always-blocked exclusion window to an
