@@ -1,7 +1,5 @@
 """Tests: in-cluster Kubex mock receives recommendations and gateway uploads."""
 
-import time
-
 import pytest
 from kubernetes.client.rest import ApiException
 
@@ -51,7 +49,21 @@ class TestKubexMock:
         k8s_clients.custom.replace_cluster_custom_object(
             GROUP, VERSION, "globalconfigurations", "global-config", gc
         )
-        time.sleep(2)
+
+        def gc_intervals_updated():
+            current = get_crd(k8s_clients.custom, "globalconfigurations", "global-config")
+            spec = current.get("spec", {})
+            return (
+                spec.get("heartbeatInterval") == "1m"
+                and spec.get("mutationLogInterval") == "1m"
+                and spec.get("snapshotInterval") == "1m"
+            )
+
+        wait_for(
+            gc_intervals_updated,
+            timeout=30,
+            message="global configuration interval overrides",
+        )
 
         yield
 

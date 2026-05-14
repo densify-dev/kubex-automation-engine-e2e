@@ -59,6 +59,13 @@ def kubectl_diagnostics(*args, context=None) -> None:
     subprocess.run(cmd, capture_output=False, text=True, check=False)
 
 
+def _get_free_local_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        return int(sock.getsockname()[1])
+
+
 def wait_for(condition_fn, timeout=DEFAULT_TIMEOUT, interval=POLL_INTERVAL, message="condition"):
     """Poll condition_fn until it returns True or timeout expires."""
     deadline = time.time() + timeout
@@ -204,16 +211,23 @@ def mock_kubex_request(
     method: str,
     path: str,
     payload: Any = None,
-    local_port: int = 18080,
+    local_port: int | None = None,
 ):
     data = None
     headers = {}
+    port = local_port or _get_free_local_port()
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
         headers["Content-Type"] = "application/json"
-    with port_forward_service(kube_context, namespace, "kubex-stub", local_port, 8080):
+    with port_forward_service(
+        kube_context,
+        namespace,
+        "kubex-stub",
+        port,
+        8080,
+    ):
         request = urllib.request.Request(
-            f"http://127.0.0.1:{local_port}{path}",
+            f"http://127.0.0.1:{port}{path}",
             data=data,
             headers=headers,
             method=method,

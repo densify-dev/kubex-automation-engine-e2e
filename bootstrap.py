@@ -544,6 +544,12 @@ def _controller_values(config: BootstrapConfig) -> dict:
         kubex_url_host = f"kubex-stub.{config.namespace}.svc.cluster.local:8080"
         kubex_url_scheme = "http"
 
+    kubex_epassword = config.kubex_epassword or os.environ.get("KUBEX_E2E_EPASSWORD")
+    if not config.deploy_kubex_stub and not kubex_epassword:
+        raise RuntimeError(
+            "KUBEX_E2E_EPASSWORD must be set when deploy_kubex_stub is disabled"
+        )
+
     values = {
         "createSecrets": True,
         "kubex": {
@@ -552,8 +558,7 @@ def _controller_values(config: BootstrapConfig) -> dict:
         },
         "kubexCredentials": {
             "username": config.kubex_username,
-            "epassword": config.kubex_epassword
-            or os.environ.get("KUBEX_E2E_EPASSWORD", ""),
+            "epassword": kubex_epassword or "",
         },
         "webhook": {"certManager": {"enabled": False}},
         "defaultAutomationStrategy": {"enabled": False},
