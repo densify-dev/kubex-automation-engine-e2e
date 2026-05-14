@@ -23,7 +23,7 @@ from helpers import (
 class TestKubexMock:
     STRATEGY_NAME = "e2e-kubex-mock-strategy"
     POLICY_NAME = "e2e-kubex-mock-policy"
-    DEPLOYMENT = "kubex-mock-demo"
+    DEPLOYMENT = "rightsizing-demo"
 
     @pytest.fixture(autouse=True)
     def setup_teardown(self, request, k8s_clients, kube_context, controller_namespace):
