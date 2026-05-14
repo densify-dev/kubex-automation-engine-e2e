@@ -17,6 +17,10 @@ from helpers import get_deployment_resources
 
 
 class TestExampleBehavior:
+    NO_READINESS_GATE_MANIFESTS = {
+        EXAMPLES_ROOT / "automationstrategy" / "node-allocatable-headroom.yaml",
+    }
+
     @pytest.mark.timeout(300)
     @pytest.mark.parametrize(
         "manifest_path",
@@ -33,7 +37,8 @@ class TestExampleBehavior:
         try:
             apply_manifest(manifest_path, kube_context)
             assert_declared_resources_exist(manifest_path, kube_context)
-            wait_for_declared_workloads_ready(manifest_path, k8s_clients)
+            if manifest_path not in self.NO_READINESS_GATE_MANIFESTS:
+                wait_for_declared_workloads_ready(manifest_path, k8s_clients)
         finally:
             delete_manifest_in_reverse(manifest_path, kube_context)
 
