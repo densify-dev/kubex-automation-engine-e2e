@@ -338,6 +338,47 @@ def create_multi_container_deployment(
     return apps.create_namespaced_deployment(namespace, deployment)
 
 
+def create_stateful_set(
+    apps: client.AppsV1Api,
+    namespace: str,
+    name: str,
+    service_name: str,
+    containers: list[dict[str, Any]],
+    labels: dict[str, str] | None = None,
+    replicas: int = 1,
+) -> client.V1StatefulSet:
+    """Create a minimal StatefulSet for affinity and replacement tests."""
+    workload_labels = dict(labels or {"app": name})
+    stateful_set = client.V1StatefulSet(
+        metadata=client.V1ObjectMeta(name=name, namespace=namespace, labels=workload_labels),
+        spec=client.V1StatefulSetSpec(
+            service_name=service_name,
+            replicas=replicas,
+            selector=client.V1LabelSelector(match_labels=workload_labels),
+            template=client.V1PodTemplateSpec(
+                metadata=client.V1ObjectMeta(labels=workload_labels),
+                spec=client.V1PodSpec(
+                    termination_grace_period_seconds=0,
+                    containers=[
+                        client.V1Container(
+                            name=container["name"],
+                            image=container.get("image", "registry.k8s.io/pause:3.10"),
+                            command=container.get("command"),
+                            args=container.get("args"),
+                            resources=client.V1ResourceRequirements(
+                                requests=container.get("requests"),
+                                limits=container.get("limits"),
+                            ),
+                        )
+                        for container in containers
+                    ],
+                ),
+            ),
+        ),
+    )
+    return apps.create_namespaced_stateful_set(namespace, stateful_set)
+
+
 def delete_deployment(apps: client.AppsV1Api, namespace: str, name: str) -> None:
     """Delete a deployment and wait for full removal before returning."""
     try:
@@ -366,6 +407,38 @@ def delete_deployment(apps: client.AppsV1Api, namespace: str, name: str) -> None
             f"available_replicas={getattr(status, 'available_replicas', None)!r}"
         )
     raise RuntimeError(f"timed out waiting for deployment {namespace}/{name} to be removed")
+
+
+def delete_stateful_set(apps: client.AppsV1Api, namespace: str, name: str) -> None:
+    """Delete a StatefulSet and wait for full removal before returning."""
+    try:
+        apps.delete_namespaced_stateful_set(name, namespace)
+    except ApiException as exc:
+        if exc.status == 404:
+            return
+        raise RuntimeError(f"failed to delete statefulset {namespace}/{name}: {exc}") from exc
+    deadline = time.time() + 30
+    last_observed = None
+    while time.time() < deadline:
+        try:
+            last_observed = apps.read_namespaced_stateful_set(name, namespace)
+            time.sleep(1)
+        except ApiException as exc:
+            if exc.status == 404:
+                return
+            raise RuntimeError(
+                f"failed while waiting for statefulset {namespace}/{name} removal: {exc}"
+            ) from exc
+    if last_observed is not None:
+        status = last_observed.status
+        raise RuntimeError(
+            "timed out waiting for statefulset "
+            f"{namespace}/{name} to be removed; "
+            f"replicas={getattr(status, 'replicas', None)!r}, "
+            f"ready_replicas={getattr(status, 'ready_replicas', None)!r}, "
+            f"current_replicas={getattr(status, 'current_replicas', None)!r}"
+        )
+    raise RuntimeError(f"timed out waiting for statefulset {namespace}/{name} to be removed")
 
 
 def delete_hpa(namespace: str, name: str) -> None:
@@ -413,6 +486,11 @@ def get_deployment(apps: client.AppsV1Api, namespace: str, name: str) -> client.
     return apps.read_namespaced_deployment(name, namespace)
 
 
+def get_stateful_set(apps: client.AppsV1Api, namespace: str, name: str) -> client.V1StatefulSet:
+    """Fetch a StatefulSet."""
+    return apps.read_namespaced_stateful_set(name, namespace)
+
+
 def get_deployment_pod(core: client.CoreV1Api, namespace: str, deployment_name: str):
     """Return the single pod created for a deployment-style test workload."""
     pods = core.list_namespaced_pod(
@@ -421,6 +499,25 @@ def get_deployment_pod(core: client.CoreV1Api, namespace: str, deployment_name: 
     ).items
     if not pods:
         raise RuntimeError(f"no pod found for deployment {deployment_name}")
+    active_pods = [pod for pod in pods if not pod.metadata.deletion_timestamp]
+    candidates = active_pods or pods
+    return max(
+        candidates,
+        key=lambda pod: (
+            pod.metadata.creation_timestamp or datetime.min.replace(tzinfo=timezone.utc),
+            pod.metadata.name,
+        ),
+    )
+
+
+def get_stateful_set_pod(core: client.CoreV1Api, namespace: str, stateful_set_name: str):
+    """Return the current pod created for a single-replica StatefulSet test workload."""
+    pods = core.list_namespaced_pod(
+        namespace,
+        label_selector=f"statefulset.kubernetes.io/pod-name={stateful_set_name}-0",
+    ).items
+    if not pods:
+        raise RuntimeError(f"no pod found for statefulset {stateful_set_name}")
     active_pods = [pod for pod in pods if not pod.metadata.deletion_timestamp]
     candidates = active_pods or pods
     return max(

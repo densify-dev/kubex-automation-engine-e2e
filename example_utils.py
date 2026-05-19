@@ -168,16 +168,25 @@ def wait_for_declared_workloads_ready(manifest_path: Path, k8s_clients) -> None:
         kind = doc["kind"]
         namespace = doc["metadata"].get("namespace")
         name = doc["metadata"]["name"]
-        if kind != "Deployment":
-            continue
-
         expected_replicas = doc.get("spec", {}).get("replicas", 1)
 
-        wait_for(
-            lambda: (
-                (deployment := k8s_clients.apps.read_namespaced_deployment(name, namespace))
-                and (deployment.status.ready_replicas or 0) >= expected_replicas
-            ),
-            timeout=180,
-            message=f"deployment {namespace}/{name} readiness",
-        )
+        if kind == "Deployment":
+            wait_for(
+                lambda: (
+                    (deployment := k8s_clients.apps.read_namespaced_deployment(name, namespace))
+                    and (deployment.status.ready_replicas or 0) >= expected_replicas
+                ),
+                timeout=180,
+                message=f"deployment {namespace}/{name} readiness",
+            )
+            continue
+
+        if kind == "StatefulSet":
+            wait_for(
+                lambda: (
+                    (stateful_set := k8s_clients.apps.read_namespaced_stateful_set(name, namespace))
+                    and (stateful_set.status.ready_replicas or 0) >= expected_replicas
+                ),
+                timeout=180,
+                message=f"statefulset {namespace}/{name} readiness",
+            )
