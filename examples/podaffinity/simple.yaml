@@ -1,0 +1,70 @@
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: PodAffinity
+metadata:
+  name: sample-pod-affinity
+spec:
+  scope:
+    workloadTypes:
+      - StatefulSet
+    namespaceSelector:
+      operator: In
+      values:
+        - default
+    labelSelector:
+      matchLabels:
+        app: pod-affinity-demo
+  affinity:
+    nodes:
+      - automation-controller-dev-control-plane
+      - worker-1
+  weight: 100
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: pod-affinity-demo
+  namespace: default
+  labels:
+    app: pod-affinity-demo
+spec:
+  serviceName: pod-affinity-demo
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pod-affinity-demo
+  template:
+    metadata:
+      labels:
+        app: pod-affinity-demo
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: demo
+          image: busybox:1.36
+          command: ["sh", "-c", "sleep 3600"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pod-affinity-demo
+  namespace: default
+spec:
+  clusterIP: None
+  selector:
+    app: pod-affinity-demo
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
