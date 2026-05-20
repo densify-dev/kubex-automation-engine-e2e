@@ -173,7 +173,7 @@ e2e-testing/
     ├── test_example_behavior.py     # Live-cluster behavior coverage for vendored examples
     ├── test_resize_behavior.py      # Real workload in-place resize vs eviction fallback by Kubernetes version
     ├── test_webhook.py              # Mutating webhook annotation injection
-    ├── test_pod_affinity.py         # StatefulSet PodAffinity admission mutation
+    ├── test_pod_affinity_policy.py  # StatefulSet PodAffinityPolicy admission mutation
     └── test_safety.py              # HPA filter, protected namespace
 ```
 
@@ -196,7 +196,7 @@ e2e-testing/
 | `TestHPAExampleBehavior` | `test_example_behavior.py` | Example-backed HPA safety | Applies HPA examples and verifies the controller preserves workload requests |
 | `TestResizeBehavior` | `test_resize_behavior.py` | Real workload resize behavior | Verifies pod identity stays stable only when the live cluster actually supports in-place resize, and changes otherwise |
 | `TestWebhookAnnotations` | `test_webhook.py` | Mutating webhook pod annotation | Checks `automation-webhook.kubex.ai/pod-rightsizing-info`; verifies `PodAdmissionWebhookHealthy` condition |
-| `TestPodAffinity` | `test_pod_affinity.py` | StatefulSet PodAffinity behavior | Verifies matching StatefulSets get preferred hostname affinity on replacement pods while non-matching StatefulSets stay unchanged |
+| `TestPodAffinityPolicy` | `test_pod_affinity_policy.py` | StatefulSet PodAffinityPolicy behavior | Verifies matching StatefulSets get preferred hostname affinity on replacement pods while non-matching StatefulSets stay unchanged |
 | `TestHPAFilter` | `test_safety.py` | Safety check: HPA protection | Resize must be blocked when an HPA targets the workload |
 | `TestProtectedNamespace` | `test_safety.py` | Safety check: protected namespace patterns | `kube-*` default; custom pattern round-trip |
 

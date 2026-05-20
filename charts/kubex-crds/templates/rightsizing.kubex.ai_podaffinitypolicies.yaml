@@ -4,20 +4,20 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
-  name: podaffinities.rightsizing.kubex.ai
+  name: podaffinitypolicies.rightsizing.kubex.ai
 spec:
   group: rightsizing.kubex.ai
   names:
-    kind: PodAffinity
-    listKind: PodAffinityList
-    plural: podaffinities
-    singular: podaffinity
+    kind: PodAffinityPolicy
+    listKind: PodAffinityPolicyList
+    plural: podaffinitypolicies
+    singular: podaffinitypolicy
   scope: Cluster
   versions:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: PodAffinity is the Schema for the podaffinities API.
+        description: PodAffinityPolicy is the Schema for the podaffinitypolicies API.
         properties:
           apiVersion:
             description: |-
@@ -37,7 +37,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of PodAffinity
+            description: spec defines the desired state of PodAffinityPolicy
             properties:
               affinity:
                 description: affinity describes the preferred node affinity to inject
@@ -156,7 +156,7 @@ spec:
               weight:
                 default: 0
                 description: |-
-                  weight determines which policy wins when multiple PodAffinity policies match.
+                  weight determines which policy wins when multiple PodAffinityPolicy policies match.
                   Higher weights take precedence. When weights are equal, older policies win.
                 format: int32
                 minimum: 0
@@ -166,7 +166,7 @@ spec:
             - scope
             type: object
           status:
-            description: status defines the observed state of PodAffinity
+            description: status defines the observed state of PodAffinityPolicy
             properties:
               conditions:
                 description: |-

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import yaml
 
-from helpers import kubectl, wait_for
+from helpers import kubectl, wait_for, wait_for_stateful_set_ready
 
 
 def _discover_repo_root(start: Path) -> Path:
@@ -164,6 +164,16 @@ def assert_declared_resources_exist(manifest_path: Path, kube_context: str) -> N
 
 
 def wait_for_declared_workloads_ready(manifest_path: Path, k8s_clients) -> None:
+    def wait_for_ready(read_workload, kind: str, namespace: str, name: str, expected_replicas: int):
+        wait_for(
+            lambda: (
+                (workload := read_workload(name, namespace))
+                and (workload.status.ready_replicas or 0) >= expected_replicas
+            ),
+            timeout=180,
+            message=f"{kind.lower()} {namespace}/{name} readiness",
+        )
+
     for doc in manifest_documents(manifest_path):
         kind = doc["kind"]
         namespace = doc["metadata"].get("namespace")
@@ -171,22 +181,14 @@ def wait_for_declared_workloads_ready(manifest_path: Path, k8s_clients) -> None:
         expected_replicas = doc.get("spec", {}).get("replicas", 1)
 
         if kind == "Deployment":
-            wait_for(
-                lambda: (
-                    (deployment := k8s_clients.apps.read_namespaced_deployment(name, namespace))
-                    and (deployment.status.ready_replicas or 0) >= expected_replicas
-                ),
-                timeout=180,
-                message=f"deployment {namespace}/{name} readiness",
+            wait_for_ready(
+                k8s_clients.apps.read_namespaced_deployment,
+                kind,
+                namespace,
+                name,
+                expected_replicas,
             )
             continue
 
         if kind == "StatefulSet":
-            wait_for(
-                lambda: (
-                    (stateful_set := k8s_clients.apps.read_namespaced_stateful_set(name, namespace))
-                    and (stateful_set.status.ready_replicas or 0) >= expected_replicas
-                ),
-                timeout=180,
-                message=f"statefulset {namespace}/{name} readiness",
-            )
+            wait_for_stateful_set_ready(k8s_clients.apps, namespace, name, expected_replicas)

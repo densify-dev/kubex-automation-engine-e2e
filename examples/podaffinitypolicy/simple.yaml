@@ -1,6 +1,6 @@
 ---
 apiVersion: rightsizing.kubex.ai/v1alpha1
-kind: PodAffinity
+kind: PodAffinityPolicy
 metadata:
   name: sample-pod-affinity
 spec:

@@ -1,4 +1,4 @@
-"""Tests: PodAffinity admission-time mutation for StatefulSet workloads."""
+"""Tests: PodAffinityPolicy admission-time mutation for StatefulSet workloads."""
 
 import pytest
 from kubernetes import client
@@ -13,21 +13,29 @@ from helpers import (
     get_stateful_set,
     get_stateful_set_pod,
     pod_is_ready,
+    wait_for_stateful_set_ready,
     wait_for,
 )
 
-POD_AFFINITY_ANNOTATION = "podaffinity.rightsizing.kubex.ai/pod-runtime-hook"
+POD_AFFINITY_ANNOTATION = "podaffinitypolicy.rightsizing.kubex.ai/pod-runtime-hook"
 HOSTNAME_LABEL_KEY = "kubernetes.io/hostname"
 
 
-class TestPodAffinity:
-    """Verify PodAffinity only mutates matching StatefulSet pods."""
+class TestPodAffinityPolicy:
+    """Verify PodAffinityPolicy only mutates matching StatefulSet pods."""
 
     POLICY_NAME = "e2e-pod-affinity"
     MATCHING_SERVICE = "e2e-pod-affinity-match"
     MATCHING_STATEFULSET = "e2e-pod-affinity-match"
     NON_MATCHING_SERVICE = "e2e-pod-affinity-miss"
     NON_MATCHING_STATEFULSET = "e2e-pod-affinity-miss"
+
+    def _cleanup(self, k8s_clients, namespace: str) -> None:
+        self._delete_policy(k8s_clients)
+        for name in [self.MATCHING_STATEFULSET, self.NON_MATCHING_STATEFULSET]:
+            delete_stateful_set(k8s_clients.apps, k8s_clients.core, namespace, name)
+        for name in [self.MATCHING_SERVICE, self.NON_MATCHING_SERVICE]:
+            self._delete_service(k8s_clients, namespace, name)
 
     def _delete_service(self, k8s_clients, namespace: str, name: str) -> None:
         try:
@@ -55,7 +63,7 @@ class TestPodAffinity:
     def _delete_policy(self, k8s_clients) -> None:
         try:
             k8s_clients.custom.delete_cluster_custom_object(
-                GROUP, VERSION, "podaffinities", self.POLICY_NAME
+                GROUP, VERSION, "podaffinitypolicies", self.POLICY_NAME
             )
         except ApiException as exc:
             if exc.status != 404:
@@ -65,13 +73,13 @@ class TestPodAffinity:
         wait_for(
             lambda: self._policy_missing(k8s_clients),
             timeout=30,
-            message="PodAffinity removal",
+            message="PodAffinityPolicy removal",
         )
 
     def _policy_missing(self, k8s_clients) -> bool:
         try:
             k8s_clients.custom.get_cluster_custom_object(
-                GROUP, VERSION, "podaffinities", self.POLICY_NAME
+                GROUP, VERSION, "podaffinitypolicies", self.POLICY_NAME
             )
         except ApiException as exc:
             if exc.status == 404:
@@ -94,10 +102,10 @@ class TestPodAffinity:
         k8s_clients.custom.create_cluster_custom_object(
             GROUP,
             VERSION,
-            "podaffinities",
+            "podaffinitypolicies",
             {
                 "apiVersion": f"{GROUP}/{VERSION}",
-                "kind": "PodAffinity",
+                "kind": "PodAffinityPolicy",
                 "metadata": {"name": self.POLICY_NAME},
                 "spec": {
                     "scope": {
@@ -135,16 +143,6 @@ class TestPodAffinity:
             raise RuntimeError("cluster nodes are missing kubernetes.io/hostname labels")
         return hostnames[: min(2, len(hostnames))]
 
-    def _wait_for_stateful_set_ready(self, k8s_clients, namespace: str, name: str) -> None:
-        wait_for(
-            lambda: (
-                (stateful_set := get_stateful_set(k8s_clients.apps, namespace, name))
-                and (stateful_set.status.ready_replicas or 0) >= 1
-            ),
-            timeout=180,
-            message=f"statefulset {namespace}/{name} readiness",
-        )
-
     def _wait_for_stateful_set_policy_annotation(self, k8s_clients, namespace: str, name: str) -> None:
         def stateful_set_has_policy_annotation():
             stateful_set = get_stateful_set(k8s_clients.apps, namespace, name)
@@ -154,7 +152,7 @@ class TestPodAffinity:
         wait_for(
             stateful_set_has_policy_annotation,
             timeout=180,
-            message=f"PodAffinity annotation on StatefulSet {namespace}/{name}",
+            message=f"PodAffinityPolicy annotation on StatefulSet {namespace}/{name}",
         )
 
     def _replace_stateful_set_pod(self, k8s_clients, namespace: str, name: str):
@@ -162,15 +160,16 @@ class TestPodAffinity:
         original_uid = original.metadata.uid
         k8s_clients.core.delete_namespaced_pod(original.metadata.name, namespace)
 
-        replacement = {"pod": None}
+        replacement = None
 
         def replacement_ready():
+            nonlocal replacement
             pod = get_stateful_set_pod(k8s_clients.core, namespace, name)
             if pod.metadata.uid == original_uid:
                 return False
             if not pod_is_ready(pod):
                 return False
-            replacement["pod"] = pod
+            replacement = pod
             return True
 
         wait_for(
@@ -178,7 +177,7 @@ class TestPodAffinity:
             timeout=180,
             message=f"replacement pod for statefulset {namespace}/{name}",
         )
-        return replacement["pod"]
+        return replacement
 
     def _matching_preferred_hostname_terms(self, pod) -> list[client.V1PreferredSchedulingTerm]:
         affinity = pod.spec.affinity
@@ -202,19 +201,11 @@ class TestPodAffinity:
 
     @pytest.fixture(autouse=True)
     def setup_teardown(self, k8s_clients, test_namespace):
-        self._delete_policy(k8s_clients)
-        for name in [self.MATCHING_STATEFULSET, self.NON_MATCHING_STATEFULSET]:
-            delete_stateful_set(k8s_clients.apps, test_namespace, name)
-        for name in [self.MATCHING_SERVICE, self.NON_MATCHING_SERVICE]:
-            self._delete_service(k8s_clients, test_namespace, name)
+        self._cleanup(k8s_clients, test_namespace)
 
         yield
 
-        self._delete_policy(k8s_clients)
-        for name in [self.MATCHING_STATEFULSET, self.NON_MATCHING_STATEFULSET]:
-            delete_stateful_set(k8s_clients.apps, test_namespace, name)
-        for name in [self.MATCHING_SERVICE, self.NON_MATCHING_SERVICE]:
-            self._delete_service(k8s_clients, test_namespace, name)
+        self._cleanup(k8s_clients, test_namespace)
 
     @pytest.mark.timeout(600)
     def test_matching_statefulset_pod_gets_preferred_hostname_affinity(
@@ -239,7 +230,7 @@ class TestPodAffinity:
                 }
             ],
         )
-        self._wait_for_stateful_set_ready(k8s_clients, test_namespace, self.MATCHING_STATEFULSET)
+        wait_for_stateful_set_ready(k8s_clients.apps, test_namespace, self.MATCHING_STATEFULSET)
         self._wait_for_stateful_set_policy_annotation(
             k8s_clients, test_namespace, self.MATCHING_STATEFULSET
         )
@@ -294,11 +285,20 @@ class TestPodAffinity:
                 }
             ],
         )
-        self._wait_for_stateful_set_ready(k8s_clients, test_namespace, self.MATCHING_STATEFULSET)
-        self._wait_for_stateful_set_ready(k8s_clients, test_namespace, self.NON_MATCHING_STATEFULSET)
+        wait_for_stateful_set_ready(k8s_clients.apps, test_namespace, self.MATCHING_STATEFULSET)
+        wait_for_stateful_set_ready(
+            k8s_clients.apps, test_namespace, self.NON_MATCHING_STATEFULSET
+        )
         self._wait_for_stateful_set_policy_annotation(
             k8s_clients, test_namespace, self.MATCHING_STATEFULSET
         )
+
+        matching_pod = self._replace_stateful_set_pod(
+            k8s_clients, test_namespace, self.MATCHING_STATEFULSET
+        )
+        matching_terms = self._matching_preferred_hostname_terms(matching_pod)
+        assert len(matching_terms) == 1
+        assert matching_terms[0].weight == 100
         stateful_set = get_stateful_set(
             k8s_clients.apps, test_namespace, self.NON_MATCHING_STATEFULSET
         )

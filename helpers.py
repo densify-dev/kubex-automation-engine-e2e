@@ -409,14 +409,26 @@ def delete_deployment(apps: client.AppsV1Api, namespace: str, name: str) -> None
     raise RuntimeError(f"timed out waiting for deployment {namespace}/{name} to be removed")
 
 
-def delete_stateful_set(apps: client.AppsV1Api, namespace: str, name: str) -> None:
+def delete_stateful_set(
+    apps: client.AppsV1Api,
+    core: client.CoreV1Api,
+    namespace: str,
+    name: str,
+) -> None:
     """Delete a StatefulSet and wait for full removal before returning."""
+    stateful_set = None
+    try:
+        stateful_set = apps.read_namespaced_stateful_set(name, namespace)
+    except ApiException as exc:
+        if exc.status != 404:
+            raise RuntimeError(f"failed to read statefulset {namespace}/{name}: {exc}") from exc
     try:
         apps.delete_namespaced_stateful_set(name, namespace)
     except ApiException as exc:
         if exc.status == 404:
             return
         raise RuntimeError(f"failed to delete statefulset {namespace}/{name}: {exc}") from exc
+
     deadline = time.time() + 30
     last_observed = None
     while time.time() < deadline:
@@ -425,20 +437,58 @@ def delete_stateful_set(apps: client.AppsV1Api, namespace: str, name: str) -> No
             time.sleep(1)
         except ApiException as exc:
             if exc.status == 404:
-                return
+                break
             raise RuntimeError(
                 f"failed while waiting for statefulset {namespace}/{name} removal: {exc}"
             ) from exc
-    if last_observed is not None:
-        status = last_observed.status
-        raise RuntimeError(
-            "timed out waiting for statefulset "
-            f"{namespace}/{name} to be removed; "
-            f"replicas={getattr(status, 'replicas', None)!r}, "
-            f"ready_replicas={getattr(status, 'ready_replicas', None)!r}, "
-            f"current_replicas={getattr(status, 'current_replicas', None)!r}"
+    else:
+        if last_observed is not None:
+            status = last_observed.status
+            raise RuntimeError(
+                "timed out waiting for statefulset "
+                f"{namespace}/{name} to be removed; "
+                f"replicas={getattr(status, 'replicas', None)!r}, "
+                f"ready_replicas={getattr(status, 'ready_replicas', None)!r}, "
+                f"current_replicas={getattr(status, 'current_replicas', None)!r}"
+            )
+        raise RuntimeError(f"timed out waiting for statefulset {namespace}/{name} to be removed")
+
+    if stateful_set and stateful_set.spec and stateful_set.spec.volume_claim_templates:
+        replicas = (
+            stateful_set.spec.replicas
+            or getattr(stateful_set.status, "replicas", None)
+            or 1
         )
-    raise RuntimeError(f"timed out waiting for statefulset {namespace}/{name} to be removed")
+        for template in stateful_set.spec.volume_claim_templates:
+            claim_name = template.metadata.name
+            if not claim_name:
+                continue
+            for ordinal in range(replicas):
+                pvc_name = f"{claim_name}-{name}-{ordinal}"
+                try:
+                    core.delete_namespaced_persistent_volume_claim(pvc_name, namespace)
+                except ApiException as exc:
+                    if exc.status != 404:
+                        raise RuntimeError(
+                            f"failed to delete pvc {namespace}/{pvc_name}: {exc}"
+                        ) from exc
+                deadline = time.time() + 30
+                while time.time() < deadline:
+                    try:
+                        core.read_namespaced_persistent_volume_claim(pvc_name, namespace)
+                        time.sleep(1)
+                    except ApiException as exc:
+                        if exc.status == 404:
+                            break
+                        raise RuntimeError(
+                            f"failed while waiting for pvc {namespace}/{pvc_name} removal: {exc}"
+                        ) from exc
+                else:
+                    raise RuntimeError(
+                        f"timed out waiting for pvc {namespace}/{pvc_name} to be removed"
+                    )
+
+    return
 
 
 def delete_hpa(namespace: str, name: str) -> None:
@@ -489,6 +539,20 @@ def get_deployment(apps: client.AppsV1Api, namespace: str, name: str) -> client.
 def get_stateful_set(apps: client.AppsV1Api, namespace: str, name: str) -> client.V1StatefulSet:
     """Fetch a StatefulSet."""
     return apps.read_namespaced_stateful_set(name, namespace)
+
+
+def wait_for_stateful_set_ready(
+    apps: client.AppsV1Api, namespace: str, name: str, min_replicas: int = 1
+) -> None:
+    """Wait until a StatefulSet reports the desired number of ready replicas."""
+    wait_for(
+        lambda: (
+            (stateful_set := get_stateful_set(apps, namespace, name))
+            and (stateful_set.status.ready_replicas or 0) >= min_replicas
+        ),
+        timeout=180,
+        message=f"statefulset {namespace}/{name} readiness",
+    )
 
 
 def get_deployment_pod(core: client.CoreV1Api, namespace: str, deployment_name: str):
