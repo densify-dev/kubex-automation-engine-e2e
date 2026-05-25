@@ -1,0 +1,41 @@
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: ClusterBackoffPolicy
+metadata:
+  name: clusterbackoffpolicy-sample
+spec:
+  scope:
+    labelSelector:
+      matchLabels:
+        app: backoff-demo
+    namespaceSelector:
+      operator: In
+      values:
+        - default
+  weight: 0
+  adoptionThresholdPercent: 80
+  rollbackTarget: lastSuccessful
+  monitoringPeriod: 10m
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backoff-demo
+  namespace: default
+  labels:
+    app: backoff-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backoff-demo
+  template:
+    metadata:
+      labels:
+        app: backoff-demo
+    spec:
+      containers:
+        - name: demo
+          image: nginx:1.27
+          ports:
+            - containerPort: 80
