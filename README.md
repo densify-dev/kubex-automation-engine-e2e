@@ -174,6 +174,7 @@ e2e-testing/
     ├── test_resize_behavior.py      # Real workload in-place resize vs eviction fallback by Kubernetes version
     ├── test_webhook.py              # Mutating webhook annotation injection
     ├── test_pod_affinity_policy.py  # StatefulSet PodAffinityPolicy admission mutation
+    ├── test_strimzipodset.py        # StrimziPodSet opt-in policy coverage with synthetic owned Pods
     └── test_safety.py              # HPA filter, protected namespace
 ```
 
@@ -206,6 +207,7 @@ e2e-testing/
 - The main local entry point is [scripts/run-full-suite.sh](scripts/run-full-suite.sh).
 - [scripts/run-full-matrix-local.sh](scripts/run-full-matrix-local.sh) builds the local controller images, then runs the full-suite flow twice: once for `v1.35.0` with the full stack (metrics-server, KEDA, VPA) and once for `v1.32.0` with metrics-server only (KEDA and VPA skipped). Pass one or more pytest nodeids/paths to run only that subset through the matrix bootstrap.
 - `test_example_behavior.py` now waits for both `Deployment` and `StatefulSet` workloads declared in vendored examples to become ready.
+- `test_strimzipodset.py` exercises both `core.strimzi.io/v1` and `core.strimzi.io/v1beta2` using a minimal CRD fixture plus synthetic owned Pods so the controller follows the real owned-pod path.
 - The local suite can deploy an in-cluster Python mock Kubex service, feed recommendations from `examples/recommendations.json`, and assert heartbeat/policy/mutation uploads through the real gateway sidecar path.
 - The full-suite runner verifies install through the functional tests, then uninstalls the controller Helm release and `kubex-crds` and verifies their removal.
 - The bootstrap flow installs `metrics-server`, `KEDA`, and VPA by default. Set `WITH_KEDA=false`, `WITH_VPA=false`, or `WITH_METRICS_SERVER=false` to skip individual addons. The CI matrix uses the full stack on v1.35.0 and metrics-server only on v1.32.0 (`WITH_KEDA=false WITH_VPA=false`).

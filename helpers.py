@@ -1,6 +1,7 @@
 """Shared utilities, manifest builders, and constants for the E2E test suite."""
 
 import json
+from copy import deepcopy
 import subprocess
 import socket
 import time
@@ -37,13 +38,16 @@ STATIC_POLICY_ANNOTATION = "static.rightsizing.kubex.ai/desired-resource-request
 # ---------------------------------------------------------------------------
 
 
-def kubectl(*args, context=None, check=True) -> str:
-    """Run a kubectl command and return stdout."""
+def kubectl(*args, context=None, check=True, input: str | None = None) -> str:
+    """Run a kubectl command and return stdout.
+
+    When `input` is provided, it is passed to stdin (useful with `-f -`).
+    """
     cmd = ["kubectl"]
     if context:
         cmd += ["--context", context]
     cmd += list(args)
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, input=input)
     if check and result.returncode != 0:
         raise RuntimeError(f"kubectl {' '.join(args)} failed:\n{result.stderr}")
     return result.stdout.strip()
@@ -766,3 +770,245 @@ def proactive_policy_manifest(
             "safetyChecks": {"maxAnalysisAgeDays": max_analysis_age_days},
         },
     }
+
+# ---------------------------------------------------------------------------
+# StrimziPodSet helpers
+# ---------------------------------------------------------------------------
+
+STRIMZI_GROUP = "core.strimzi.io"
+STRIMZI_VERSION = "v1beta2"
+STRIMZI_VERSIONS = ("v1", "v1beta2")
+STRIMZI_PLURAL = "strimzipodsets"
+STRIMZI_KIND = "StrimziPodSet"
+
+
+def _strimzipodset_labels(name: str) -> dict[str, str]:
+    return {
+        "app": name,
+        "strimzi.io/cluster": name,
+        "strimzi.io/kind": STRIMZI_KIND,
+        "strimzi.io/name": name,
+    }
+
+
+def _strimzipodset_owner_reference(strimzipodset: dict) -> dict[str, Any]:
+    metadata = strimzipodset.get("metadata", {})
+    return {
+        "apiVersion": strimzipodset.get("apiVersion", f"{STRIMZI_GROUP}/{STRIMZI_VERSION}"),
+        "kind": strimzipodset.get("kind", STRIMZI_KIND),
+        "name": metadata["name"],
+        "uid": metadata["uid"],
+        "controller": True,
+        "blockOwnerDeletion": True,
+    }
+
+
+def create_strimzipodset(
+    custom_objects: client.CustomObjectsApi,
+    namespace: str,
+    name: str,
+    replicas: int = 1,
+    cpu_request: str = "100m",
+    mem_request: str = "128Mi",
+    cpu_limit: str = "200m",
+    mem_limit: str = "256Mi",
+    containers: list[dict] | None = None,
+    version: str = STRIMZI_VERSION,
+    core: client.CoreV1Api | None = None,
+    create_owned_pods: bool = False,
+) -> dict:
+    """Create a StrimziPodSet resource for testing."""
+    group = STRIMZI_GROUP
+    plural = STRIMZI_PLURAL
+
+    labels = _strimzipodset_labels(name)
+
+    if containers is None:
+        containers = [
+            {
+                "name": "app",
+                "image": "busybox:latest",
+                "command": ["sh", "-c", "sleep 3600"],
+                "resources": {
+                    "requests": {"cpu": cpu_request, "memory": mem_request},
+                    "limits": {"cpu": cpu_limit, "memory": mem_limit},
+                },
+            }
+        ]
+
+    pods = []
+    for i in range(replicas):
+        pod = {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "name": f"{name}-{i}",
+                "labels": labels,
+            },
+            "spec": {
+                "containers": containers,
+            },
+        }
+        pods.append(pod)
+
+    strimzipodset = {
+        "apiVersion": f"{group}/{version}",
+        "kind": STRIMZI_KIND,
+        "metadata": {
+            "name": name,
+            "namespace": namespace,
+            "labels": labels,
+        },
+        "spec": {
+            "selector": {"matchLabels": labels},
+            "pods": pods,
+        },
+    }
+
+    created = custom_objects.create_namespaced_custom_object(
+        group=group,
+        version=version,
+        namespace=namespace,
+        plural=plural,
+        body=strimzipodset,
+    )
+
+    if create_owned_pods:
+        if core is None:
+            raise ValueError("core client is required when create_owned_pods is True")
+
+        owner_reference = _strimzipodset_owner_reference(created)
+        for pod in created.get("spec", {}).get("pods", []):
+            pod_body = deepcopy(pod)
+            pod_name = pod_body.get("metadata", {}).get("name")
+            if not pod_name:
+                raise RuntimeError("StrimziPodSet pod is missing a name")
+
+            pod_metadata = deepcopy(pod_body.get("metadata", {}))
+            pod_metadata["name"] = pod_name
+            pod_metadata["namespace"] = namespace
+            pod_metadata["labels"] = labels
+            pod_metadata["ownerReferences"] = [owner_reference]
+            pod_body["metadata"] = pod_metadata
+
+            pod_spec = deepcopy(pod_body.get("spec", {}))
+            pod_body["spec"] = pod_spec
+            pod_body["apiVersion"] = "v1"
+            pod_body["kind"] = "Pod"
+
+            core.create_namespaced_pod(namespace, pod_body)
+
+            wait_for(
+                lambda pod_name=pod_name: pod_is_ready(core.read_namespaced_pod(pod_name, namespace)),
+                timeout=120,
+                message=f"StrimziPodSet pod {namespace}/{pod_name} readiness",
+            )
+
+    return created
+
+
+def get_strimzipodset(
+    custom_objects: client.CustomObjectsApi,
+    namespace: str,
+    name: str,
+    version: str = STRIMZI_VERSION,
+) -> dict:
+    """Get a StrimziPodSet resource."""
+    group = STRIMZI_GROUP
+    plural = STRIMZI_PLURAL
+
+    return custom_objects.get_namespaced_custom_object(
+        group=group,
+        version=version,
+        namespace=namespace,
+        plural=plural,
+        name=name,
+    )
+
+
+def delete_strimzipodset(
+    custom_objects: client.CustomObjectsApi,
+    namespace: str,
+    name: str,
+    version: str = STRIMZI_VERSION,
+) -> None:
+    """Delete a StrimziPodSet and wait for it to be fully removed."""
+    group = STRIMZI_GROUP
+    plural = STRIMZI_PLURAL
+
+    try:
+        custom_objects.delete_namespaced_custom_object(
+            group=group,
+            version=version,
+            namespace=namespace,
+            plural=plural,
+            name=name,
+        )
+    except ApiException as exc:
+        if exc.status == 404:
+            return
+        raise RuntimeError(f"failed to delete StrimziPodSet {namespace}/{name}: {exc}") from exc
+    
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        try:
+            custom_objects.get_namespaced_custom_object(
+                group=group,
+                version=version,
+                namespace=namespace,
+                plural=plural,
+                name=name,
+            )
+            time.sleep(1)
+        except ApiException as exc:
+            if exc.status == 404:
+                return
+            raise RuntimeError(
+                f"failed while waiting for StrimziPodSet {namespace}/{name} removal: {exc}"
+            ) from exc
+    raise RuntimeError(f"timed out waiting for StrimziPodSet {namespace}/{name} to be removed")
+
+
+def get_strimzipodset_resources(
+    custom_objects: client.CustomObjectsApi,
+    namespace: str,
+    name: str,
+    version: str = STRIMZI_VERSION,
+) -> dict:
+    """Return {container_name: {requests: {}, limits: {}}} for all containers in the first pod."""
+    sps = get_strimzipodset(custom_objects, namespace, name, version=version)
+    pods = sps.get("spec", {}).get("pods", [])
+    if not pods:
+        return {}
+    
+    first_pod = pods[0]
+    containers = first_pod.get("spec", {}).get("containers", [])
+    
+    return {
+        c["name"]: {
+            "requests": dict(c.get("resources", {}).get("requests", {})),
+            "limits": dict(c.get("resources", {}).get("limits", {})),
+        }
+        for c in containers
+    }
+
+
+def get_strimzipodset_pod(
+    core: client.CoreV1Api,
+    namespace: str,
+    name: str,
+) -> client.V1Pod:
+    """Return the newest live pod belonging to a StrimziPodSet."""
+    pods = core.list_namespaced_pod(namespace, label_selector=f"app={name}").items
+    if not pods:
+        raise RuntimeError(f"no pod found for StrimziPodSet {namespace}/{name}")
+
+    live_pods = [pod for pod in pods if pod.metadata.deletion_timestamp is None]
+    candidates = live_pods or pods
+    return max(
+        candidates,
+        key=lambda pod: (
+            pod.metadata.creation_timestamp or datetime.min.replace(tzinfo=timezone.utc),
+            pod.metadata.name,
+        ),
+    )

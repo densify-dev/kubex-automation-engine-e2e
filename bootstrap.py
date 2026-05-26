@@ -145,6 +145,33 @@ def ensure_recommendations_configmap(config: BootstrapConfig) -> None:
     )
 
 
+def ensure_strimzipodset_crd(config: BootstrapConfig) -> None:
+    manifest_path = _discover_repo_root(Path(__file__).resolve().parent) / "test" / "e2e" / "manifests" / "strimzipodset-crd.yaml"
+    if not manifest_path.is_file():
+        raise RuntimeError(f"strimzipodset CRD manifest not found: {manifest_path}")
+
+    run("kubectl", "--context", config.kube_context, "apply", "-f", str(manifest_path))
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        result = run(
+            "kubectl",
+            "--context",
+            config.kube_context,
+            "get",
+            "crd",
+            "strimzipodsets.core.strimzi.io",
+            "-o",
+            'jsonpath={.status.conditions[?(@.type=="Established")].status}',
+            capture_output=True,
+            check=False,
+        )
+        if result.stdout.strip() == "True":
+            return
+        time.sleep(2)
+
+    raise RuntimeError("timed out waiting for StrimziPodSet CRD to become established")
+
+
 def ensure_kubex_stub(config: BootstrapConfig) -> None:
     if not config.deploy_kubex_stub:
         return
@@ -703,6 +730,7 @@ def bootstrap(config: BootstrapConfig) -> None:
         install_vpa(config)
     if config.deploy_kubex_stub:
         ensure_kubex_stub(config)
+    ensure_strimzipodset_crd(config)
     if config.install_controller:
         install_controller(config)
 

@@ -17,6 +17,15 @@ OLDER_NODE_IMAGE="${OLDER_NODE_IMAGE:-kindest/node:${OLDER_VERSION}}"
 IMG="${IMG:-densify/automation-controller:latest}"
 CLEANUP_IMG="${CLEANUP_IMG:-registry.automation-controller.local:32000/kubex-cleanup:latest}"
 
+normalize_target() {
+  local target="$1"
+  if [[ "$target" == test/e2e/* ]]; then
+    printf '%s\n' "${target#test/e2e/}"
+  else
+    printf '%s\n' "$target"
+  fi
+}
+
 if [[ "$IMG" != *:* ]]; then
   IMG="${IMG}:latest"
 fi
@@ -69,7 +78,6 @@ make -C "${CONTROLLER_ROOT}" docker-build docker-build-cleanup IMG="${IMG}" CLEA
 
 echo "==> Running the full Kind version matrix"
 reset_cluster "${NEWER_CLUSTER_NAME}"
-run_suite "kubernetes-${NEWER_VERSION}" "${NEWER_CLUSTER_NAME}" "${NEWER_NODE_IMAGE}" "true" "true" "true" "$@"
+run_suite "kubernetes-${NEWER_VERSION}" "${NEWER_CLUSTER_NAME}" "${NEWER_NODE_IMAGE}" "true" "true" "true" "$(normalize_target "$1")"
 reset_cluster "${OLDER_CLUSTER_NAME}"
-run_suite "kubernetes-${OLDER_VERSION}" "${OLDER_CLUSTER_NAME}" "${OLDER_NODE_IMAGE}" "true" "false" "false" "$@"
-
+run_suite "kubernetes-${OLDER_VERSION}" "${OLDER_CLUSTER_NAME}" "${OLDER_NODE_IMAGE}" "true" "false" "false" "$(normalize_target "$1")"

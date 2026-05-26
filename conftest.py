@@ -9,7 +9,7 @@ from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
 from bootstrap import BootstrapConfig, bootstrap
-from helpers import kubectl_diagnostics
+from helpers import kubectl, kubectl_diagnostics
 
 # Make helpers.py importable from tests/ subdirectory
 sys.path.insert(0, os.path.dirname(__file__))
@@ -400,6 +400,39 @@ def test_namespace_setup(k8s_clients, test_namespace):
         k8s_clients.core.delete_namespace(test_namespace)
     except ApiException:
         pass
+
+
+@pytest.fixture(scope="session")
+def ensure_strimzipodset_crd(kube_context):
+    """Install a minimal StrimziPodSet CRD for StrimziPodSet-focused tests only."""
+    manifest_path = os.path.join(
+        os.path.dirname(__file__),
+        "manifests",
+        "strimzipodset-crd.yaml",
+    )
+    kubectl("apply", "-f", manifest_path, context=kube_context, check=True)
+
+    crd_name = "strimzipodsets.core.strimzi.io"
+    deadline = time.time() + 60
+    last = ""
+    while time.time() < deadline:
+        try:
+            last = kubectl(
+                "get",
+                "crd",
+                crd_name,
+                "-o",
+                'jsonpath={.status.conditions[?(@.type=="Established")].status}',
+                context=kube_context,
+                check=True,
+            )
+            if last.strip() == "True":
+                return
+        except Exception as exc:
+            last = str(exc)
+        time.sleep(2)
+
+    raise TimeoutError(f"Timed out waiting for CRD {crd_name} to be established. Last: {last}")
 
 
 @pytest.hookimpl(hookwrapper=True)
