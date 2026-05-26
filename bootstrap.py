@@ -146,7 +146,7 @@ def ensure_recommendations_configmap(config: BootstrapConfig) -> None:
 
 
 def ensure_strimzipodset_crd(config: BootstrapConfig) -> None:
-    manifest_path = _discover_repo_root(Path(__file__).resolve().parent) / "test" / "e2e" / "manifests" / "strimzipodset-crd.yaml"
+    manifest_path = _discover_repo_root(Path(__file__).resolve().parent) / "manifests" / "strimzipodset-crd.yaml"
     if not manifest_path.is_file():
         raise RuntimeError(f"strimzipodset CRD manifest not found: {manifest_path}")
 
