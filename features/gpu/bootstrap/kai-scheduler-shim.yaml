@@ -1,0 +1,190 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kubex
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kai-scheduler-shim
+  namespace: kubex
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kai-scheduler-shim
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/binding"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kai-scheduler-shim
+subjects:
+  - kind: ServiceAccount
+    name: kai-scheduler-shim
+    namespace: kubex
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kai-scheduler-shim
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kai-scheduler-shim
+  namespace: kubex
+data:
+  shim.py: |
+    import json
+    import os
+    import ssl
+    import time
+
+    SCHEDULER_NAME = "kai-scheduler"
+    TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    CA_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+
+
+    def make_session():
+        import urllib.request
+        from urllib.error import HTTPError
+
+        with open(TOKEN_PATH, encoding="utf-8") as handle:
+            token = handle.read().strip()
+
+        ssl_context = ssl.create_default_context(cafile=CA_PATH)
+
+        class Response:
+            def __init__(self, response):
+                self._response = response
+                self.status_code = getattr(response, "status", response.getcode())
+                self._body = None
+
+            def read(self):
+                if self._body is None:
+                    self._body = self._response.read()
+                return self._body
+
+            def json(self):
+                return json.loads(self.read().decode("utf-8"))
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise RuntimeError(f"HTTP {self.status_code}")
+
+        class Session:
+            def get(self, url, timeout=10):
+                request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+                try:
+                    return Response(urllib.request.urlopen(request, timeout=timeout, context=ssl_context))
+                except HTTPError as exc:
+                    return Response(exc)
+
+            def post(self, url, data, timeout=10):
+                request = urllib.request.Request(
+                    url,
+                    data=data.encode("utf-8"),
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                    },
+                    method="POST",
+                )
+                try:
+                    return Response(urllib.request.urlopen(request, timeout=timeout, context=ssl_context))
+                except HTTPError as exc:
+                    return Response(exc)
+
+        return Session()
+
+
+    def already_bound(pod: dict) -> bool:
+        return bool(pod.get("spec", {}).get("nodeName"))
+
+
+    def should_bind(pod: dict) -> bool:
+        return (
+            pod.get("spec", {}).get("schedulerName") == SCHEDULER_NAME
+            and not already_bound(pod)
+            and not pod.get("metadata", {}).get("deletionTimestamp")
+        )
+
+
+    def bind(session, base_url: str, pod: dict, node_name: str) -> None:
+        namespace = pod["metadata"]["namespace"]
+        name = pod["metadata"]["name"]
+        payload = {
+            "apiVersion": "v1",
+            "kind": "Binding",
+            "metadata": {"name": name, "namespace": namespace},
+            "target": {"apiVersion": "v1", "kind": "Node", "name": node_name},
+        }
+        response = session.post(
+            f"{base_url}/api/v1/namespaces/{namespace}/pods/{name}/binding",
+            data=json.dumps(payload),
+            timeout=10,
+        )
+        if response.status_code not in (201, 409):
+            response.raise_for_status()
+
+
+    def main() -> None:
+        host = os.environ["KUBERNETES_SERVICE_HOST"]
+        port = os.environ.get("KUBERNETES_SERVICE_PORT", "443")
+        base_url = f"https://{host}:{port}"
+        session = make_session()
+        node_name = os.environ["NODE_NAME"]
+        while True:
+            response = session.get(f"{base_url}/api/v1/pods", timeout=10)
+            response.raise_for_status()
+            pods = response.json().get("items", [])
+            for pod in pods:
+                if should_bind(pod):
+                    bind(session, base_url, pod, node_name)
+            time.sleep(2)
+
+
+    if __name__ == "__main__":
+        main()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kai-scheduler-shim
+  namespace: kubex
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kai-scheduler-shim
+  template:
+    metadata:
+      labels:
+        app: kai-scheduler-shim
+    spec:
+      serviceAccountName: kai-scheduler-shim
+      containers:
+        - name: shim
+          image: python:3.12-alpine
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          command:
+            - sh
+            - -c
+            - python /app/shim.py
+          volumeMounts:
+            - name: shim
+              mountPath: /app
+      volumes:
+        - name: shim
+          configMap:
+            name: kai-scheduler-shim

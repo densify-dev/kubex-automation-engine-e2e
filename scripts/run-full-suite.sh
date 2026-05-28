@@ -31,6 +31,8 @@ HELM_CONTROLLER_CHART_VERSION="${HELM_CONTROLLER_CHART_VERSION:-}"
 KUBEX_URL_HOST="${KUBEX_URL_HOST:-}"
 KUBEX_URL_SCHEME="${KUBEX_URL_SCHEME:-}"
 DEPLOY_KUBEX_STUB="${DEPLOY_KUBEX_STUB:-true}"
+GPU_SUITE="${GPU_SUITE:-false}"
+GPU_KIND_CONFIG="${GPU_KIND_CONFIG:-}"
 
 is_true() {
   [[ "$1" == "1" ]] || [[ "$1" == "true" ]]
@@ -176,6 +178,12 @@ bootstrap_cluster() {
   if is_true "$DEPLOY_KUBEX_STUB"; then
     bootstrap_args+=(--deploy-kubex-stub)
   fi
+  if is_true "$GPU_SUITE"; then
+    bootstrap_args+=(--gpu-suite)
+    if [[ -n "$GPU_KIND_CONFIG" ]]; then
+      bootstrap_args+=(--gpu-kind-config "$GPU_KIND_CONFIG")
+    fi
+  fi
   if is_true "$LOAD_KIND_IMAGES"; then
     bootstrap_args+=(--load-kind-images)
   fi
@@ -246,6 +254,12 @@ run_functional_suite() {
   fi
   if is_true "$DEPLOY_KUBEX_STUB"; then
     args+=(--deploy-kubex-stub)
+  fi
+  if is_true "$GPU_SUITE"; then
+    args+=(--gpu-suite)
+    if [[ -n "$GPU_KIND_CONFIG" ]]; then
+      args+=(--gpu-kind-config "$GPU_KIND_CONFIG")
+    fi
   fi
   if is_true "$KEEP_KIND_CLUSTER"; then
     args+=(--keep-kind-cluster)

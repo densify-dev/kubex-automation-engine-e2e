@@ -25,6 +25,8 @@ The framework assumes it can create and manage its own Kind cluster for a test r
 - `KEDA` for KEDA-managed HPA coverage
 - `VPA` for VPA-backed example coverage
 
+The GPU feature path is separate. Enable it with `GPU_SUITE=true` and point `GPU_KIND_CONFIG` at `test/e2e/features/gpu/kind-config.yaml`.
+
 The CI matrix runs two variants: **v1.35.0** with the full stack and **v1.32.0** with metrics-server only (`WITH_KEDA=false WITH_VPA=false`).
 
 Controller installation is handled by the Python bootstrap module. It installs the Helm charts using chart defaults by default, and only generates image override values when you pass `--controller-image-repository` and `--controller-image-tag`.
@@ -49,6 +51,9 @@ After bootstrap, the suite expects these controller-managed resources to exist:
 ```bash
 # Basic run against the default test cluster
 ./scripts/run-full-suite.sh
+
+# Run just the GPU suite
+./scripts/run-gpu-suite.sh
 
 # Explicit environment overrides
 WITH_METRICS_SERVER=true \
@@ -148,6 +153,8 @@ pytest tests/ -v --timeout=120
 | `DEPLOY_KUBEX_STUB` | `true` | Deploy an in-cluster Kubex upstream server and point the gateway sidecar at it |
 | `KUBEX_URL_HOST` | unset | Override the upstream host used by the gateway sidecar when not using the in-cluster stub |
 | `KUBEX_URL_SCHEME` | unset | Override the upstream scheme used by the gateway sidecar when not using the in-cluster stub |
+| `GPU_SUITE` | `false` | Enable the GPU feature bootstrap path |
+| `GPU_KIND_CONFIG` | unset | Kind config used for the GPU suite |
 
 ## Layout
 
@@ -172,6 +179,7 @@ e2e-testing/
     ├── test_examples.py             # Valid example apply/delete coverage + invalid example rejection
     ├── test_example_behavior.py     # Live-cluster behavior coverage for vendored examples
     ├── test_resize_behavior.py      # Real workload in-place resize vs eviction fallback by Kubernetes version
+    ├── test_rollback_behavior.py    # Rollback seed/reseed/cleanup lifecycle on live workloads
     ├── test_webhook.py              # Mutating webhook annotation injection
     ├── test_pod_affinity_policy.py  # StatefulSet PodAffinityPolicy admission mutation
     ├── test_strimzipodset.py        # StrimziPodSet opt-in policy coverage with synthetic owned Pods
@@ -196,6 +204,7 @@ e2e-testing/
 | `TestExampleBehavior` | `test_example_behavior.py` | Live example coverage | Applies every valid vendored example and asserts declared resources exist and workloads become ready |
 | `TestHPAExampleBehavior` | `test_example_behavior.py` | Example-backed HPA safety | Applies HPA examples and verifies the controller preserves workload requests |
 | `TestResizeBehavior` | `test_resize_behavior.py` | Real workload resize behavior | Verifies pod identity stays stable only when the live cluster actually supports in-place resize, and changes otherwise |
+| `TestRollbackBehavior` | `test_rollback_behavior.py` | Rollback monitoring lifecycle | Verifies monitoring seeds, reseeds on new recommendations, and clears rollback annotations after the monitoring window |
 | `TestWebhookAnnotations` | `test_webhook.py` | Mutating webhook pod annotation | Checks `automation-webhook.kubex.ai/pod-rightsizing-info`; verifies `PodAdmissionWebhookHealthy` condition |
 | `TestPodAffinityPolicy` | `test_pod_affinity_policy.py` | StatefulSet PodAffinityPolicy behavior | Verifies matching StatefulSets get preferred hostname affinity on replacement pods while non-matching StatefulSets stay unchanged |
 | `TestHPAFilter` | `test_safety.py` | Safety check: HPA protection | Resize must be blocked when an HPA targets the workload |

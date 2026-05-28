@@ -120,6 +120,16 @@ def pytest_addoption(parser):
         action="store_true",
         help="Do not install metrics-server into the test Kind cluster",
     )
+    parser.addoption(
+        "--gpu-suite",
+        action="store_true",
+        help="Bootstrap the GPU feature path with the dedicated Kind config and Prometheus",
+    )
+    parser.addoption(
+        "--gpu-kind-config",
+        default=None,
+        help="Path to the GPU Kind config used when --gpu-suite is enabled",
+    )
 
 
 @dataclass
@@ -249,6 +259,10 @@ def kind_cluster(
             kubex_url_scheme=request.config.getoption("--kubex-url-scheme"),
             recommendations_file=request.config.getoption("--recommendations-file"),
             kind_node_image=request.config.getoption("--kind-node-image"),
+            install_gpu_suite=request.config.getoption("--gpu-suite"),
+            install_gpu_process_exporter=request.config.getoption("--gpu-suite"),
+            gpu_kind_config=request.config.getoption("--gpu-kind-config"),
+            install_prometheus=request.config.getoption("--gpu-suite"),
             deploy_kubex_stub=request.config.getoption("--deploy-kubex-stub"),
             install_controller=True,
             install_metrics_server=not request.config.getoption("--without-metrics-server"),

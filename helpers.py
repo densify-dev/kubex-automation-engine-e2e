@@ -7,6 +7,7 @@ import socket
 import time
 import urllib.error
 import urllib.request
+import urllib.parse
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
@@ -25,6 +26,7 @@ POLL_INTERVAL = 2  # seconds
 DEFAULT_TIMEOUT = 60  # seconds
 
 RIGHTSIZING_ANNOTATION = "automation-webhook.kubex.ai/pod-rightsizing-info"
+ROLLBACK_STATE_ANNOTATION = "rightsizing.kubex.ai/rollback-state"
 
 # Written by policy_reconciler to Deployments and propagated to pods by
 # workloadrecommendation_controller.  Present on a running pod it means the
@@ -160,6 +162,40 @@ def get_crd(custom: client.CustomObjectsApi, plural: str, name: str, namespace: 
     return custom.get_cluster_custom_object(GROUP, VERSION, plural, name)
 
 
+def wait_for_crd_condition(
+    custom: client.CustomObjectsApi,
+    plural: str,
+    name: str,
+    condition_type: str,
+    *,
+    namespace: str | None = None,
+    predicate=None,
+    timeout: int = 180,
+) -> dict[str, Any]:
+    """Wait for a CRD object condition to satisfy the predicate and return the object."""
+    deadline = time.time() + timeout
+    last_object: dict[str, Any] | None = None
+    while time.time() < deadline:
+        try:
+            obj = get_crd(custom, plural, name, namespace)
+        except ApiException as exc:
+            if exc.status == 404:
+                time.sleep(POLL_INTERVAL)
+                continue
+            raise
+        last_object = obj
+        conditions = obj.get("status", {}).get("conditions", [])
+        for condition in conditions:
+            if condition.get("type") != condition_type:
+                continue
+            if predicate is None or predicate(condition):
+                return obj
+        time.sleep(POLL_INTERVAL)
+    raise TimeoutError(
+        f"Timed out waiting for {plural}/{name} condition {condition_type}. Last object: {last_object!r}"
+    )
+
+
 def apply_manifest(manifest: dict, context: str) -> str:
     """Apply a manifest dict via kubectl apply."""
     body = json.dumps(manifest) if isinstance(manifest, dict) else manifest
@@ -265,6 +301,37 @@ def get_mock_kubex_state(kube_context: str, namespace: str) -> dict[str, Any]:
     if not isinstance(state, dict):
         raise RuntimeError(f"unexpected mock state payload: {state!r}")
     return state
+
+
+def wait_for_pod_ready(core: client.CoreV1Api, namespace: str, label_selector: str, timeout: int = 180) -> client.V1Pod:
+    """Wait for a pod matching the selector to become Ready and return it."""
+    deadline = time.time() + timeout
+    last_error = ""
+    while time.time() < deadline:
+        try:
+            pods = core.list_namespaced_pod(namespace, label_selector=label_selector).items
+            ready_pods = [pod for pod in pods if pod.status and pod_is_ready(pod)]
+            if ready_pods:
+                return max(
+                    ready_pods,
+                    key=lambda pod: pod.metadata.creation_timestamp or datetime.min.replace(tzinfo=timezone.utc),
+                )
+        except ApiException as exc:
+            last_error = str(exc)
+        time.sleep(2)
+    raise TimeoutError(f"Timed out waiting for pod {namespace}/{label_selector} to be Ready. {last_error}")
+
+
+def prometheus_query(kube_context: str, namespace: str, query: str, service_name: str = "prometheus") -> dict[str, Any]:
+    """Query the local Prometheus service through a port-forward."""
+    port = _get_free_local_port()
+    with port_forward_service(kube_context, namespace, service_name, port, 9090):
+        url = f"http://127.0.0.1:{port}/api/v1/query?{urllib.parse.urlencode({'query': query})}"
+        with urllib.request.urlopen(url, timeout=10) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    if payload.get("status") != "success":
+        raise RuntimeError(f"prometheus query failed: {payload!r}")
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -771,6 +838,33 @@ def proactive_policy_manifest(
         },
     }
 
+
+def rollback_policy_manifest(
+    name: str,
+    namespace: str,
+    label_selector_app: str | None = None,
+    rollback_target: str = "manifest",
+    monitoring_period: str = "1m",
+    adoption_threshold_percent: int = 75,
+    weight: int = 0,
+) -> dict:
+    scope: dict[str, Any] = {}
+    if label_selector_app:
+        scope["labelSelector"] = {"matchLabels": {"app": label_selector_app}}
+
+    return {
+        "apiVersion": f"{GROUP}/{VERSION}",
+        "kind": "RollbackPolicy",
+        "metadata": {"name": name, "namespace": namespace},
+        "spec": {
+            "weight": weight,
+            "adoptionThresholdPercent": adoption_threshold_percent,
+            "rollbackTarget": rollback_target,
+            "monitoringPeriod": monitoring_period,
+            **({"scope": scope} if scope else {}),
+        },
+    }
+
 # ---------------------------------------------------------------------------
 # StrimziPodSet helpers
 # ---------------------------------------------------------------------------
@@ -948,7 +1042,7 @@ def delete_strimzipodset(
         if exc.status == 404:
             return
         raise RuntimeError(f"failed to delete StrimziPodSet {namespace}/{name}: {exc}") from exc
-    
+
     deadline = time.time() + 30
     while time.time() < deadline:
         try:
@@ -980,10 +1074,10 @@ def get_strimzipodset_resources(
     pods = sps.get("spec", {}).get("pods", [])
     if not pods:
         return {}
-    
+
     first_pod = pods[0]
     containers = first_pod.get("spec", {}).get("containers", [])
-    
+
     return {
         c["name"]: {
             "requests": dict(c.get("resources", {}).get("requests", {})),

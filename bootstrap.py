@@ -37,6 +37,11 @@ class BootstrapConfig:
     install_metrics_server: bool = True
     install_keda: bool = True
     install_vpa: bool = True
+    install_gpu_suite: bool = False
+    gpu_suite_root: str | None = None
+    gpu_kind_config: str | None = None
+    install_gpu_process_exporter: bool = False
+    install_prometheus: bool = False
     cluster_name_value: str | None = None
     kubex_username: str = "dummy"
     kubex_epassword: str | None = None
@@ -83,7 +88,37 @@ def ensure_kind_cluster(config: BootstrapConfig) -> None:
     args = ["kind", "create", "cluster", "--name", config.kind_cluster_name]
     if config.kind_node_image:
         args += ["--image", config.kind_node_image]
+    if config.install_gpu_suite and config.gpu_kind_config:
+        args += ["--config", config.gpu_kind_config]
     run(*args)
+
+
+def ensure_fake_gpu_capacity(config: BootstrapConfig) -> None:
+    if not config.install_gpu_suite:
+        return
+
+    worker_name = f"{config.kind_cluster_name}-worker"
+    patch = {
+        "status": {
+            "capacity": {"nvidia.com/gpu": "4"},
+            "allocatable": {"nvidia.com/gpu": "4"},
+        }
+    }
+    try:
+        run(
+            "kubectl",
+            "--context",
+            config.kube_context,
+            "patch",
+            "node",
+            worker_name,
+            "--subresource=status",
+            "--type=merge",
+            "-p",
+            json.dumps(patch),
+        )
+    except RuntimeError as err:
+        print(f"warning: unable to patch fake gpu capacity on {worker_name}: {err}", flush=True)
 
 
 def ensure_namespace(config: BootstrapConfig) -> None:
@@ -467,6 +502,51 @@ DNS.4 = vpa-webhook.kube-system.svc.cluster.local
         )
 
 
+def install_prometheus(config: BootstrapConfig) -> None:
+    if not config.install_prometheus:
+        return
+
+    monitoring_dir = Path(__file__).resolve().parent / "features" / "gpu" / "bootstrap" / "overlays"
+    run(
+        "kubectl",
+        "--context",
+        config.kube_context,
+        "apply",
+        "-k",
+        str(monitoring_dir),
+    )
+
+
+def install_gpu_process_exporter(config: BootstrapConfig) -> None:
+    if not config.install_gpu_process_exporter:
+        return
+
+    manifest = Path(__file__).resolve().parent / "features" / "gpu" / "bootstrap" / "mock-gpu-exporter.yaml"
+    run(
+        "kubectl",
+        "--context",
+        config.kube_context,
+        "apply",
+        "-f",
+        str(manifest),
+    )
+
+
+def install_kai_scheduler_shim(config: BootstrapConfig) -> None:
+    if not config.install_gpu_suite:
+        return
+
+    manifest = Path(__file__).resolve().parent / "features" / "gpu" / "bootstrap" / "kai-scheduler-shim.yaml"
+    run(
+        "kubectl",
+        "--context",
+        config.kube_context,
+        "apply",
+        "-f",
+        str(manifest),
+    )
+
+
 def load_kind_images(config: BootstrapConfig) -> None:
     images = []
     if config.cleanup_image_repository and config.cleanup_image_tag:
@@ -720,6 +800,7 @@ def install_controller(config: BootstrapConfig) -> None:
 
 def bootstrap(config: BootstrapConfig) -> None:
     ensure_kind_cluster(config)
+    ensure_fake_gpu_capacity(config)
     if config.load_kind_images:
         load_kind_images(config)
     if config.install_metrics_server:
@@ -728,6 +809,9 @@ def bootstrap(config: BootstrapConfig) -> None:
         install_keda(config)
     if config.install_vpa:
         install_vpa(config)
+    install_gpu_process_exporter(config)
+    install_kai_scheduler_shim(config)
+    install_prometheus(config)
     if config.deploy_kubex_stub:
         ensure_kubex_stub(config)
     ensure_strimzipodset_crd(config)
@@ -763,6 +847,8 @@ def parse_args() -> BootstrapConfig:
     parser.add_argument("--without-metrics-server", action="store_true")
     parser.add_argument("--without-keda", action="store_true")
     parser.add_argument("--without-vpa", action="store_true")
+    parser.add_argument("--gpu-suite", action="store_true")
+    parser.add_argument("--gpu-kind-config")
     args = parser.parse_args()
     return BootstrapConfig(
         kube_context=args.kube_context,
@@ -787,6 +873,10 @@ def parse_args() -> BootstrapConfig:
         recommendations_file=args.recommendations_file,
         kind_node_image=args.kind_node_image,
         load_kind_images=args.load_kind_images,
+        install_gpu_suite=args.gpu_suite,
+        gpu_kind_config=args.gpu_kind_config,
+        install_gpu_process_exporter=args.gpu_suite,
+        install_prometheus=args.gpu_suite,
         deploy_kubex_stub=args.deploy_kubex_stub,
         install_controller=not args.no_controller,
         install_metrics_server=not args.without_metrics_server,

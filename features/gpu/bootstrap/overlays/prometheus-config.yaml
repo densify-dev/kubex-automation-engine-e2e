@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    scrape_configs:
+      - job_name: prometheus
+        static_configs:
+          - targets:
+              - localhost:9090
+
+      - job_name: automation-controller
+        metrics_path: /metrics
+        static_configs:
+          - targets:
+              - kubex-automation-kubex-automation-engine-metrics-service.kubex.svc:8443
+
+      - job_name: mock-gpu-exporter
+        metrics_path: /metrics
+        static_configs:
+          - targets:
+              - mock-kubex-gpu-exporter.monitoring.svc.cluster.local:8080

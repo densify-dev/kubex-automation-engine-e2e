@@ -1,18 +1,21 @@
 ---
 apiVersion: rightsizing.kubex.ai/v1alpha1
-kind: BackoffPolicy
+kind: ClusterRollbackPolicy
 metadata:
-  name: backoffpolicy-sample
-  namespace: default
+  name: clusterrollbackpolicy-sample
 spec:
   scope:
     labelSelector:
       matchLabels:
         app: backoff-demo
+    namespaceSelector:
+      operator: In
+      values:
+        - default
   weight: 0
-  adoptionThresholdPercent: 75
-  rollbackTarget: manifest
-  monitoringPeriod: 5m
+  adoptionThresholdPercent: 80
+  rollbackTarget: lastSuccessful
+  monitoringPeriod: 10m
 ---
 apiVersion: apps/v1
 kind: Deployment

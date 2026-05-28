@@ -1,0 +1,82 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mock-kubex-gpu-exporter
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mock-kubex-gpu-exporter
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mock-kubex-gpu-exporter
+subjects:
+  - kind: ServiceAccount
+    name: mock-kubex-gpu-exporter
+    namespace: monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mock-kubex-gpu-exporter
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: mock-kubex-gpu-exporter
+  namespace: monitoring
+  labels:
+    app: mock-kubex-gpu-exporter
+spec:
+  selector:
+    matchLabels:
+      app: mock-kubex-gpu-exporter
+  template:
+    metadata:
+      labels:
+        app: mock-kubex-gpu-exporter
+    spec:
+      serviceAccountName: mock-kubex-gpu-exporter
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      containers:
+        - name: exporter
+          image: ghcr.io/julsemaan/mock-kubex-gpu-exporter:0.1.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          ports:
+            - name: metrics
+              containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-kubex-gpu-exporter
+  namespace: monitoring
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
+spec:
+  selector:
+    app: mock-kubex-gpu-exporter
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: metrics
+  type: ClusterIP

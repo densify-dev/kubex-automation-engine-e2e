@@ -4,7 +4,7 @@ crdCheck:
   skip: false
   # Minimum version of the kubex-crds chart required before this chart can be installed/upgraded.
   # Bump this whenever a new CRD field or schema change is required.
-  minCRDsHelmVersion: "1.0.1"
+  minCRDsHelmVersion: "1.1.0"
 # -- Whether to create the kubex-gateway-config Secret automatically
 createSecrets: true
 
@@ -45,7 +45,7 @@ image:
   # -- Image pull policy
   pullPolicy: IfNotPresent
   # -- Image tag
-  tag: "1.0.0"
+  tag: "1.1.0"
 
 # -- Image pull secrets applied to the controller deployment and cleanup job
 imagePullSecrets: []
@@ -55,7 +55,7 @@ cleanup:
     # -- Image repository for the pre-delete cleanup job.
     repository: "densify/kubex-automation-cleanup"
     # -- Image tag for the pre-delete cleanup job.
-    tag: "1.0.0"
+    tag: "1.1.0"
     # -- Image pull policy for the pre-delete cleanup job.
     pullPolicy: "IfNotPresent"
   # -- Optional pod security context for the pre-delete cleanup job
@@ -128,6 +128,12 @@ controllerManager:
   # -- Enable leader election for controller manager
   leaderElection:
     enabled: true
+    # -- Leader election lease duration. Increase on slow API servers.
+    leaseDuration: 15s
+    # -- Leader election renew deadline. Must be less than leaseDuration.
+    renewDeadline: 10s
+    # -- Leader election retry period. Must be less than renewDeadline.
+    retryPeriod: 2s
 
   # -- Health probe bind address
   healthProbeBindAddress: ":8081"
@@ -219,6 +225,8 @@ webhook:
   enabled: true
   # -- Webhook service port
   port: 9443
+  # -- Admission webhook timeout in seconds. Kubernetes defaults to 10 when omitted.
+  timeoutSeconds: 10
   # -- Failure policy for validating webhook (Ignore allows installation to proceed if webhook is unavailable)
   failurePolicy: Ignore
   # -- Certificate manager configuration
@@ -307,6 +315,8 @@ globalConfiguration:
   # -- Kubex API request timeout
   # Can also use deployment.controllerEnv.apiRequestTimeout for backward compatibility
   kubexAPIRequestTimeout: "30s"
+  # -- How long the pod admission webhook retries owner recommendation resolution
+  webhookOwnerResolutionRetryTimeout: "1s"
   # -- Mutation log send interval
   mutationLogInterval: "5m"
   # -- GPU rebalancing policy workload check interval
