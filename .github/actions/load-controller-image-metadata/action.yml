@@ -12,7 +12,14 @@ runs:
       run: |
         import json
         import os
+        import uuid
         from pathlib import Path
+
+        needs_repo = not os.environ.get("CONTROLLER_IMAGE_REPOSITORY")
+        needs_tag = not os.environ.get("CONTROLLER_IMAGE_TAG")
+
+        if not needs_repo and not needs_tag:
+            raise SystemExit(0)
 
         metadata_path = Path("${{ inputs.metadata-path }}")
         if not metadata_path.is_file():
@@ -21,12 +28,13 @@ runs:
         metadata = json.loads(metadata_path.read_text())
         env_path = Path(os.environ["GITHUB_ENV"])
         lines = []
-        if not os.environ.get("CONTROLLER_IMAGE_REPOSITORY"):
-            lines.append(f"CONTROLLER_IMAGE_REPOSITORY={metadata['controller_image_repository']}")
-        if not os.environ.get("CONTROLLER_IMAGE_TAG"):
-            lines.append(f"CONTROLLER_IMAGE_TAG={metadata['controller_image_tag']}")
+        if needs_repo:
+            lines.append(("CONTROLLER_IMAGE_REPOSITORY", metadata["controller_image_repository"]))
+        if needs_tag:
+            lines.append(("CONTROLLER_IMAGE_TAG", metadata["controller_image_tag"]))
 
         if lines:
+            delimiter = uuid.uuid4().hex
             with env_path.open("a") as handle:
-                for line in lines:
-                    handle.write(f"{line}\n")
+                for key, value in lines:
+                    handle.write(f"{key}<<{delimiter}\n{value}\n{delimiter}\n")
