@@ -150,10 +150,10 @@ jobs:
       HELM_CONTROLLER_CHART_VERSION: ${{ github.event.inputs.controller_chart_version }}
       CLUSTER_NAME: e2e-gpu
       NODE_IMAGE: kindest/node:v1.35.0
-      WITH_METRICS_SERVER: 'true'
-      WITH_KEDA: 'false'
-      WITH_VPA: 'false'
-      GPU_SUITE: 'true'
+      WITH_METRICS_SERVER: "true"
+      WITH_KEDA: "false"
+      WITH_VPA: "false"
+      GPU_SUITE: "true"
       GPU_KIND_CONFIG: features/gpu/kind-config.yaml
     steps:
       - name: Checkout repository
