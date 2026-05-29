@@ -1,0 +1,32 @@
+name: Load controller image metadata
+description: Load the controller image repository and tag from metadata.json when workflow inputs are empty.
+inputs:
+  metadata-path:
+    description: Path to the metadata.json file.
+    required: false
+    default: metadata.json
+runs:
+  using: composite
+  steps:
+    - shell: python
+      run: |
+        import json
+        import os
+        from pathlib import Path
+
+        metadata_path = Path("${{ inputs.metadata-path }}")
+        if not metadata_path.is_file():
+            raise SystemExit(f"{metadata_path} is required")
+
+        metadata = json.loads(metadata_path.read_text())
+        env_path = Path(os.environ["GITHUB_ENV"])
+        lines = []
+        if not os.environ.get("CONTROLLER_IMAGE_REPOSITORY"):
+            lines.append(f"CONTROLLER_IMAGE_REPOSITORY={metadata['controller_image_repository']}")
+        if not os.environ.get("CONTROLLER_IMAGE_TAG"):
+            lines.append(f"CONTROLLER_IMAGE_TAG={metadata['controller_image_tag']}")
+
+        if lines:
+            with env_path.open("a") as handle:
+                for line in lines:
+                    handle.write(f"{line}\n")
