@@ -219,9 +219,6 @@ run_functional_suite() {
     --test-namespace e2e-test
     --timeout 120
   )
-  if ! is_true "$GPU_SUITE"; then
-    args+=(-m "not gpu_suite")
-  fi
   if [[ -n "$PYTEST_WORKERS" ]]; then
     args+=(-n "$PYTEST_WORKERS")
   fi

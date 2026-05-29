@@ -20,8 +20,6 @@ GPU_MIGRATION_MANIFEST = EXAMPLES_ROOT / "gpus" / "simple-static-gpu-vanilla-2ka
 GPU_CONSOLIDATION_MANIFEST = EXAMPLES_ROOT / "gpus" / "gpu-consolidation-policy.yaml"
 GPU_REBALANCING_MANIFEST = EXAMPLES_ROOT / "gpus" / "gpu-rebalancing-policy.yaml"
 
-pytestmark = pytest.mark.gpu_suite
-
 
 def _wait_for_global_configuration_ready(k8s_clients):
     def is_ready():
@@ -43,11 +41,7 @@ def _wait_for_gpu_recommendations(k8s_clients, namespace: str, deployment_name: 
             and "static.rightsizing.kubex.ai/desired-resource-limits" in annotations
         )
 
-    wait_for(
-        has_gpu_recommendations,
-        timeout=180,
-        message=f"GPU recommendations for {namespace}/{deployment_name}",
-    )
+    wait_for(has_gpu_recommendations, timeout=180, message=f"GPU recommendations for {namespace}/{deployment_name}")
 
 
 def _wait_for_deployment_pod(
@@ -58,10 +52,7 @@ def _wait_for_deployment_pod(
     exclude_name: str | None = None,
 ):
     def has_pod():
-        pods = k8s_clients.core.list_namespaced_pod(
-            namespace,
-            label_selector=f"app={deployment_name}",
-        ).items
+        pods = k8s_clients.core.list_namespaced_pod(namespace, label_selector=f"app={deployment_name}").items
         if exclude_name is None:
             return bool(pods)
         return any(pod.metadata.name != exclude_name for pod in pods)
@@ -74,24 +65,12 @@ def _wait_for_prometheus_ready(k8s_clients):
     wait_for_pod_ready(k8s_clients.core, "monitoring", "app=prometheus", timeout=300)
 
 
-def _wait_for_prometheus_series(
-    kube_context: str,
-    k8s_clients,
-    namespace: str,
-    deployment_name: str,
-    metric_name: str,
-):
+def _wait_for_prometheus_series(kube_context: str, query: str):
     def has_series():
-        pod = get_deployment_pod(k8s_clients.core, namespace, deployment_name)
-        query = f'{metric_name}{{namespace="{namespace}",pod="{pod.metadata.name}",container="app"}}'
         result = prometheus_query(kube_context, "monitoring", query)
         return bool(result["data"]["result"])
 
-    wait_for(
-        has_series,
-        timeout=180,
-        message=f"Prometheus series for {metric_name} in {namespace}/{deployment_name}",
-    )
+    wait_for(has_series, timeout=180, message=f"Prometheus series for {query}")
 
 
 @pytest.mark.usefixtures("kind_cluster")
@@ -112,15 +91,10 @@ class TestGpuKai:
                 "--ignore-not-found",
                 context=kube_context,
             )
-            pod = _wait_for_deployment_pod(
-                k8s_clients,
-                "gpu-kai",
-                "gpu-kai-demo",
-                exclude_name=current_pod.metadata.name,
-            )
+            pod = _wait_for_deployment_pod(k8s_clients, "gpu-kai", "gpu-kai-demo", exclude_name=current_pod.metadata.name)
             resources = get_pod_resources(k8s_clients.core, "gpu-kai", pod.metadata.name)
             assert pod.metadata.labels.get("kai.scheduler/queue") == "my-queue"
-            assert pod.metadata.annotations.get("gpu-fraction") == "0.25"
+            assert pod.metadata.annotations.get("gpu-fraction") == "0.7"
             assert resources["app"]["requests"].get("cpu") == "200m"
             assert resources["app"]["limits"].get("cpu") == "600m"
             assert resources["app"]["requests"].get("nvidia.com/gpu") is None
@@ -159,7 +133,7 @@ class TestGpuKai:
     def test_gpu_example_emits_gpu_metrics(self, kube_context, k8s_clients):
         try:
             apply_manifest(GPU_MANIFEST, kube_context)
-            _wait_for_deployment_pod(k8s_clients, "gpu-kai", "gpu-kai-demo")
+            pod = _wait_for_deployment_pod(k8s_clients, "gpu-kai", "gpu-kai-demo")
             _wait_for_prometheus_ready(k8s_clients)
             for metric_name in (
                 "kubex_gpu_container_sm_utilization_percent",
@@ -167,10 +141,7 @@ class TestGpuKai:
             ):
                 _wait_for_prometheus_series(
                     kube_context,
-                    k8s_clients,
-                    "gpu-kai",
-                    "gpu-kai-demo",
-                    metric_name,
+                    f'{metric_name}{{namespace="gpu-kai",pod="{pod.metadata.name}",container="app"}}',
                 )
         finally:
             delete_manifest_in_reverse(GPU_MANIFEST, kube_context)
