@@ -133,8 +133,8 @@ def delete_manifest_in_reverse(manifest_path: Path, kube_context: str) -> None:
             cmd += ["-n", namespace]
         subprocess.run(cmd, capture_output=True)
         if kind == "Namespace":
-            wait_for(
-                lambda: not subprocess.run(
+            def namespace_gone() -> bool:
+                return subprocess.run(
                     [
                         "kubectl",
                         "--context",
@@ -145,11 +145,58 @@ def delete_manifest_in_reverse(manifest_path: Path, kube_context: str) -> None:
                     ],
                     capture_output=True,
                     text=True,
-                ).returncode
-                == 0,
-                timeout=60,
-                message=f"namespace {name} deletion",
-            )
+                ).returncode != 0
+
+            try:
+                wait_for(namespace_gone, timeout=60, message=f"namespace {name} deletion")
+            except TimeoutError:
+                for cleanup_doc in manifest_documents(manifest_path):
+                    cleanup_namespace = cleanup_doc.get("metadata", {}).get("namespace")
+                    if cleanup_doc["kind"] == "Namespace" or cleanup_namespace != name:
+                        continue
+
+                    cleanup_kind = cleanup_doc["kind"]
+                    cleanup_name = cleanup_doc["metadata"]["name"]
+                    _kubectl_patch_finalizers(cleanup_kind, cleanup_name, name, kube_context)
+                    subprocess.run(
+                        [
+                            "kubectl",
+                            "--context",
+                            kube_context,
+                            "delete",
+                            cleanup_kind,
+                            cleanup_name,
+                            "-n",
+                            name,
+                            "--ignore-not-found",
+                            "--wait=false",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                _kubectl_patch_finalizers("namespace", name, None, kube_context)
+                try:
+                    wait_for(namespace_gone, timeout=30, message=f"namespace {name} forced deletion")
+                except TimeoutError:
+                    pass
+
+
+def _kubectl_patch_finalizers(kind: str, name: str, namespace: str | None, kube_context: str) -> None:
+    cmd = [
+        "kubectl",
+        "--context",
+        kube_context,
+        "patch",
+        kind,
+        name,
+        "--type=merge",
+        "-p",
+        '{"metadata":{"finalizers":[]}}',
+    ]
+    if namespace:
+        cmd += ["-n", namespace]
+    subprocess.run(cmd, capture_output=True, text=True, check=False)
 
 
 def assert_declared_resources_exist(manifest_path: Path, kube_context: str) -> None:

@@ -181,7 +181,7 @@ def ensure_recommendations_configmap(config: BootstrapConfig) -> None:
 
 
 def ensure_strimzipodset_crd(config: BootstrapConfig) -> None:
-    manifest_path = _discover_repo_root(Path(__file__).resolve().parent) / "manifests" / "strimzipodset-crd.yaml"
+    manifest_path = Path(__file__).resolve().parent / "manifests" / "strimzipodset-crd.yaml"
     if not manifest_path.is_file():
         raise RuntimeError(f"strimzipodset CRD manifest not found: {manifest_path}")
 
@@ -521,7 +521,13 @@ def install_gpu_process_exporter(config: BootstrapConfig) -> None:
     if not config.install_gpu_process_exporter:
         return
 
-    manifest = Path(__file__).resolve().parent / "features" / "gpu" / "bootstrap" / "mock-gpu-exporter.yaml"
+    manifest = (
+        Path(__file__).resolve().parent
+        / "features"
+        / "gpu"
+        / "bootstrap"
+        / "mock-gpu-exporter.yaml"
+    )
     run(
         "kubectl",
         "--context",
@@ -536,7 +542,13 @@ def install_kai_scheduler_shim(config: BootstrapConfig) -> None:
     if not config.install_gpu_suite:
         return
 
-    manifest = Path(__file__).resolve().parent / "features" / "gpu" / "bootstrap" / "kai-scheduler-shim.yaml"
+    manifest = (
+        Path(__file__).resolve().parent
+        / "features"
+        / "gpu"
+        / "bootstrap"
+        / "kai-scheduler-shim.yaml"
+    )
     run(
         "kubectl",
         "--context",
@@ -653,9 +665,7 @@ def _controller_values(config: BootstrapConfig) -> dict:
 
     kubex_epassword = config.kubex_epassword or os.environ.get("KUBEX_E2E_EPASSWORD")
     if not config.deploy_kubex_stub and not kubex_epassword:
-        raise RuntimeError(
-            "KUBEX_E2E_EPASSWORD must be set when deploy_kubex_stub is disabled"
-        )
+        raise RuntimeError("KUBEX_E2E_EPASSWORD must be set when deploy_kubex_stub is disabled")
 
     values = {
         "createSecrets": True,
@@ -714,8 +724,7 @@ def controller_values_file(config: BootstrapConfig):
 
 def install_controller(config: BootstrapConfig) -> None:
     if not (
-        _chart_is_local(config.helm_crds_chart)
-        and _chart_is_local(config.helm_controller_chart)
+        _chart_is_local(config.helm_crds_chart) and _chart_is_local(config.helm_controller_chart)
     ):
         run("helm", "repo", "add", "--force-update", config.helm_repo_name, config.helm_repo_url)
         run("helm", "repo", "update")
@@ -794,8 +803,6 @@ def install_controller(config: BootstrapConfig) -> None:
                 check=False,
             )
             raise
-
-
 
 
 def bootstrap(config: BootstrapConfig) -> None:

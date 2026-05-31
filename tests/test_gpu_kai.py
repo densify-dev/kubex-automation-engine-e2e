@@ -1,5 +1,7 @@
 """GPU scheduling and rebalancing e2e smoke tests."""
 
+from datetime import datetime, timezone
+
 import pytest
 
 from example_utils import EXAMPLES_ROOT, apply_manifest, delete_manifest_in_reverse
@@ -19,6 +21,8 @@ GPU_MANIFEST = EXAMPLES_ROOT / "gpus" / "simple-static-gpu-kai.yaml"
 GPU_MIGRATION_MANIFEST = EXAMPLES_ROOT / "gpus" / "simple-static-gpu-vanilla-2kai.yaml"
 GPU_CONSOLIDATION_MANIFEST = EXAMPLES_ROOT / "gpus" / "gpu-consolidation-policy.yaml"
 GPU_REBALANCING_MANIFEST = EXAMPLES_ROOT / "gpus" / "gpu-rebalancing-policy.yaml"
+
+pytestmark = pytest.mark.gpu_suite
 
 
 def _wait_for_global_configuration_ready(k8s_clients):
@@ -41,7 +45,11 @@ def _wait_for_gpu_recommendations(k8s_clients, namespace: str, deployment_name: 
             and "static.rightsizing.kubex.ai/desired-resource-limits" in annotations
         )
 
-    wait_for(has_gpu_recommendations, timeout=180, message=f"GPU recommendations for {namespace}/{deployment_name}")
+    wait_for(
+        has_gpu_recommendations,
+        timeout=180,
+        message=f"GPU recommendations for {namespace}/{deployment_name}",
+    )
 
 
 def _wait_for_deployment_pod(
@@ -51,26 +59,56 @@ def _wait_for_deployment_pod(
     timeout: int = 300,
     exclude_name: str | None = None,
 ):
+    selected_pod = None
+
+    def pod_sort_key(pod):
+        return pod.metadata.creation_timestamp or datetime.min.replace(tzinfo=timezone.utc)
+
     def has_pod():
-        pods = k8s_clients.core.list_namespaced_pod(namespace, label_selector=f"app={deployment_name}").items
-        if exclude_name is None:
-            return bool(pods)
-        return any(pod.metadata.name != exclude_name for pod in pods)
+        nonlocal selected_pod
+        pods = k8s_clients.core.list_namespaced_pod(
+            namespace,
+            label_selector=f"app={deployment_name}",
+        ).items
+        candidates = (
+            pods
+            if exclude_name is None
+            else [pod for pod in pods if pod.metadata.name != exclude_name]
+        )
+        if candidates:
+            selected_pod = max(candidates, key=pod_sort_key)
+            return True
+        return False
 
     wait_for(has_pod, timeout=timeout, message=f"pod for {namespace}/{deployment_name}")
-    return get_deployment_pod(k8s_clients.core, namespace, deployment_name)
+    if selected_pod is None:
+        raise RuntimeError(f"no pod found for deployment {deployment_name}")
+    return selected_pod
 
 
 def _wait_for_prometheus_ready(k8s_clients):
     wait_for_pod_ready(k8s_clients.core, "monitoring", "app=prometheus", timeout=300)
 
 
-def _wait_for_prometheus_series(kube_context: str, query: str):
+def _wait_for_prometheus_series(
+    kube_context: str,
+    k8s_clients,
+    namespace: str,
+    deployment_name: str,
+    metric_name: str,
+):
+    pod = get_deployment_pod(k8s_clients.core, namespace, deployment_name)
+
     def has_series():
+        query = f'{metric_name}{{namespace="{namespace}",pod="{pod.metadata.name}",container="app"}}'
         result = prometheus_query(kube_context, "monitoring", query)
         return bool(result["data"]["result"])
 
-    wait_for(has_series, timeout=180, message=f"Prometheus series for {query}")
+    wait_for(
+        has_series,
+        timeout=180,
+        message=f"Prometheus series for {metric_name} in {namespace}/{deployment_name}",
+    )
 
 
 @pytest.mark.usefixtures("kind_cluster")
@@ -91,7 +129,29 @@ class TestGpuKai:
                 "--ignore-not-found",
                 context=kube_context,
             )
-            pod = _wait_for_deployment_pod(k8s_clients, "gpu-kai", "gpu-kai-demo", exclude_name=current_pod.metadata.name)
+            _wait_for_deployment_pod(
+                k8s_clients,
+                "gpu-kai",
+                "gpu-kai-demo",
+                exclude_name=current_pod.metadata.name,
+            )
+            annotated_pod = None
+
+            def gpu_fraction_ready() -> bool:
+                nonlocal annotated_pod
+                pod = get_deployment_pod(k8s_clients.core, "gpu-kai", "gpu-kai-demo")
+                if (pod.metadata.annotations or {}).get("gpu-fraction") == "0.7":
+                    annotated_pod = pod
+                    return True
+                return False
+
+            wait_for(
+                gpu_fraction_ready,
+                timeout=180,
+                message="gpu-kai pod gpu-fraction to update",
+            )
+            pod = annotated_pod
+            assert pod is not None
             resources = get_pod_resources(k8s_clients.core, "gpu-kai", pod.metadata.name)
             assert pod.metadata.labels.get("kai.scheduler/queue") == "my-queue"
             assert pod.metadata.annotations.get("gpu-fraction") == "0.7"
@@ -133,7 +193,7 @@ class TestGpuKai:
     def test_gpu_example_emits_gpu_metrics(self, kube_context, k8s_clients):
         try:
             apply_manifest(GPU_MANIFEST, kube_context)
-            pod = _wait_for_deployment_pod(k8s_clients, "gpu-kai", "gpu-kai-demo")
+            _wait_for_deployment_pod(k8s_clients, "gpu-kai", "gpu-kai-demo")
             _wait_for_prometheus_ready(k8s_clients)
             for metric_name in (
                 "kubex_gpu_container_sm_utilization_percent",
@@ -141,7 +201,10 @@ class TestGpuKai:
             ):
                 _wait_for_prometheus_series(
                     kube_context,
-                    f'{metric_name}{{namespace="gpu-kai",pod="{pod.metadata.name}",container="app"}}',
+                    k8s_clients,
+                    "gpu-kai",
+                    "gpu-kai-demo",
+                    metric_name,
                 )
         finally:
             delete_manifest_in_reverse(GPU_MANIFEST, kube_context)
