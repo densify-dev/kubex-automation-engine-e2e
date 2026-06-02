@@ -16,6 +16,10 @@ spec:
   adoptionThresholdPercent: 80
   rollbackTarget: lastSuccessful
   monitoringPeriod: 10m
+  backoff:
+    timePeriod: 10m
+    multiplyByTurn: 1
+    maxAttempts: 2
 ---
 apiVersion: apps/v1
 kind: Deployment

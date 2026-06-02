@@ -13,6 +13,10 @@ spec:
   adoptionThresholdPercent: 75
   rollbackTarget: manifest
   monitoringPeriod: 5m
+  backoff:
+    timePeriod: 5m
+    multiplyByTurn: 1
+    maxAttempts: 2
 ---
 apiVersion: apps/v1
 kind: Deployment

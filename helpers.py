@@ -322,6 +322,11 @@ def wait_for_pod_ready(core: client.CoreV1Api, namespace: str, label_selector: s
     raise TimeoutError(f"Timed out waiting for pod {namespace}/{label_selector} to be Ready. {last_error}")
 
 
+def patch_pod_status(core: client.CoreV1Api, namespace: str, pod_name: str, status: dict[str, Any]) -> None:
+    """Patch the status subresource of a pod."""
+    core.patch_namespaced_pod_status(pod_name, namespace, {"status": status})
+
+
 def prometheus_query(kube_context: str, namespace: str, query: str, service_name: str = "prometheus") -> dict[str, Any]:
     """Query the local Prometheus service through a port-forward."""
     port = _get_free_local_port()
@@ -847,6 +852,7 @@ def rollback_policy_manifest(
     monitoring_period: str = "1m",
     adoption_threshold_percent: int = 75,
     weight: int = 0,
+    backoff: dict[str, Any] | None = None,
 ) -> dict:
     scope: dict[str, Any] = {}
     if label_selector_app:
@@ -861,6 +867,7 @@ def rollback_policy_manifest(
             "adoptionThresholdPercent": adoption_threshold_percent,
             "rollbackTarget": rollback_target,
             "monitoringPeriod": monitoring_period,
+            **({"backoff": backoff} if backoff else {}),
             **({"scope": scope} if scope else {}),
         },
     }
