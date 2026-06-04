@@ -191,7 +191,11 @@ def ensure_strimzipodset_crd(config: BootstrapConfig) -> None:
 
 def ensure_rightsizing_crds(config: BootstrapConfig) -> None:
     repo_root = _discover_repo_root(Path(__file__).resolve().parent)
-    crd_dir = repo_root / "config" / "crd" / "bases"
+    crd_dirs = [
+        repo_root / "charts" / "kubex-crds" / "templates",
+        repo_root / "config" / "crd" / "bases",
+    ]
+    crd_dir = next((path for path in crd_dirs if path.is_dir()), crd_dirs[-1])
     crd_paths = sorted(crd_dir.glob("rightsizing.*.yaml"))
     if not crd_paths:
         raise RuntimeError(f"no rightsizing CRD manifests found in {crd_dir}")
