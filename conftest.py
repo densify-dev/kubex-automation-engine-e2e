@@ -458,10 +458,13 @@ def pytest_runtest_makereport(item, call):
 
     kube_context = item.funcargs.get("kube_context")
     test_namespace = item.funcargs.get("test_namespace")
-    controller_namespace = item.funcargs.get("controller_namespace", item.config.getoption("--namespace"))
+    controller_namespace = item.funcargs.get(
+        "controller_namespace", item.config.getoption("--namespace")
+    )
     namespaces = []
+    instance_namespace = getattr(getattr(item, "instance", None), "NAMESPACE", None)
 
-    for namespace in [controller_namespace, test_namespace]:
+    for namespace in [controller_namespace, test_namespace, instance_namespace]:
         if namespace and namespace not in namespaces:
             namespaces.append(namespace)
 
@@ -476,9 +479,11 @@ def pytest_runtest_makereport(item, call):
         print(f"=== namespace: {namespace} ===", flush=True)
         kubectl_diagnostics("get", "pods", "-n", namespace, "-o", "wide", context=kube_context)
         kubectl_diagnostics("get", "deployments", "-n", namespace, "-o", "wide", context=kube_context)
+        kubectl_diagnostics("get", "replicasets", "-n", namespace, "-o", "wide", context=kube_context)
         kubectl_diagnostics("get", "events", "-n", namespace, "--sort-by=.lastTimestamp", context=kube_context)
         kubectl_diagnostics("describe", "pods", "-n", namespace, context=kube_context)
         kubectl_diagnostics("describe", "deployments", "-n", namespace, context=kube_context)
+        kubectl_diagnostics("describe", "replicasets", "-n", namespace, context=kube_context)
         if namespace == controller_namespace:
             kubectl_diagnostics(
                 "logs",

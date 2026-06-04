@@ -186,6 +186,30 @@ def ensure_strimzipodset_crd(config: BootstrapConfig) -> None:
         raise RuntimeError(f"strimzipodset CRD manifest not found: {manifest_path}")
 
     run("kubectl", "--context", config.kube_context, "apply", "-f", str(manifest_path))
+    wait_for_crd_established(config, "strimzipodsets.core.strimzi.io")
+
+
+def ensure_rightsizing_crds(config: BootstrapConfig) -> None:
+    repo_root = _discover_repo_root(Path(__file__).resolve().parent)
+    crd_dir = repo_root / "config" / "crd" / "bases"
+    crd_paths = sorted(crd_dir.glob("rightsizing.*.yaml"))
+    if not crd_paths:
+        raise RuntimeError(f"no rightsizing CRD manifests found in {crd_dir}")
+
+    for crd_path in crd_paths:
+        run("kubectl", "--context", config.kube_context, "apply", "-f", str(crd_path))
+        wait_for_crd_established(config, crd_name_for_path(crd_path))
+
+
+def crd_name_for_path(crd_path: Path) -> str:
+    stem = crd_path.stem
+    prefix = "rightsizing.kubex.ai_"
+    if not stem.startswith(prefix):
+        raise RuntimeError(f"unexpected rightsizing CRD filename: {crd_path.name}")
+    return f"{stem.removeprefix(prefix)}.rightsizing.kubex.ai"
+
+
+def wait_for_crd_established(config: BootstrapConfig, crd_name: str) -> None:
     deadline = time.time() + 60
     while time.time() < deadline:
         result = run(
@@ -194,7 +218,7 @@ def ensure_strimzipodset_crd(config: BootstrapConfig) -> None:
             config.kube_context,
             "get",
             "crd",
-            "strimzipodsets.core.strimzi.io",
+            crd_name,
             "-o",
             'jsonpath={.status.conditions[?(@.type=="Established")].status}',
             capture_output=True,
@@ -204,7 +228,7 @@ def ensure_strimzipodset_crd(config: BootstrapConfig) -> None:
             return
         time.sleep(2)
 
-    raise RuntimeError("timed out waiting for StrimziPodSet CRD to become established")
+    raise RuntimeError(f"timed out waiting for CRD {crd_name} to become established")
 
 
 def ensure_kubex_stub(config: BootstrapConfig) -> None:
@@ -743,6 +767,7 @@ def install_controller(config: BootstrapConfig) -> None:
         "--create-namespace",
         "--wait",
     )
+    ensure_rightsizing_crds(config)
     with controller_values_file(config) as values_file:
         try:
             run(

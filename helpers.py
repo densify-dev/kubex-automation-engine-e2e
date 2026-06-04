@@ -352,6 +352,10 @@ def create_deployment(
     mem_request: str = "64Mi",
     cpu_limit: str = "200m",
     mem_limit: str = "128Mi",
+    image: str = "registry.k8s.io/pause:3.10",
+    command: list[str] | None = None,
+    args: list[str] | None = None,
+    resize_policy: list[client.V1ContainerResizePolicy] | None = None,
 ) -> client.V1Deployment:
     """Create a minimal Deployment for testing resource mutation."""
     deployment = client.V1Deployment(
@@ -367,11 +371,14 @@ def create_deployment(
                             name="app",
                             # Use a long-running image so the pod stays Running while
                             # the controller mutates resource requests.
-                            image="registry.k8s.io/pause:3.10",
+                            image=image,
+                            command=command,
+                            args=args,
                             resources=client.V1ResourceRequirements(
                                 requests={"cpu": cpu_request, "memory": mem_request},
                                 limits={"cpu": cpu_limit, "memory": mem_limit},
                             ),
+                            resize_policy=resize_policy,
                         )
                     ]
                 ),
@@ -593,6 +600,41 @@ def delete_hpa(namespace: str, name: str) -> None:
                 f"failed while waiting for HPA {namespace}/{name} removal: {exc}"
             ) from exc
     raise RuntimeError(f"timed out waiting for HPA {namespace}/{name} to be removed")
+
+
+def delete_custom_object(
+    custom_objects: client.CustomObjectsApi,
+    group: str,
+    version: str,
+    namespace: str,
+    plural: str,
+    name: str,
+    timeout: int = 30,
+) -> None:
+    """Delete a namespaced custom object and wait until it is fully gone."""
+    try:
+        custom_objects.delete_namespaced_custom_object(group, version, namespace, plural, name)
+    except ApiException as exc:
+        if exc.status == 404:
+            return
+        raise RuntimeError(
+            f"failed to delete custom object {group}/{version}/{namespace}/{plural}/{name}: {exc}"
+        ) from exc
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            custom_objects.get_namespaced_custom_object(group, version, namespace, plural, name)
+            time.sleep(1)
+        except ApiException as exc:
+            if exc.status == 404:
+                return
+            raise RuntimeError(
+                f"failed while waiting for custom object {group}/{version}/{namespace}/{plural}/{name} removal: {exc}"
+            ) from exc
+    raise RuntimeError(
+        f"timed out waiting for custom object {group}/{version}/{namespace}/{plural}/{name} to be removed"
+    )
 
 
 def get_deployment_resources(apps: client.AppsV1Api, namespace: str, name: str) -> dict:
