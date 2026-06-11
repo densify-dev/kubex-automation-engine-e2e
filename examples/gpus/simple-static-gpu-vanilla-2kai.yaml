@@ -13,8 +13,8 @@ spec:
   experimental:
     gpuKaiContract: v1alpha1-2026-04
   enablement:
+    overrideScheduler: "kai"
     gpu:
-      overrideScheduler: "kai"
       requests:
         downsize: true
         upsize: true
@@ -62,7 +62,7 @@ spec:
       annotations:
         mock.kubex.ai/gpu-uuid: "GPU-mock-001"
         mock.kubex.ai/kubex_gpu_container_sm_utilization_percent: "72.5"
-        mock.kubex.ai/kubex_gpu_container_memory_utilization_percent: "48"
+        mock.kubex.ai/kubex_gpu_container_memory_footprint_percent: "48"
     spec:
       containers:
         - name: app

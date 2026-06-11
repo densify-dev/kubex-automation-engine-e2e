@@ -95,22 +95,22 @@ spec:
                       namespace = metadata.get("namespace", "default")
                       pod_name = metadata.get("name", "")
                       annotations = metadata.get("annotations", {})
-                      sm_value = annotations.get("mock.kubex.ai/kubex_gpu_container_sm_utilization_percent")
-                      memory_value = annotations.get("mock.kubex.ai/kubex_gpu_container_memory_utilization_percent")
+                      compute_value = annotations.get("mock.kubex.ai/kubex_gpu_container_sm_utilization_percent")
+                      memory_value = annotations.get("mock.kubex.ai/kubex_gpu_container_memory_footprint_percent")
 
-                      if sm_value is None and memory_value is None:
+                      if compute_value is None and memory_value is None:
                           continue
 
                       for container in spec.get("containers", []):
                           container_name = container.get("name", "")
                           labels = f'namespace="{namespace}",pod="{pod_name}",container="{container_name}"'
-                          if sm_value is not None:
+                          if compute_value is not None:
                               lines.append(
-                                  f"kubex_gpu_container_sm_utilization_percent{{{labels}}} {sm_value}"
+                                  f"kubex_gpu_container_sm_utilization_percent{{{labels}}} {compute_value}"
                               )
                           if memory_value is not None:
                               lines.append(
-                                  f"kubex_gpu_container_memory_utilization_percent{{{labels}}} {memory_value}"
+                                  f"kubex_gpu_container_memory_footprint_percent{{{labels}}} {memory_value}"
                               )
 
                   return "\n".join(lines) + ("\n" if lines else "")

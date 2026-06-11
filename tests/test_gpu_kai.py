@@ -197,7 +197,7 @@ class TestGpuKai:
             _wait_for_prometheus_ready(k8s_clients)
             for metric_name in (
                 "kubex_gpu_container_sm_utilization_percent",
-                "kubex_gpu_container_memory_utilization_percent",
+                "kubex_gpu_container_memory_footprint_percent",
             ):
                 _wait_for_prometheus_series(
                     kube_context,

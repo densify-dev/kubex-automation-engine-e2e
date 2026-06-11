@@ -7,8 +7,8 @@ spec:
   experimental:
     gpuKaiContract: v1alpha1-2026-04
   enablement:
+    overrideScheduler: none
     gpu:
-      overrideScheduler: none
       requests:
         upsize: true
         downsize: true
@@ -40,7 +40,8 @@ spec:
         metricsWindow: 2m
         headroomPercent: 20
       prometheus:
-        metric: kubex_gpu_container_compute_utilization_percent
+        metric: kubex_gpu_container_sm_utilization_percent
+        interpretation: fullGPU
         namespaceLabel: namespace
         podLabel: pod
         containerLabel: container
@@ -55,7 +56,8 @@ spec:
         metricsWindow: 2m
         headroomPercent: 20
       prometheus:
-        metric: kubex_gpu_container_memory_utilization_percent
+        metric: kubex_gpu_container_memory_footprint_percent
+        interpretation: currentAllocation
         namespaceLabel: namespace
         podLabel: pod
         containerLabel: container

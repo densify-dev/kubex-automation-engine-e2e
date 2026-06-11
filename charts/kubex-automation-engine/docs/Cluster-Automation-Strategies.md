@@ -23,6 +23,7 @@ Usage-level `floor` and `ceiling` values apply to all containers by default. Add
 | Field | Default | Description |
 | --- | --- | --- |
 | `spec.enablement` | `{}` | Parent object for enablement rules. |
+| `spec.enablement.overrideScheduler` | `none` | EXPERIMENTAL. Selects GPU mutation mode for GPU actions. Valid values: `none`, `kai`. |
 | `spec.enablement.cpu.requests.downsize` | `true` | Allows reducing CPU requests. |
 | `spec.enablement.cpu.requests.upsize` | `true` | Allows increasing CPU requests. |
 | `spec.enablement.cpu.requests.setFromUnspecified` | `true` | Allows setting CPU requests when currently unset. |
@@ -115,10 +116,12 @@ When `spec.safetyChecks.retainGuaranteedQOS` is enabled:
 
 - The behavior applies only to pods that are currently in the Kubernetes `Guaranteed` QoS class.
 - For CPU and memory, desired limits are treated as the source of truth.
-- Matching request actions are aligned to the same desired value as limits so `requests == limits` remains true.
+- Request values are automatically set to match limit values so `requests == limits` remains true.
 - If a limit action exists but no request action exists, the controller can add a matching request action to preserve `Guaranteed` QoS.
 
 When this toggle is disabled (default), requests and limits are handled independently by recommendation and enablement logic, and a pod can move away from `Guaranteed` QoS.
+
+Note: A pod is in the `Guaranteed` QoS class only when ALL containers have `requests == limits` for BOTH CPU and memory. If a container has CPU request=limit but memory request≠limit, the pod is `Burstable`, not `Guaranteed`, and this behavior does not activate.
 
 ## Example
 

@@ -13,8 +13,8 @@ spec:
   experimental:
     gpuKaiContract: v1alpha1-2026-04
   enablement:
+    overrideScheduler: "kai"
     gpu:
-      overrideScheduler: "kai"
       requests:
         downsize: true
         upsize: true
@@ -65,6 +65,7 @@ spec:
         maxPercent: 200
       prometheus:
         metric: kubex_gpu_container_sm_utilization_percent
+        interpretation: fullGPU
         namespaceLabel: namespace
         podLabel: pod
         containerLabel: container
@@ -74,7 +75,8 @@ spec:
         metricsWindow: 10m
         maxPercent: 200
       prometheus:
-        metric: kubex_gpu_container_memory_utilization_percent
+        metric: kubex_gpu_container_memory_footprint_percent
+        interpretation: currentAllocation
         namespaceLabel: namespace
         podLabel: pod
         containerLabel: container
@@ -102,7 +104,7 @@ spec:
         gpu-fraction: "0.25"
         mock.kubex.ai/gpu-uuid: "GPU-mock-001"
         mock.kubex.ai/kubex_gpu_container_sm_utilization_percent: "72.5"
-        mock.kubex.ai/kubex_gpu_container_memory_utilization_percent: "48"
+        mock.kubex.ai/kubex_gpu_container_memory_footprint_percent: "48"
     spec:
       containers:
         - name: app

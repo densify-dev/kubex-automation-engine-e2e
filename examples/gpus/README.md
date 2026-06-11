@@ -9,13 +9,13 @@ All GPU/KAI fields and custom resources are experimental and may change. Every m
    - Workload starts with `nvidia.com/gpu` requests/limits and no scheduler override.
 
 2) `simple-static-gpu-kai.yaml`
-   - Demonstrates GPU override scheduling to KAI with `spec.enablement.gpu.overrideScheduler: "kai"`.
+   - Demonstrates GPU override scheduling to KAI with `spec.enablement.overrideScheduler: "kai"`.
    - Includes a `kai.scheduler/queue` pod label and `gpu-fraction` annotation.
    - Uses `kai.setQueueWhenSpecified: false` to preserve an existing queue label.
 
 3) `simple-static-gpu-vanilla-2kai.yaml`
    - Starts with a vanilla workload using `nvidia.com/gpu` requests/limits.
-   - Demonstrates migration behavior by enabling `overrideScheduler: "kai"` in strategy.
+   - Demonstrates migration behavior by enabling `spec.enablement.overrideScheduler: "kai"` in strategy.
    - Useful to validate conversion from native GPU resources to KAI GPU scheduling.
 
 4) `gpu-rebalancing-policy.yaml`
