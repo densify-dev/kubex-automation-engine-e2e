@@ -1,43 +1,21 @@
 ---
-apiVersion: rightsizing.kubex.ai/v1alpha1
-kind: PodAffinityPolicy
-metadata:
-  name: sample-pod-affinity
-spec:
-  scope:
-    workloadTypes:
-      - StatefulSet
-    namespaceSelector:
-      operator: In
-      values:
-        - default
-    labelSelector:
-      matchLabels:
-        app: pod-affinity-demo
-  affinity:
-    nodes:
-      - automation-controller-dev-control-plane
-      - worker-1
-    checkCurrentNodeSatisfiesAffinity: true
-  weight: 100
----
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: pod-affinity-demo
+  name: proposal-pod-affinity-demo
   namespace: default
   labels:
-    app: pod-affinity-demo
+    app: proposal-pod-affinity-demo
 spec:
-  serviceName: pod-affinity-demo
+  serviceName: proposal-pod-affinity-demo
   replicas: 1
   selector:
     matchLabels:
-      app: pod-affinity-demo
+      app: proposal-pod-affinity-demo
   template:
     metadata:
       labels:
-        app: pod-affinity-demo
+        app: proposal-pod-affinity-demo
     spec:
       terminationGracePeriodSeconds: 10
       containers:
@@ -59,12 +37,12 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: pod-affinity-demo
+  name: proposal-pod-affinity-demo
   namespace: default
 spec:
   clusterIP: None
   selector:
-    app: pod-affinity-demo
+    app: proposal-pod-affinity-demo
   ports:
     - name: http
       port: 80

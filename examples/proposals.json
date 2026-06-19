@@ -1,0 +1,200 @@
+[
+  {
+    "id": "example-proposal-approved-invalid",
+    "status": "APPROVED",
+    "contents": {
+      "apiVersion": "rightsizing.kubex.ai/v1alpha1",
+      "kind": "PodAffinityPolicy",
+      "metadata": {
+        "name": "example-pod-affinity-policy-invalid"
+      },
+      "spec": {
+        "scope": {
+          "workloadTypes": [
+            "Deployment"
+          ],
+          "namespaceSelector": {
+            "operator": "In",
+            "values": [
+              "default"
+            ]
+          }
+        },
+        "affinity": {
+          "nodes": [
+            "worker-a"
+          ]
+        },
+        "weight": -1
+      }
+    }
+  },
+  {
+    "id": "example-proposal-approved-automation-strategy",
+    "status": "APPROVED",
+    "contents": {
+      "apiVersion": "rightsizing.kubex.ai/v1alpha1",
+      "kind": "AutomationStrategy",
+      "metadata": {
+        "name": "example-automation-strategy",
+        "namespace": "default"
+      },
+      "spec": {
+        "enablement": {
+          "cpu": {
+            "requests": {
+              "upsize": true,
+              "downsize": true
+            }
+          }
+        },
+        "inPlaceResize": {
+          "enabled": true
+        },
+        "podEviction": {
+          "enabled": true
+        }
+      }
+    }
+  },
+  {
+    "id": "example-proposal-approved-staticpolicy",
+    "status": "APPROVED",
+    "contents": {
+      "apiVersion": "rightsizing.kubex.ai/v1alpha1",
+      "kind": "StaticPolicy",
+      "metadata": {
+        "name": "example-static-policy",
+        "namespace": "default"
+      },
+      "spec": {
+        "scope": {
+          "workloadTypes": [
+            "Deployment"
+          ]
+        },
+        "resources": {
+          "containers": {
+            "*": {
+              "requests": {
+                "cpu": "250m",
+                "memory": "512Mi"
+              },
+              "limits": {
+                "cpu": "500m",
+                "memory": "1Gi"
+              }
+            }
+          }
+        },
+        "automationStrategyRef": {
+          "name": "example-automation-strategy"
+        },
+        "weight": 5
+      }
+    }
+  },
+  {
+    "id": "example-proposal-approved-valid",
+    "status": "APPROVED",
+    "contents": {
+      "apiVersion": "rightsizing.kubex.ai/v1alpha1",
+      "kind": "PodAffinityPolicy",
+      "metadata": {
+        "name": "example-pod-affinity-policy"
+      },
+      "spec": {
+        "scope": {
+          "workloadTypes": [
+            "Deployment"
+          ],
+          "namespaceSelector": {
+            "operator": "In",
+            "values": [
+              "default"
+            ]
+          }
+        },
+        "affinity": {
+          "nodes": [
+            "worker-a"
+          ]
+        },
+        "weight": 1
+      }
+    }
+  },
+  {
+    "id": "example-proposal-approved-cluster-static",
+    "status": "APPROVED",
+    "contents": {
+      "apiVersion": "rightsizing.kubex.ai/v1alpha1",
+      "kind": "ClusterStaticPolicy",
+      "metadata": {
+        "name": "example-cluster-static-policy"
+      },
+      "spec": {
+        "scope": {
+          "namespaceSelector": {
+            "operator": "In",
+            "values": [
+              "default"
+            ]
+          },
+          "workloadTypes": [
+            "StatefulSet"
+          ]
+        },
+        "resources": {
+          "containers": {
+            "*": {
+              "requests": {
+                "cpu": "300m",
+                "memory": "768Mi"
+              }
+            }
+          }
+        },
+        "automationStrategyRef": {
+          "name": "example-automation-strategy"
+        },
+        "weight": 2
+      }
+    }
+  },
+  {
+    "id": "example-proposal-approved-statefulset",
+    "status": "APPROVED",
+    "contents": {
+      "apiVersion": "rightsizing.kubex.ai/v1alpha1",
+      "kind": "PodAffinityPolicy",
+      "metadata": {
+        "name": "example-pod-affinity-policy-statefulset"
+      },
+      "spec": {
+        "scope": {
+          "workloadTypes": [
+            "StatefulSet"
+          ],
+          "namespaceSelector": {
+            "operator": "In",
+            "values": [
+              "default"
+            ]
+          },
+          "labelSelector": {
+            "matchLabels": {
+              "app": "proposal-pod-affinity-demo"
+            }
+          }
+        },
+        "affinity": {
+          "nodes": [
+            "worker-a"
+          ]
+        },
+        "weight": 10
+      }
+    }
+  }
+]
