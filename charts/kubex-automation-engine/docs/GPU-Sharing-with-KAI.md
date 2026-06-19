@@ -85,6 +85,11 @@ spec:
         upsize: true
         # Leave workloads that have no GPU request untouched.
         setFromUnspecified: false
+  kai:
+    vllm:
+      # Keep vLLM below admitted gpu-fraction by 10%.
+      # Example: 0.5 gpu-fraction -> 0.45 gpu-memory-utilization.
+      gpuMemoryUtilizationBufferPercent: 10
   inPlaceResize:
     # Use restart/eviction flow instead of in-place pod resize.
     enabled: false
@@ -200,6 +205,26 @@ For KAI-enabled workloads, start with `spec.inPlaceResize.enabled: false`.
 
 - Eviction-based resize is the safer path today for KAI-enabled workloads.
 - In-place resizing for KAI-enabled workloads can be experimented with, but it is currently unstable.
+
+## vLLM tuning with KAI gpu-fraction
+
+If workload starts vLLM server, you can ask AutomationStrategy admission mutation to tune `--gpu-memory-utilization` from admitted KAI `gpu-fraction`.
+
+Example math:
+
+- admitted `gpu-fraction`: `0.5`
+- `spec.kai.vllm.gpuMemoryUtilizationBufferPercent`: `10`
+- resulting vLLM arg: `--gpu-memory-utilization=0.45`
+
+Behavior:
+
+- requires experimental contract: `spec.experimental.gpuKaiContract: v1alpha1-2026-04`
+- only runs for KAI GPU request admission mutation
+- only mutates detected vLLM containers
+- updates existing `--gpu-memory-utilization=<value>`
+- updates existing split form `--gpu-memory-utilization <value>`
+- appends flag if missing
+- does not leave duplicate flag entries
 
 ## Existing KAI Installations
 
