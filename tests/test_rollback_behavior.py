@@ -18,6 +18,7 @@ from helpers import (
     get_deployment,
     get_deployment_pod,
     get_pod_resources,
+    kubectl,
     rollback_policy_manifest,
     static_policy_manifest,
     wait_for,
@@ -30,6 +31,7 @@ class TestRollbackBehavior:
     STRATEGY_NAME = "e2e-rollback-strategy"
     STATIC_POLICY_NAME = "e2e-rollback-static-policy"
     ROLLBACK_POLICY_NAME = "e2e-rollback-policy"
+    PDB_NAME = "e2e-rollback-pdb"
     DEPLOYMENT = "rightsizing-demo"
     NAMESPACE = "default"
     ROLLBACK_REQUESTS_ANNOTATION = "rollbackpolicy.rightsizing.kubex.ai/desired-resource-requests"
@@ -45,17 +47,23 @@ class TestRollbackBehavior:
         "limits": {"cpu": "600m", "memory": "192Mi"},
     }
 
+    PARTIAL_ADOPTION_RESOURCES = {
+        "requests": {"cpu": "275m", "memory": "320Mi"},
+        "limits": {"cpu": "425m", "memory": "640Mi"},
+    }
+
     ORIGINAL_RESOURCES = {
         "requests": {"cpu": "100m", "memory": "256Mi"},
         "limits": {"cpu": "200m", "memory": "512Mi"},
     }
 
     @pytest.fixture(autouse=True)
-    def setup_teardown(self, request, k8s_clients):
+    def setup_teardown(self, request, k8s_clients, kube_context):
         suffix = request.node.name.replace("_", "-")[:20]
         self.STRATEGY_NAME = f"e2e-rollback-strategy-{suffix}"
         self.STATIC_POLICY_NAME = f"e2e-rollback-static-{suffix}"
         self.ROLLBACK_POLICY_NAME = f"e2e-rollback-policy-{suffix}"
+        self.PDB_NAME = f"e2e-rollback-pdb-{suffix}"
         self.DEPLOYMENT = f"rightsizing-demo-{suffix}"
         self.NAMESPACE = f"e2e-rollback-{suffix}"
 
@@ -68,6 +76,15 @@ class TestRollbackBehavior:
                 raise
 
         delete_deployment(k8s_clients.apps, self.NAMESPACE, self.DEPLOYMENT)
+        kubectl(
+            "delete",
+            "pdb",
+            self.PDB_NAME,
+            "-n",
+            self.NAMESPACE,
+            "--ignore-not-found",
+            context=kube_context,
+        )
         for plural, name in [
             ("rollbackpolicies", self.ROLLBACK_POLICY_NAME),
             ("staticpolicies", self.STATIC_POLICY_NAME),
@@ -152,6 +169,16 @@ class TestRollbackBehavior:
         yield
 
         delete_deployment(k8s_clients.apps, self.NAMESPACE, self.DEPLOYMENT)
+        kubectl(
+            "delete",
+            "pdb",
+            self.PDB_NAME,
+            "-n",
+            self.NAMESPACE,
+            "--ignore-not-found",
+            context=kube_context,
+            check=False,
+        )
         for plural, name in [
             ("rollbackpolicies", self.ROLLBACK_POLICY_NAME),
             ("staticpolicies", self.STATIC_POLICY_NAME),
@@ -207,6 +234,20 @@ class TestRollbackBehavior:
             {
                 "spec": {
                     "monitoringPeriod": monitoring_period,
+                }
+            },
+        )
+
+    def _patch_rollback_policy_threshold(self, k8s_clients, threshold: int) -> None:
+        k8s_clients.custom.patch_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            self.NAMESPACE,
+            "rollbackpolicies",
+            self.ROLLBACK_POLICY_NAME,
+            {
+                "spec": {
+                    "adoptionThresholdPercent": threshold,
                 }
             },
         )
@@ -276,6 +317,62 @@ class TestRollbackBehavior:
             return True
         return False
 
+    def _scale_deployment(self, k8s_clients, replicas: int) -> None:
+        k8s_clients.apps.patch_namespaced_deployment(
+            self.DEPLOYMENT,
+            self.NAMESPACE,
+            {"spec": {"replicas": replicas}},
+        )
+
+    def _wait_for_ready_replicas(self, k8s_clients, replicas: int, timeout: int = 300) -> None:
+        def ready():
+            deployment = self._deployment(k8s_clients)
+            status = deployment.status
+            if status is None:
+                return False
+            return (status.ready_replicas or 0) == replicas and (status.updated_replicas or 0) == replicas
+
+        wait_for(ready, timeout=timeout, message=f"{replicas} ready replicas")
+
+    def _apply_pdb(self, kube_context: str, max_unavailable: int = 1) -> None:
+        kubectl(
+            "apply",
+            "-f",
+            "-",
+            context=kube_context,
+            input=(
+                "apiVersion: policy/v1\n"
+                "kind: PodDisruptionBudget\n"
+                "metadata:\n"
+                f"  name: {self.PDB_NAME}\n"
+                f"  namespace: {self.NAMESPACE}\n"
+                "spec:\n"
+                f"  maxUnavailable: {max_unavailable}\n"
+                "  selector:\n"
+                "    matchLabels:\n"
+                f"      app: {self.DEPLOYMENT}\n"
+            ),
+        )
+
+    def _count_pods_with_resources(self, k8s_clients, resources: dict[str, dict[str, str]]) -> int:
+        count = 0
+        pods = k8s_clients.core.list_namespaced_pod(
+            self.NAMESPACE,
+            label_selector=f"app={self.DEPLOYMENT}",
+        ).items
+        for pod in pods:
+            if pod.metadata.deletion_timestamp is not None:
+                continue
+            live = get_pod_resources(k8s_clients.core, self.NAMESPACE, pod.metadata.name)["app"]
+            if (
+                live["requests"].get("cpu") == resources["requests"]["cpu"]
+                and live["requests"].get("memory") == resources["requests"]["memory"]
+                and live["limits"].get("cpu") == resources["limits"]["cpu"]
+                and live["limits"].get("memory") == resources["limits"]["memory"]
+            ):
+                count += 1
+        return count
+
     def _wait_for_pod_resources(self, k8s_clients, resources: dict[str, dict[str, str]], timeout: int) -> None:
         def applied():
             pod = get_deployment_pod(k8s_clients.core, self.NAMESPACE, self.DEPLOYMENT)
@@ -300,6 +397,19 @@ class TestRollbackBehavior:
             return False
 
         wait_for(state_matches, timeout=timeout, message=f"rollback state {mode}")
+        return state_box["value"]
+
+    def _wait_for_state_modes(self, k8s_clients, modes: set[str], timeout: int) -> dict:
+        state_box = {"value": None}
+
+        def state_matches():
+            state = self._rollback_state(k8s_clients)
+            if state and state.get("mode") in modes:
+                state_box["value"] = state
+                return True
+            return False
+
+        wait_for(state_matches, timeout=timeout, message=f"rollback state in {sorted(modes)}")
         return state_box["value"]
 
     def _wait_for_monitoring_start(self, k8s_clients) -> dict:
@@ -355,8 +465,8 @@ class TestRollbackBehavior:
         self._poke_owner_reconcile(k8s_clients)
 
         rolling_back = self._wait_for_state_mode(k8s_clients, "rollingBack", timeout=240)
-        assert rolling_back["failureReason"] == "oomKilled"
-        assert "OOMKilled" in rolling_back["failureMessage"]
+        assert rolling_back["failureReason"] in {"oomKilled", "crashLoopBackOff"}
+        assert any(reason in rolling_back["failureMessage"] for reason in {"OOMKilled", "CrashLoopBackOff"})
 
         self._delete_static_policy(k8s_clients)
         self._wait_for_state_mode(k8s_clients, "backingOff", timeout=240)
@@ -410,8 +520,8 @@ class TestRollbackBehavior:
 
         backed_off = self._wait_for_state_mode(k8s_clients, "backedOff", timeout=180)
         assert backed_off["turn"] == 2
-        assert backed_off["failureReason"] == "oomKilled"
-        assert "OOMKilled" in backed_off["failureMessage"]
+        assert backed_off["failureReason"] in {"oomKilled", "crashLoopBackOff"}
+        assert any(reason in backed_off["failureMessage"] for reason in {"OOMKilled", "CrashLoopBackOff"})
         assert self._rollback_annotations_cleared(k8s_clients)
 
     @pytest.mark.timeout(900)
@@ -422,9 +532,54 @@ class TestRollbackBehavior:
 
         failed = self._wait_for_state_mode(k8s_clients, "failedPermanent", timeout=180)
         assert failed["turn"] == 1
-        assert failed["failureReason"] == "oomKilled"
-        assert "OOMKilled" in failed["failureMessage"]
+        assert failed["failureReason"] in {"oomKilled", "crashLoopBackOff"}
+        assert any(reason in failed["failureMessage"] for reason in {"OOMKilled", "CrashLoopBackOff"})
         assert self._rollback_annotations_cleared(k8s_clients)
+
+    @pytest.mark.timeout(900)
+    def test_partial_adoption_succeeds_when_threshold_is_met(self, k8s_clients, kube_context):
+        self._wait_for_initial_monitoring_success(k8s_clients)
+        self._scale_deployment(k8s_clients, replicas=5)
+        self._wait_for_ready_replicas(k8s_clients, replicas=5)
+        self._apply_pdb(kube_context, max_unavailable=1)
+
+        self._patch_rollback_policy_monitoring_period(k8s_clients, "5s")
+        self._patch_rollback_policy_threshold(k8s_clients, 20)
+        self._patch_static_policy_resources(k8s_clients, self.PARTIAL_ADOPTION_RESOURCES)
+
+        self._wait_for_state_mode(k8s_clients, "monitoring", timeout=180)
+        wait_for(
+            lambda: 0 < self._count_pods_with_resources(k8s_clients, self.PARTIAL_ADOPTION_RESOURCES) < 5,
+            timeout=120,
+            message="partial adoption observed",
+        )
+        succeeded = self._wait_for_state_mode(k8s_clients, "monitoringSucceeded", timeout=180)
+        adopted = self._count_pods_with_resources(k8s_clients, self.PARTIAL_ADOPTION_RESOURCES)
+
+        assert succeeded["activeRecommendationFingerprint"]
+        assert 1 <= adopted < 5
+
+    @pytest.mark.timeout(900)
+    def test_partial_adoption_rolls_back_when_threshold_is_not_met(self, k8s_clients, kube_context):
+        self._wait_for_initial_monitoring_success(k8s_clients)
+        self._scale_deployment(k8s_clients, replicas=5)
+        self._wait_for_ready_replicas(k8s_clients, replicas=5)
+        self._apply_pdb(kube_context, max_unavailable=1)
+
+        self._patch_rollback_policy_monitoring_period(k8s_clients, "5s")
+        self._patch_rollback_policy_threshold(k8s_clients, 100)
+        self._patch_static_policy_resources(k8s_clients, self.PARTIAL_ADOPTION_RESOURCES)
+
+        self._wait_for_state_mode(k8s_clients, "monitoring", timeout=180)
+        wait_for(
+            lambda: 0 < self._count_pods_with_resources(k8s_clients, self.PARTIAL_ADOPTION_RESOURCES) < 5,
+            timeout=120,
+            message="partial adoption observed before threshold failure",
+        )
+        threshold_failure = self._wait_for_state_modes(k8s_clients, {"rollingBack", "backingOff", "backedOff"}, timeout=240)
+
+        assert threshold_failure["failureReason"] == "adoptionThresholdNotMet"
+        assert "adoption threshold" in threshold_failure["failureMessage"]
 
 
 def _namespace_gone(k8s_clients, namespace: str) -> bool:

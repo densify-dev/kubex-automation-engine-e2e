@@ -348,6 +348,7 @@ def create_deployment(
     apps: client.AppsV1Api,
     namespace: str,
     name: str,
+    replicas: int = 1,
     cpu_request: str = "100m",
     mem_request: str = "64Mi",
     cpu_limit: str = "200m",
@@ -361,7 +362,7 @@ def create_deployment(
     deployment = client.V1Deployment(
         metadata=client.V1ObjectMeta(name=name, namespace=namespace, labels={"app": name}),
         spec=client.V1DeploymentSpec(
-            replicas=1,
+            replicas=replicas,
             selector=client.V1LabelSelector(match_labels={"app": name}),
             template=client.V1PodTemplateSpec(
                 metadata=client.V1ObjectMeta(labels={"app": name}),
