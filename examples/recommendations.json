@@ -119,6 +119,21 @@
       "RecommendedMemRequestBytes": 201326592,
       "RecommendedCpuLimitMCores": 450,
       "RecommendedMemLimitBytes": 402653184
+    },
+    {
+      "Cluster": "local-cluster",
+      "Namespace": "default",
+      "PodOwnerKind": "Deployment",
+      "PodOwnerName": "gpu-kubex-demo",
+      "Container": "app",
+      "EntityId": "entity-gpu-kubex-demo",
+      "ContainerId": "container-gpu-kubex-demo",
+      "KubexAutomation": "true",
+      "HpaMetricName": "",
+      "AnalyzedOn": "2026-01-29T19:36:50Z",
+      "gpu": {
+        "gpuOverallOptimal": "0.25"
+      }
     }
   ]
 }
