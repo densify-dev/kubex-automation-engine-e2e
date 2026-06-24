@@ -77,6 +77,11 @@ This directory has example bundles:
     - Uses `ephemeral-storage` request/limit targets so the in-place resize path hits a different API rejection than the memory-downsize-specific error.
     - Intended to verify the controller logs the generic in-place failure fallback path.
 
+19) `model.yaml`
+    - Demonstrates `StaticPolicy` targeting KubeAI `kubeai.org/v1` `Model` workloads.
+    - Includes sample `Model`; when KubeAI creates model-owned pods, recommendations anchor on `Model` and flow to those pods.
+    - Requires KubeAI CRD installed in cluster.
+
 Apply examples:
 
 ```sh
@@ -98,6 +103,7 @@ kubectl apply -f examples/staticpolicy/cronjob.yaml
 kubectl apply -f examples/staticpolicy/request-exceeds-limit-after-limit-filter.yaml
 kubectl apply -f examples/staticpolicy/in-place-memory-decrease-success.yaml
 kubectl apply -f examples/staticpolicy/in-place-memory-decrease-fail.yaml
+kubectl apply -f examples/staticpolicy/model.yaml
 ```
 
 Then inspect workloads with the matching labels (e.g., `kubectl get deploy -n default -o yaml`) to see desired request/limit annotations and the resolved rule metadata.

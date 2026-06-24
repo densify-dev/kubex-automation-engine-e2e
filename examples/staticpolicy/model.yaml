@@ -1,0 +1,52 @@
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: AutomationStrategy
+metadata:
+  name: sample-model-automation-strategy
+  namespace: default
+spec:
+  podEviction:
+    enabled: false
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: StaticPolicy
+metadata:
+  name: sample-model-static-policy
+  namespace: default
+spec:
+  scope:
+    workloadTypes:
+      - Model
+    labelSelector:
+      matchLabels:
+        app: kubeai-demo
+  resources:
+    containers:
+      "*":
+        requests:
+          cpu: 500m
+          memory: 1Gi
+        limits:
+          cpu: "1"
+          memory: 2Gi
+  automationStrategyRef:
+    name: sample-model-automation-strategy
+---
+# Requires KubeAI CRD installed.
+apiVersion: kubeai.org/v1
+kind: Model
+metadata:
+  name: kubeai-demo-model
+  namespace: default
+  labels:
+    app: kubeai-demo
+spec:
+  # Replace placeholder before apply. Example needs spec.url to pass KubeAI admission.
+  url: hf://replace/me
+# After KubeAI creates model-owned pods, admission webhook and workload recommendation
+# sync inherit recommendations from Model owner onto those pods.
+#
+# Example checks:
+#   kubectl get model -n default kubeai-demo-model -o yaml
+#   kubectl get pods -n default --show-labels
+#   kubectl get pod -n default <model-owned-pod> -o yaml

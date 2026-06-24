@@ -2,6 +2,13 @@
 
 All notable changes to the Kubex Automation Engine Helm chart will be documented in this file.
 
+## [1.5.0] - 2026-06-23
+
+### Added
+- Release documentation for tuning, migration, and rollback behavior was expanded for the v1.5.0 release.
+
+---
+
 ## [1.4.0] - 2026-06-11
 
 ### Added
