@@ -42,6 +42,9 @@ OPTIONAL_API_GROUPS = {
     "keda.sh": [
         EXAMPLES_ROOT / "staticpolicy" / "with-keda-hpa-filter.yaml",
     ],
+    "kubeai.org": [
+        EXAMPLES_ROOT / "staticpolicy" / "model.yaml",
+    ],
 }
 
 
