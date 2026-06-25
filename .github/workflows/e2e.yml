@@ -62,17 +62,17 @@ jobs:
             with_keda: "false"
             with_vpa: "false"
     env:
-      # The published e2e branch is self-contained: test/e2e, examples, and local charts.
+      # Push/pull_request use local charts; schedule floats to the Helm repo and latest image.
       HELM_RELEASE: kubex-automation-engine
       HELM_NAMESPACE: kubex
       KUBEX_E2E_EPASSWORD: ${{ secrets.KUBEX_E2E_EPASSWORD }}
-      CONTROLLER_IMAGE_REPOSITORY: ${{ github.event.inputs.controller_image_repository }}
-      CONTROLLER_IMAGE_TAG: ${{ github.event.inputs.controller_image_tag }}
+      CONTROLLER_IMAGE_REPOSITORY: ${{ github.event_name == 'schedule' && 'densify/automation-controller' || github.event.inputs.controller_image_repository }}
+      CONTROLLER_IMAGE_TAG: ${{ github.event_name == 'schedule' && 'latest' || github.event.inputs.controller_image_tag }}
       HELM_REPO_URL: ${{ github.event.inputs.controller_chart_repo_url || 'https://densify-dev.github.io/helm-charts' }}
-      HELM_CRDS_CHART: charts/kubex-crds
-      HELM_CONTROLLER_CHART: charts/kubex-automation-engine
-      HELM_CRDS_CHART_VERSION: ${{ github.event.inputs.crds_chart_version }}
-      HELM_CONTROLLER_CHART_VERSION: ${{ github.event.inputs.controller_chart_version }}
+      HELM_CRDS_CHART: ${{ github.event_name == 'schedule' && 'kubex-crds' || 'charts/kubex-crds' }}
+      HELM_CONTROLLER_CHART: ${{ github.event_name == 'schedule' && 'kubex-automation-engine' || 'charts/kubex-automation-engine' }}
+      HELM_CRDS_CHART_VERSION: ${{ github.event_name == 'schedule' && '' || github.event.inputs.crds_chart_version }}
+      HELM_CONTROLLER_CHART_VERSION: ${{ github.event_name == 'schedule' && '' || github.event.inputs.controller_chart_version }}
       CLUSTER_NAME: ${{ matrix.kubernetes.cluster_name }}
       NODE_IMAGE: kindest/node:${{ matrix.kubernetes.version }}
       WITH_METRICS_SERVER: ${{ matrix.kubernetes.with_metrics_server }}
@@ -143,13 +143,13 @@ jobs:
       HELM_RELEASE: kubex-automation-engine
       HELM_NAMESPACE: kubex
       KUBEX_E2E_EPASSWORD: ${{ secrets.KUBEX_E2E_EPASSWORD }}
-      CONTROLLER_IMAGE_REPOSITORY: ${{ github.event.inputs.controller_image_repository }}
-      CONTROLLER_IMAGE_TAG: ${{ github.event.inputs.controller_image_tag }}
+      CONTROLLER_IMAGE_REPOSITORY: ${{ github.event_name == 'schedule' && 'densify/automation-controller' || github.event.inputs.controller_image_repository }}
+      CONTROLLER_IMAGE_TAG: ${{ github.event_name == 'schedule' && 'latest' || github.event.inputs.controller_image_tag }}
       HELM_REPO_URL: ${{ github.event.inputs.controller_chart_repo_url || 'https://densify-dev.github.io/helm-charts' }}
-      HELM_CRDS_CHART: charts/kubex-crds
-      HELM_CONTROLLER_CHART: charts/kubex-automation-engine
-      HELM_CRDS_CHART_VERSION: ${{ github.event.inputs.crds_chart_version }}
-      HELM_CONTROLLER_CHART_VERSION: ${{ github.event.inputs.controller_chart_version }}
+      HELM_CRDS_CHART: ${{ github.event_name == 'schedule' && 'kubex-crds' || 'charts/kubex-crds' }}
+      HELM_CONTROLLER_CHART: ${{ github.event_name == 'schedule' && 'kubex-automation-engine' || 'charts/kubex-automation-engine' }}
+      HELM_CRDS_CHART_VERSION: ${{ github.event_name == 'schedule' && '' || github.event.inputs.crds_chart_version }}
+      HELM_CONTROLLER_CHART_VERSION: ${{ github.event_name == 'schedule' && '' || github.event.inputs.controller_chart_version }}
       CLUSTER_NAME: e2e-gpu
       NODE_IMAGE: kindest/node:v1.35.0
       WITH_METRICS_SERVER: "true"
