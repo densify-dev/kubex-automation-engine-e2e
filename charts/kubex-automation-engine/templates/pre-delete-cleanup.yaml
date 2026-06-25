@@ -1,8 +1,8 @@
 {{- /*
 pre-delete-cleanup.yaml
 
-Helm pre-delete hook that removes the finalizer from every ClusterProactivePolicy
-that was created by this chart (identified by the app.kubernetes.io/instance label).
+Helm pre-delete hook that removes finalizers from every chart-owned rightsizing
+resource created by this release (identified by the app.kubernetes.io/instance label).
 
 Removing the finalizer allows Helm to delete those CRs immediately as part of the
 normal "helm delete" resource teardown without waiting for the now-shutting-down
@@ -41,8 +41,19 @@ rules:
 - apiGroups:
   - rightsizing.kubex.ai
   resources:
-  - clusterproactivepolicies
   - clusterautomationstrategies
+  - clustergpurebalancingpolicies
+  - clusterproactivepolicies
+  - clusterrollbackpolicies
+  - clusterstaticpolicies
+  - globalconfigurations
+  - gpuconsolidationpolicies
+  - gpurebalancingpolicies
+  - podaffinitypolicies
+  - policyevaluations
+  - proactivepolicies
+  - rollbackpolicies
+  - staticpolicies
   verbs:
   - get
   - list
