@@ -54,8 +54,8 @@ cleanup:
   image:
     # -- Image repository for the pre-delete cleanup job.
     repository: "densify/kubex-automation-cleanup"
-    # -- Image tag for the pre-delete cleanup job.
-    tag: "1.5.0"
+    # -- Image tag for the pre-delete cleanup job. Defaults to the controller image tag.
+    tag: ""
     # -- Image pull policy for the pre-delete cleanup job.
     pullPolicy: "IfNotPresent"
   # -- Optional pod security context for the pre-delete cleanup job

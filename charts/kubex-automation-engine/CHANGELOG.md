@@ -5,7 +5,16 @@ All notable changes to the Kubex Automation Engine Helm chart will be documented
 ## [1.5.0] - 2026-06-23
 
 ### Added
-- Release documentation for tuning, migration, and rollback behavior was expanded for the v1.5.0 release.
+- KubeAI `Model` workload support, including owner-scoped recommendation and rollback state handling.
+- KAI/vLLM tuning controls for GPU-sharing automation strategies.
+
+### Changed
+- Default policy workload scope now includes KubeAI `Model` objects when `workloadTypes` is omitted.
+- Rollback monitoring now enforces adoption-threshold behavior more consistently.
+- Proposal sync remains opt-in through `GlobalConfiguration` and is disabled by default.
+
+### Fixed
+- Helm uninstall reliability by aligning the pre-delete cleanup hook permissions with the rightsizing resources it patches.
 
 ---
 
