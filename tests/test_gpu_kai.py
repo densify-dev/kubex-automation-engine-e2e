@@ -1,15 +1,28 @@
 """GPU scheduling and rebalancing e2e smoke tests."""
 
+import json
 from datetime import datetime, timezone
 
 import pytest
+from kubernetes import client
+from kubernetes.client.rest import ApiException
 
 from example_utils import EXAMPLES_ROOT, apply_manifest, delete_manifest_in_reverse
 from helpers import (
     get_crd,
+    GROUP,
+    ROLLBACK_STATE_ANNOTATION,
+    VERSION,
+    automation_strategy_manifest,
+    create_deployment,
+    delete_custom_object,
+    delete_deployment,
     get_deployment_pod,
+    get_deployment,
     get_pod_resources,
     kubectl,
+    rollback_policy_manifest,
+    static_policy_manifest,
     prometheus_query,
     wait_for_crd_condition,
     wait_for_pod_ready,
@@ -315,3 +328,385 @@ class TestGpuKai:
         finally:
             delete_manifest_in_reverse(GPU_REBALANCING_MANIFEST, kube_context)
             delete_manifest_in_reverse(GPU_MIGRATION_MANIFEST, kube_context)
+
+
+class TestGpuKaiRollback:
+    STRATEGY_NAME = "e2e-kai-rollback-strategy"
+    STATIC_POLICY_NAME = "e2e-kai-rollback-static-policy"
+    ROLLBACK_POLICY_NAME = "e2e-kai-rollback-policy"
+    DEPLOYMENT = "gpu-kai-rollback-demo"
+    NAMESPACE = "gpu-kai-rollback"
+
+    INITIAL_RESOURCES = {
+        "requests": {"cpu": "250m", "memory": "320Mi"},
+        "limits": {"cpu": "400m", "memory": "640Mi"},
+    }
+
+    FAILING_RESOURCES = {
+        "requests": {"cpu": "300m", "memory": "128Mi"},
+        "limits": {"cpu": "600m", "memory": "192Mi"},
+    }
+
+    @pytest.fixture(autouse=True)
+    def setup_teardown(self, request, k8s_clients, kube_context):
+        suffix = request.node.name.replace("_", "-")[:20]
+        self.STRATEGY_NAME = f"e2e-kai-rollback-strategy-{suffix}"
+        self.STATIC_POLICY_NAME = f"e2e-kai-rollback-static-{suffix}"
+        self.ROLLBACK_POLICY_NAME = f"e2e-kai-rollback-policy-{suffix}"
+        self.DEPLOYMENT = f"gpu-kai-rollback-demo-{suffix}"
+        self.NAMESPACE = f"gpu-kai-rollback-{suffix}"
+
+        try:
+            k8s_clients.core.create_namespace(
+                client.V1Namespace(metadata=client.V1ObjectMeta(name=self.NAMESPACE))
+            )
+        except ApiException as exc:
+            if exc.status != 409:
+                raise
+
+        delete_deployment(k8s_clients.apps, self.NAMESPACE, self.DEPLOYMENT)
+        for plural, name in [
+            ("rollbackpolicies", self.ROLLBACK_POLICY_NAME),
+            ("staticpolicies", self.STATIC_POLICY_NAME),
+            ("automationstrategies", self.STRATEGY_NAME),
+        ]:
+            delete_custom_object(k8s_clients.custom, GROUP, VERSION, self.NAMESPACE, plural, name)
+
+        strategy = automation_strategy_manifest(self.STRATEGY_NAME, self.NAMESPACE)
+        strategy["spec"]["enablement"]["overrideScheduler"] = "kai"
+        strategy["spec"]["podEviction"] = {"enabled": True}
+        strategy["spec"]["inPlaceResize"] = {"enabled": False}
+        strategy["spec"]["safetyChecks"] = {
+            "minReadyDuration": "0s",
+            "resizeRetryInterval": "5s",
+        }
+        strategy["spec"]["experimental"] = {"gpuKaiContract": "v1alpha1-2026-04"}
+        strategy["spec"]["kai"] = {"setQueueWhenSpecified": False}
+        k8s_clients.custom.create_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            self.NAMESPACE,
+            "automationstrategies",
+            strategy,
+        )
+
+        k8s_clients.custom.create_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            self.NAMESPACE,
+            "rollbackpolicies",
+            rollback_policy_manifest(
+                self.ROLLBACK_POLICY_NAME,
+                self.NAMESPACE,
+                label_selector_app=self.DEPLOYMENT,
+                monitoring_period="20s",
+                weight=100,
+                backoff={
+                    "timePeriod": "10s",
+                    "multiplyByTurn": 1,
+                    "maxAttempts": 2,
+                },
+            ),
+        )
+
+        create_deployment(
+            k8s_clients.apps,
+            self.NAMESPACE,
+            self.DEPLOYMENT,
+            cpu_request=self.INITIAL_RESOURCES["requests"]["cpu"],
+            mem_request=self.INITIAL_RESOURCES["requests"]["memory"],
+            cpu_limit=self.INITIAL_RESOURCES["limits"]["cpu"],
+            mem_limit=self.INITIAL_RESOURCES["limits"]["memory"],
+            image="python:3.12-alpine",
+            command=["python", "-c"],
+            args=[
+                "import time\n"
+                "chunks = []\n"
+                "while len(chunks) < 220:\n"
+                "    chunks.append(bytearray(1024 * 1024))\n"
+                "    time.sleep(0.02)\n"
+                "time.sleep(3600)\n",
+            ],
+            resize_policy=[
+                client.V1ContainerResizePolicy(resource_name="memory", restart_policy="RestartContainer")
+            ],
+        )
+
+        static_policy = static_policy_manifest(
+            self.STATIC_POLICY_NAME,
+            self.NAMESPACE,
+            self.STRATEGY_NAME,
+            label_selector_app=self.DEPLOYMENT,
+            cpu_request=self.INITIAL_RESOURCES["requests"]["cpu"],
+            mem_request=self.INITIAL_RESOURCES["requests"]["memory"],
+            cpu_limit=self.INITIAL_RESOURCES["limits"]["cpu"],
+            mem_limit=self.INITIAL_RESOURCES["limits"]["memory"],
+        )
+        static_policy["spec"]["resources"]["containers"]["*"]["requests"]["gpu"] = "0.25"
+        k8s_clients.custom.create_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            self.NAMESPACE,
+            "staticpolicies",
+            static_policy,
+        )
+
+        yield
+
+        delete_deployment(k8s_clients.apps, self.NAMESPACE, self.DEPLOYMENT)
+        for plural, name in [
+            ("rollbackpolicies", self.ROLLBACK_POLICY_NAME),
+            ("staticpolicies", self.STATIC_POLICY_NAME),
+            ("automationstrategies", self.STRATEGY_NAME),
+        ]:
+            delete_custom_object(k8s_clients.custom, GROUP, VERSION, self.NAMESPACE, plural, name)
+        try:
+            k8s_clients.core.delete_namespace(self.NAMESPACE)
+        except ApiException:
+            pass
+
+        wait_for(
+            lambda: _namespace_gone(k8s_clients, self.NAMESPACE),
+            timeout=120,
+            message=f"namespace {self.NAMESPACE} deletion",
+        )
+
+    def _deployment(self, k8s_clients):
+        return get_deployment(k8s_clients.apps, self.NAMESPACE, self.DEPLOYMENT)
+
+    def _rollback_state(self, k8s_clients) -> dict | None:
+        annotations = self._deployment(k8s_clients).metadata.annotations or {}
+        raw = annotations.get(ROLLBACK_STATE_ANNOTATION)
+        if not raw:
+            return None
+        return json.loads(raw)
+
+    def _rollback_annotations_cleared(self, k8s_clients) -> bool:
+        annotations = self._deployment(k8s_clients).metadata.annotations or {}
+        return (
+            "rollbackpolicy.rightsizing.kubex.ai/desired-resource-requests" not in annotations
+            and "rollbackpolicy.rightsizing.kubex.ai/desired-resource-limits" not in annotations
+        )
+
+    def _patch_rollback_policy_backoff(self, k8s_clients, *, time_period: str, max_attempts: int) -> None:
+        k8s_clients.custom.patch_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            self.NAMESPACE,
+            "rollbackpolicies",
+            self.ROLLBACK_POLICY_NAME,
+            {
+                "spec": {
+                    "backoff": {
+                        "timePeriod": time_period,
+                        "multiplyByTurn": 1,
+                        "maxAttempts": max_attempts,
+                    }
+                }
+            },
+        )
+
+    def _patch_rollback_policy_monitoring_period(self, k8s_clients, monitoring_period: str) -> None:
+        k8s_clients.custom.patch_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            self.NAMESPACE,
+            "rollbackpolicies",
+            self.ROLLBACK_POLICY_NAME,
+            {"spec": {"monitoringPeriod": monitoring_period}},
+        )
+
+    def _patch_static_policy_resources(self, k8s_clients, resources: dict[str, dict[str, str]], gpu_fraction: str) -> None:
+        k8s_clients.custom.patch_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            self.NAMESPACE,
+            "staticpolicies",
+            self.STATIC_POLICY_NAME,
+            {
+                "spec": {
+                    "resources": {
+                        "containers": {
+                            "*": {
+                                "requests": {**resources["requests"], "gpu": gpu_fraction},
+                                "limits": resources["limits"],
+                            }
+                        }
+                    }
+                }
+            },
+        )
+
+    def _delete_static_policy(self, k8s_clients) -> None:
+        delete_custom_object(
+            k8s_clients.custom,
+            GROUP,
+            VERSION,
+            self.NAMESPACE,
+            "staticpolicies",
+            self.STATIC_POLICY_NAME,
+        )
+
+    def _wait_for_pod_resources(self, k8s_clients, resources: dict[str, dict[str, str]], timeout: int) -> None:
+        def applied():
+            pod = get_deployment_pod(k8s_clients.core, self.NAMESPACE, self.DEPLOYMENT)
+            live = get_pod_resources(k8s_clients.core, self.NAMESPACE, pod.metadata.name)["app"]
+            return (
+                live["requests"].get("cpu") == resources["requests"]["cpu"]
+                and live["requests"].get("memory") == resources["requests"]["memory"]
+                and live["limits"].get("cpu") == resources["limits"]["cpu"]
+                and live["limits"].get("memory") == resources["limits"]["memory"]
+            )
+
+        wait_for(applied, timeout=timeout, message="live resource update")
+
+    def _wait_for_state_mode(self, k8s_clients, mode: str, timeout: int) -> dict:
+        state_box = {"value": None}
+
+        def state_matches():
+            state = self._rollback_state(k8s_clients)
+            if state and state.get("mode") == mode:
+                state_box["value"] = state
+                return True
+            return False
+
+        wait_for(state_matches, timeout=timeout, message=f"rollback state {mode}")
+        return state_box["value"]
+
+    def _wait_for_state_modes(self, k8s_clients, modes: set[str], timeout: int) -> dict:
+        state_box = {"value": None}
+
+        def state_matches():
+            state = self._rollback_state(k8s_clients)
+            if state and state.get("mode") in modes:
+                state_box["value"] = state
+                return True
+            return False
+
+        wait_for(state_matches, timeout=timeout, message=f"rollback state in {sorted(modes)}")
+        return state_box["value"]
+
+    def _wait_for_initial_monitoring_success(self, k8s_clients) -> None:
+        self._wait_for_pod_resources(k8s_clients, self.INITIAL_RESOURCES, timeout=300)
+
+        def pod_fraction_applied():
+            pod = get_deployment_pod(k8s_clients.core, self.NAMESPACE, self.DEPLOYMENT)
+            return (pod.metadata.annotations or {}).get("gpu-fraction") == "0.25"
+
+        wait_for(pod_fraction_applied, timeout=180, message="kai gpu-fraction annotation")
+        self._wait_for_state_mode(k8s_clients, "monitoring", timeout=180)
+        self._wait_for_state_mode(k8s_clients, "monitoringSucceeded", timeout=180)
+        wait_for(
+            lambda: self._rollback_annotations_cleared(k8s_clients),
+            timeout=60,
+            message="rollback annotations cleared after monitoring success",
+        )
+
+    def _wait_for_second_monitoring_start(self, k8s_clients) -> None:
+        initial_success = self._rollback_state(k8s_clients)
+        initial_fingerprint = initial_success.get("activeRecommendationFingerprint") if initial_success else None
+
+        self._patch_rollback_policy_monitoring_period(k8s_clients, "90s")
+        self._patch_static_policy_resources(k8s_clients, self.FAILING_RESOURCES, gpu_fraction="0.25")
+        self._wait_for_pod_resources(k8s_clients, self.FAILING_RESOURCES, timeout=300)
+
+        def second_monitoring_started():
+            state = self._rollback_state(k8s_clients)
+            return bool(
+                state
+                and state.get("mode") == "monitoring"
+                and state.get("activeRecommendationFingerprint")
+                and state.get("activeRecommendationFingerprint") != initial_fingerprint
+            )
+
+        wait_for(second_monitoring_started, timeout=180, message="second rollback monitoring start")
+
+    def _trigger_organic_failure(self, k8s_clients, *, max_attempts: int) -> None:
+        self._patch_rollback_policy_backoff(k8s_clients, time_period="10s", max_attempts=max_attempts)
+
+        wait_for(
+            lambda: self._deployment_failure_reason(k8s_clients) in {"CrashLoopBackOff", "OOMKilled"},
+            timeout=180,
+            message="resource-driven failure status",
+        )
+        self._delete_healthy_pods(k8s_clients)
+        self._poke_owner_reconcile(k8s_clients)
+
+        rolling_back = self._wait_for_state_mode(k8s_clients, "rollingBack", timeout=240)
+        assert rolling_back["failureReason"] in {"oomKilled", "crashLoopBackOff"}
+        assert any(reason in rolling_back["failureMessage"] for reason in {"OOMKilled", "CrashLoopBackOff"})
+
+        self._delete_static_policy(k8s_clients)
+        self._wait_for_state_mode(k8s_clients, "backingOff", timeout=240)
+
+    def _deployment_failure_reason(self, k8s_clients) -> str | None:
+        pods = k8s_clients.core.list_namespaced_pod(
+            self.NAMESPACE,
+            label_selector=f"app={self.DEPLOYMENT}",
+        ).items
+        for pod in pods:
+            for status in pod.status.container_statuses or []:
+                if status.name != "app" or status.state is None:
+                    continue
+                if status.state.waiting is not None:
+                    return status.state.waiting.reason
+                if status.state.terminated is not None:
+                    return status.state.terminated.reason
+        return None
+
+    def _delete_healthy_pods(self, k8s_clients) -> None:
+        pods = k8s_clients.core.list_namespaced_pod(
+            self.NAMESPACE,
+            label_selector=f"app={self.DEPLOYMENT}",
+        ).items
+        for pod in pods:
+            statuses = pod.status.container_statuses or []
+            if any(
+                status.state
+                and (
+                    (status.state.waiting and status.state.waiting.reason == "CrashLoopBackOff")
+                    or (status.state.terminated and status.state.terminated.reason == "OOMKilled")
+                )
+                for status in statuses
+            ):
+                continue
+            try:
+                k8s_clients.core.delete_namespaced_pod(pod.metadata.name, self.NAMESPACE)
+            except ApiException as exc:
+                if exc.status != 404:
+                    raise
+
+    def _poke_owner_reconcile(self, k8s_clients) -> None:
+        k8s_clients.apps.patch_namespaced_deployment(
+            self.DEPLOYMENT,
+            self.NAMESPACE,
+            {"metadata": {"annotations": {"e2e.rightsizing.kubex.ai/poke": "rollback-kai"}}},
+        )
+
+    @pytest.mark.timeout(900)
+    def test_kai_rollback_backoff_completion_clears_annotations(self, k8s_clients):
+        self._wait_for_initial_monitoring_success(k8s_clients)
+        self._wait_for_second_monitoring_start(k8s_clients)
+        self._trigger_organic_failure(k8s_clients, max_attempts=2)
+
+        backed_off = self._wait_for_state_mode(k8s_clients, "backedOff", timeout=180)
+        assert backed_off["turn"] == 2
+        assert backed_off["failureReason"] in {"oomKilled", "crashLoopBackOff"}
+        assert any(reason in backed_off["failureMessage"] for reason in {"OOMKilled", "CrashLoopBackOff"})
+        assert self._rollback_annotations_cleared(k8s_clients)
+
+        def gpu_fraction_restored():
+            pod = get_deployment_pod(k8s_clients.core, self.NAMESPACE, self.DEPLOYMENT)
+            return (pod.metadata.annotations or {}).get("gpu-fraction") == "0.25"
+
+        wait_for(gpu_fraction_restored, timeout=180, message="kai gpu-fraction restored after rollback")
+
+
+def _namespace_gone(k8s_clients, namespace: str) -> bool:
+    try:
+        k8s_clients.core.read_namespace(namespace)
+    except ApiException as exc:
+        if exc.status == 404:
+            return True
+        raise
+    return False
