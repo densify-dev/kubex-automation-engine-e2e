@@ -11,7 +11,7 @@ All notable changes to the Kubex Automation Engine Helm chart will be documented
 ### Changed
 - Default policy workload scope now includes KubeAI `Model` objects when `workloadTypes` is omitted.
 - Rollback monitoring now enforces adoption-threshold behavior more consistently.
-- Proposal sync remains opt-in through `GlobalConfiguration` and is disabled by default.
+- Agentic Proposal sync remains opt-in through `GlobalConfiguration` and is disabled by default.
 
 ### Fixed
 - Helm uninstall reliability by aligning the pre-delete cleanup hook permissions with the rightsizing resources it patches.

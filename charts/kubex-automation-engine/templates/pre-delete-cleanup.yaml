@@ -1,7 +1,7 @@
 {{- /*
 pre-delete-cleanup.yaml
 
-Helm pre-delete hook that removes finalizers from every chart-owned rightsizing
+Helm pre-delete hook that removes finalizers from every chart-owned custom
 resource created by this release (identified by the app.kubernetes.io/instance label).
 
 Removing the finalizer allows Helm to delete those CRs immediately as part of the

@@ -126,6 +126,66 @@ wait_for_crd_absent() {
   done
 }
 
+cleanup_rightsizing_resources() {
+  local namespaced_resources=(
+    automationstrategies
+    proactivepolicies
+    staticpolicies
+    rollbackpolicies
+    gpurebalancingpolicies
+  )
+  local cluster_resources=(
+    clusterautomationstrategies
+    clusterproactivepolicies
+    clusterstaticpolicies
+    clusterrollbackpolicies
+    clusterwidegpurebalancingpolicies
+    globalconfigurations
+    policyevaluations
+    gpuconsolidationpolicies
+    podaffinitypolicies
+  )
+
+  log "Deleting lingering rightsizing CRs before controller uninstall"
+  run_cmd kubectl --context "$KUBE_CONTEXT" delete --ignore-not-found --wait=false --all --all-namespaces "${namespaced_resources[@]}"
+  run_cmd kubectl --context "$KUBE_CONTEXT" delete --ignore-not-found --wait=false --all "${cluster_resources[@]}"
+
+  local timeout_seconds="${1:-180}"
+  local deadline=$((SECONDS + timeout_seconds))
+  local remaining
+
+  while (( SECONDS < deadline )); do
+    remaining=""
+    for resource in "${namespaced_resources[@]}"; do
+      if [[ -n "$(kubectl --context "$KUBE_CONTEXT" get "$resource" --all-namespaces -o name 2>/dev/null)" ]]; then
+        remaining="$resource"
+        break
+      fi
+    done
+    if [[ -z "$remaining" ]]; then
+      for resource in "${cluster_resources[@]}"; do
+        if [[ -n "$(kubectl --context "$KUBE_CONTEXT" get "$resource" -o name 2>/dev/null)" ]]; then
+          remaining="$resource"
+          break
+        fi
+      done
+    fi
+    if [[ -z "$remaining" ]]; then
+      return 0
+    fi
+    sleep 2
+  done
+
+  echo "Timed out waiting for rightsizing resources to be removed before controller uninstall" >&2
+  for resource in "${namespaced_resources[@]}"; do
+    kubectl --context "$KUBE_CONTEXT" get "$resource" --all-namespaces -o wide || true
+  done
+  for resource in "${cluster_resources[@]}"; do
+    kubectl --context "$KUBE_CONTEXT" get "$resource" -o wide || true
+  done
+  return 1
+}
+
 bootstrap_cluster() {
   local bootstrap_args=(
     --kube-context "$KUBE_CONTEXT"
@@ -276,6 +336,8 @@ run_functional_suite() {
 }
 
 verify_uninstall() {
+  cleanup_rightsizing_resources
+
   log "Uninstalling controller Helm release ${HELM_RELEASE}"
   run_cmd helm uninstall "$HELM_RELEASE" --kube-context "$KUBE_CONTEXT" --namespace "$HELM_NAMESPACE"
 

@@ -25,9 +25,9 @@ The framework assumes it can create and manage its own Kind cluster for a test r
 - `KEDA` for KEDA-managed HPA coverage
 - `VPA` for VPA-backed example coverage
 
-The GPU feature path is separate. Enable it with `GPU_SUITE=true` and point `GPU_KIND_CONFIG` at `test/e2e/features/gpu/kind-config.yaml`.
+GPU coverage can be folded into the standard suite by enabling `GPU_SUITE=true` and pointing `GPU_KIND_CONFIG` at `test/e2e/features/gpu/kind-config.yaml`.
 
-The CI matrix runs two variants: **v1.35.0** with the full stack and **v1.32.0** with metrics-server only (`WITH_KEDA=false WITH_VPA=false`).
+The CI matrix runs two variants, and both include GPU coverage: **v1.35.0** with the full stack and **v1.32.0** with metrics-server only (`WITH_KEDA=false WITH_VPA=false`).
 
 Controller installation is handled by the Python bootstrap module. It installs the Helm charts using chart defaults by default, and only generates image override values when you pass `--controller-image-repository` and `--controller-image-tag`.
 
@@ -52,7 +52,7 @@ After bootstrap, the suite expects these controller-managed resources to exist:
 # Basic run against the default test cluster
 ./scripts/run-full-suite.sh
 
-# Run just the GPU suite
+# Run just the GPU-focused tests
 ./scripts/run-gpu-suite.sh
 
 # Explicit environment overrides
@@ -214,12 +214,12 @@ e2e-testing/
 
 - Kind bootstrap is handled by [bootstrap.py](bootstrap.py).
 - The main local entry point is [scripts/run-full-suite.sh](scripts/run-full-suite.sh).
-- [scripts/run-full-matrix-local.sh](scripts/run-full-matrix-local.sh) builds the local controller images, then runs the full-suite flow twice: once for `v1.35.0` with the full stack (metrics-server, KEDA, VPA) and once for `v1.32.0` with metrics-server only (KEDA and VPA skipped). Pass one or more pytest nodeids/paths to run only that subset through the matrix bootstrap.
+- [scripts/run-full-matrix-local.sh](scripts/run-full-matrix-local.sh) builds the local controller images, then runs the full-suite flow twice with GPU enabled in both lanes: once for `v1.35.0` with the full stack (metrics-server, KEDA, VPA) and once for `v1.32.0` with metrics-server only (KEDA and VPA skipped). Pass one or more pytest nodeids/paths to run only that subset through the matrix bootstrap.
 - `test_example_behavior.py` now waits for both `Deployment` and `StatefulSet` workloads declared in vendored examples to become ready.
 - `test_strimzipodset.py` exercises both `core.strimzi.io/v1` and `core.strimzi.io/v1beta2` using a minimal CRD fixture plus synthetic owned Pods so the controller follows the real owned-pod path.
 - The local suite can deploy an in-cluster Python mock Kubex service, feed recommendations from `examples/recommendations.json`, and assert heartbeat/policy/mutation uploads through the real gateway sidecar path.
 - The full-suite runner verifies install through the functional tests, then uninstalls the controller Helm release and `kubex-crds` and verifies their removal.
-- The bootstrap flow installs `metrics-server`, `KEDA`, and VPA by default. Set `WITH_KEDA=false`, `WITH_VPA=false`, or `WITH_METRICS_SERVER=false` to skip individual addons. The CI matrix uses the full stack on v1.35.0 and metrics-server only on v1.32.0 (`WITH_KEDA=false WITH_VPA=false`).
+- The bootstrap flow installs `metrics-server`, `KEDA`, and VPA by default. Set `WITH_KEDA=false`, `WITH_VPA=false`, or `WITH_METRICS_SERVER=false` to skip individual addons. The CI matrix uses the full stack plus GPU coverage on v1.35.0 and metrics-server plus GPU coverage on v1.32.0 (`WITH_KEDA=false WITH_VPA=false`).
 - The default full-suite runner is serial because many tests mutate shared cluster state and vendored example resources; set `PYTEST_WORKERS` only after isolating those tests.
 - Tests can use `supports_in_place_resize` as a coarse version check, but behavior-sensitive tests should gate on the live `actual_in_place_resize_support` probe fixture.
 - Test workloads are created in `--test-namespace` and cleaned up after each test class via `autouse` fixtures.

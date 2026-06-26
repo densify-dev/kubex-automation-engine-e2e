@@ -52,7 +52,9 @@ run_suite() {
   local with_metrics_server="${4:-true}"
   local with_keda="${5:-true}"
   local with_vpa="${6:-true}"
-  local pytest_targets=("${@:7}")
+  local gpu_suite="${7:-true}"
+  local gpu_kind_config="${8:-${E2E_ROOT}/features/gpu/kind-config.yaml}"
+  local pytest_targets=("${@:9}")
 
   echo
   echo "=== Running ${label} via run-full-suite.sh on cluster ${cluster_name} (${node_image}) ==="
@@ -61,6 +63,8 @@ run_suite() {
     WITH_METRICS_SERVER="${with_metrics_server}" \
     WITH_KEDA="${with_keda}" \
     WITH_VPA="${with_vpa}" \
+    GPU_SUITE="${gpu_suite}" \
+    GPU_KIND_CONFIG="${gpu_kind_config}" \
     EXAMPLES_ROOT="${CONTROLLER_ROOT}/examples" \
     HELM_CRDS_CHART="${CONTROLLER_ROOT}/charts/kubex-crds" \
     HELM_CONTROLLER_CHART="${CONTROLLER_ROOT}/charts/kubex-automation-engine" \
@@ -78,6 +82,6 @@ make -C "${CONTROLLER_ROOT}" docker-build docker-build-cleanup IMG="${IMG}" CLEA
 
 echo "==> Running the full Kind version matrix"
 reset_cluster "${NEWER_CLUSTER_NAME}"
-run_suite "kubernetes-${NEWER_VERSION}" "${NEWER_CLUSTER_NAME}" "${NEWER_NODE_IMAGE}" "true" "true" "true" "$(normalize_target "$1")"
+run_suite "kubernetes-${NEWER_VERSION}" "${NEWER_CLUSTER_NAME}" "${NEWER_NODE_IMAGE}" "true" "true" "true" "true" "${E2E_ROOT}/features/gpu/kind-config.yaml" "$(normalize_target "$1")"
 reset_cluster "${OLDER_CLUSTER_NAME}"
-run_suite "kubernetes-${OLDER_VERSION}" "${OLDER_CLUSTER_NAME}" "${OLDER_NODE_IMAGE}" "true" "false" "false" "$(normalize_target "$1")"
+run_suite "kubernetes-${OLDER_VERSION}" "${OLDER_CLUSTER_NAME}" "${OLDER_NODE_IMAGE}" "true" "false" "false" "true" "${E2E_ROOT}/features/gpu/kind-config.yaml" "$(normalize_target "$1")"
