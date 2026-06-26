@@ -31,10 +31,6 @@ on:
         description: "Helm chart version override for kubex-crds"
         required: false
         default: ""
-      run_gpu_suite:
-        description: "Run the GPU feature suite"
-        required: false
-        default: "false"
 
 permissions:
   contents: read
@@ -56,11 +52,15 @@ jobs:
             with_metrics_server: "true"
             with_keda: "true"
             with_vpa: "true"
+            gpu_suite: "true"
+            gpu_kind_config: features/gpu/kind-config.yaml
           - version: v1.32.0
             cluster_name: e2e-132
             with_metrics_server: "true"
             with_keda: "false"
             with_vpa: "false"
+            gpu_suite: "true"
+            gpu_kind_config: features/gpu/kind-config.yaml
     env:
       # Push/pull_request use local charts; schedule floats to the Helm repo and latest image.
       HELM_RELEASE: kubex-automation-engine
@@ -78,6 +78,8 @@ jobs:
       WITH_METRICS_SERVER: ${{ matrix.kubernetes.with_metrics_server }}
       WITH_KEDA: ${{ matrix.kubernetes.with_keda }}
       WITH_VPA: ${{ matrix.kubernetes.with_vpa }}
+      GPU_SUITE: ${{ matrix.kubernetes.gpu_suite }}
+      GPU_KIND_CONFIG: ${{ matrix.kubernetes.gpu_kind_config }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -133,84 +135,3 @@ jobs:
           WITH_METRICS_SERVER: ${{ env.WITH_METRICS_SERVER }}
           WITH_KEDA: ${{ env.WITH_KEDA }}
           WITH_VPA: ${{ env.WITH_VPA }}
-
-  gpu-e2e:
-    name: GPU E2E Tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    if: github.event_name != 'workflow_dispatch' || github.event.inputs.run_gpu_suite == 'true'
-    env:
-      HELM_RELEASE: kubex-automation-engine
-      HELM_NAMESPACE: kubex
-      KUBEX_E2E_EPASSWORD: ${{ secrets.KUBEX_E2E_EPASSWORD }}
-      CONTROLLER_IMAGE_REPOSITORY: ${{ github.event_name == 'schedule' && 'densify/automation-controller' || github.event.inputs.controller_image_repository }}
-      CONTROLLER_IMAGE_TAG: ${{ github.event_name == 'schedule' && 'latest' || github.event.inputs.controller_image_tag }}
-      HELM_REPO_URL: ${{ github.event.inputs.controller_chart_repo_url || 'https://densify-dev.github.io/helm-charts' }}
-      HELM_CRDS_CHART: ${{ github.event_name == 'schedule' && 'kubex-crds' || 'charts/kubex-crds' }}
-      HELM_CONTROLLER_CHART: ${{ github.event_name == 'schedule' && 'kubex-automation-engine' || 'charts/kubex-automation-engine' }}
-      HELM_CRDS_CHART_VERSION: ${{ github.event_name == 'schedule' && '' || github.event.inputs.crds_chart_version }}
-      HELM_CONTROLLER_CHART_VERSION: ${{ github.event_name == 'schedule' && '' || github.event.inputs.controller_chart_version }}
-      CLUSTER_NAME: e2e-gpu
-      NODE_IMAGE: kindest/node:v1.35.0
-      WITH_METRICS_SERVER: "true"
-      WITH_KEDA: "false"
-      WITH_VPA: "false"
-      GPU_SUITE: "true"
-      GPU_KIND_CONFIG: features/gpu/kind-config.yaml
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Load controller image metadata
-        uses: ./.github/actions/load-controller-image-metadata
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install Python test dependencies
-        run: pip install -r requirements.txt
-
-      - name: Install kind
-        run: |
-          curl -fsSLo /tmp/kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64
-          expected_sha="$(curl -fsSL https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64.sha256sum | awk '{print $1}')"
-          echo "${expected_sha}  /tmp/kind" | sha256sum -c -
-          chmod +x /tmp/kind
-          sudo mv /tmp/kind /usr/local/bin/kind
-
-      - name: Install Helm
-        uses: azure/setup-helm@v4
-        with:
-          version: v3.20.2
-
-      - name: Install kubectl
-        uses: azure/setup-kubectl@v4
-
-      - name: Validate e2e password secret
-        run: |
-          if [[ -z "${KUBEX_E2E_EPASSWORD:-}" ]]; then
-            echo "KUBEX_E2E_EPASSWORD secret is required"
-            exit 1
-          fi
-
-      - name: Run GPU suite
-        run: ./scripts/run-gpu-suite.sh
-        env:
-          CLUSTER_NAME: ${{ env.CLUSTER_NAME }}
-          NODE_IMAGE: ${{ env.NODE_IMAGE }}
-          HELM_RELEASE: ${{ env.HELM_RELEASE }}
-          HELM_NAMESPACE: ${{ env.HELM_NAMESPACE }}
-          CONTROLLER_IMAGE_REPOSITORY: ${{ env.CONTROLLER_IMAGE_REPOSITORY }}
-          CONTROLLER_IMAGE_TAG: ${{ env.CONTROLLER_IMAGE_TAG }}
-          HELM_REPO_URL: ${{ env.HELM_REPO_URL }}
-          HELM_CRDS_CHART: ${{ env.HELM_CRDS_CHART }}
-          HELM_CONTROLLER_CHART: ${{ env.HELM_CONTROLLER_CHART }}
-          HELM_CRDS_CHART_VERSION: ${{ env.HELM_CRDS_CHART_VERSION }}
-          HELM_CONTROLLER_CHART_VERSION: ${{ env.HELM_CONTROLLER_CHART_VERSION }}
-          WITH_METRICS_SERVER: ${{ env.WITH_METRICS_SERVER }}
-          WITH_KEDA: ${{ env.WITH_KEDA }}
-          WITH_VPA: ${{ env.WITH_VPA }}
-          GPU_SUITE: ${{ env.GPU_SUITE }}
-          GPU_KIND_CONFIG: ${{ env.GPU_KIND_CONFIG }}
