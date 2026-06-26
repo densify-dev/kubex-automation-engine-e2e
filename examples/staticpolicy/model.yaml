@@ -41,8 +41,14 @@ metadata:
   labels:
     app: kubeai-demo
 spec:
-  # Replace placeholder before apply. Example needs spec.url to pass KubeAI admission.
-  url: hf://replace/me
+  features: [TextGeneration]
+  url: hf://facebook/opt-125m
+  engine: VLLM
+  args:
+    - --gpu-memory-utilization=0.9
+    - --disable-log-requests
+  minReplicas: 1
+  resourceProfile: nvidia-gpu-l4:1
 # After KubeAI creates model-owned pods, admission webhook and workload recommendation
 # sync inherit recommendations from Model owner onto those pods.
 #

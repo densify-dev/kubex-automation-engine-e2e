@@ -139,7 +139,7 @@ cleanup_rightsizing_resources() {
     clusterproactivepolicies
     clusterstaticpolicies
     clusterrollbackpolicies
-    clusterwidegpurebalancingpolicies
+    clustergpurebalancingpolicies
     globalconfigurations
     policyevaluations
     gpuconsolidationpolicies
@@ -147,8 +147,12 @@ cleanup_rightsizing_resources() {
   )
 
   log "Deleting lingering rightsizing CRs before controller uninstall"
-  run_cmd kubectl --context "$KUBE_CONTEXT" delete --ignore-not-found --wait=false --all --all-namespaces "${namespaced_resources[@]}"
-  run_cmd kubectl --context "$KUBE_CONTEXT" delete --ignore-not-found --wait=false --all "${cluster_resources[@]}"
+  for resource in "${namespaced_resources[@]}"; do
+    run_cmd kubectl --context "$KUBE_CONTEXT" delete --ignore-not-found --wait=false --all --all-namespaces "$resource"
+  done
+  for resource in "${cluster_resources[@]}"; do
+    run_cmd kubectl --context "$KUBE_CONTEXT" delete --ignore-not-found --wait=false --all "$resource"
+  done
 
   local timeout_seconds="${1:-180}"
   local deadline=$((SECONDS + timeout_seconds))

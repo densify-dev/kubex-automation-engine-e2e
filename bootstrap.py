@@ -38,6 +38,7 @@ class BootstrapConfig:
     install_keda: bool = True
     install_vpa: bool = True
     install_gpu_suite: bool = False
+    install_kubeai: bool = False
     gpu_suite_root: str | None = None
     gpu_kind_config: str | None = None
     install_gpu_process_exporter: bool = False
@@ -587,6 +588,55 @@ def install_kai_scheduler_shim(config: BootstrapConfig) -> None:
     )
 
 
+def wait_for_api_group(config: BootstrapConfig, api_group: str, timeout_seconds: int = 300) -> None:
+    deadline = time.time() + timeout_seconds
+    last_output = ""
+    while time.time() < deadline:
+        result = run(
+            "kubectl",
+            "--context",
+            config.kube_context,
+            "api-resources",
+            "--api-group",
+            api_group,
+            "-o",
+            "name",
+            capture_output=True,
+            check=False,
+        )
+        last_output = result.stdout.strip()
+        if last_output:
+            return
+        time.sleep(2)
+
+    raise RuntimeError(f"timed out waiting for API group {api_group} to become available: {last_output}")
+
+
+def install_kubeai(config: BootstrapConfig) -> None:
+    run("helm", "repo", "add", "--force-update", "kubeai", "https://www.kubeai.org")
+    run("helm", "repo", "update")
+    run(
+        "helm",
+        "upgrade",
+        "--install",
+        "kubeai",
+        "kubeai/kubeai",
+        "--version",
+        "0.23.2",
+        "--kube-context",
+        config.kube_context,
+        "--namespace",
+        "kubeai",
+        "--create-namespace",
+        "--wait",
+        "--timeout",
+        "10m0s",
+        "--set",
+        "open-webui.enabled=false",
+    )
+    wait_for_api_group(config, "kubeai.org")
+
+
 def load_kind_images(config: BootstrapConfig) -> None:
     images = []
     if config.cleanup_image_repository and config.cleanup_image_tag:
@@ -848,6 +898,8 @@ def bootstrap(config: BootstrapConfig) -> None:
     install_gpu_process_exporter(config)
     install_kai_scheduler_shim(config)
     install_prometheus(config)
+    if config.install_kubeai:
+        install_kubeai(config)
     if config.deploy_kubex_stub:
         ensure_kubex_stub(config)
     ensure_strimzipodset_crd(config)
@@ -910,6 +962,7 @@ def parse_args() -> BootstrapConfig:
         kind_node_image=args.kind_node_image,
         load_kind_images=args.load_kind_images,
         install_gpu_suite=args.gpu_suite,
+        install_kubeai=args.gpu_suite,
         gpu_kind_config=args.gpu_kind_config,
         install_gpu_process_exporter=args.gpu_suite,
         install_prometheus=args.gpu_suite,

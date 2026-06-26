@@ -21,6 +21,7 @@ GPU_MANIFEST = EXAMPLES_ROOT / "gpus" / "simple-static-gpu-kai.yaml"
 GPU_MIGRATION_MANIFEST = EXAMPLES_ROOT / "gpus" / "simple-static-gpu-vanilla-2kai.yaml"
 GPU_CONSOLIDATION_MANIFEST = EXAMPLES_ROOT / "gpus" / "gpu-consolidation-policy.yaml"
 GPU_REBALANCING_MANIFEST = EXAMPLES_ROOT / "gpus" / "gpu-rebalancing-policy.yaml"
+KUBEAI_MODEL_MANIFEST = EXAMPLES_ROOT / "staticpolicy" / "model.yaml"
 
 pytestmark = pytest.mark.gpu_suite
 
@@ -86,6 +87,31 @@ def _wait_for_deployment_pod(
     return selected_pod
 
 
+def _wait_for_model_pod(k8s_clients, namespace: str, model_name: str, timeout: int = 300):
+    selected_pod = None
+
+    def pod_sort_key(pod):
+        return pod.metadata.creation_timestamp or datetime.min.replace(tzinfo=timezone.utc)
+
+    def has_model_pod():
+        nonlocal selected_pod
+        pods = k8s_clients.core.list_namespaced_pod(namespace).items
+        candidates = []
+        for pod in pods:
+            owners = pod.metadata.owner_references or []
+            if any(owner.kind == "Model" and owner.name == model_name for owner in owners):
+                candidates.append(pod)
+        if candidates:
+            selected_pod = max(candidates, key=pod_sort_key)
+            return True
+        return False
+
+    wait_for(has_model_pod, timeout=timeout, message=f"pod for model {namespace}/{model_name}")
+    if selected_pod is None:
+        raise RuntimeError(f"no pod found for model {model_name}")
+    return selected_pod
+
+
 def _wait_for_prometheus_ready(k8s_clients):
     wait_for_pod_ready(k8s_clients.core, "monitoring", "app=prometheus", timeout=300)
 
@@ -113,6 +139,41 @@ def _wait_for_prometheus_series(
 
 @pytest.mark.usefixtures("kind_cluster")
 class TestGpuKai:
+    @pytest.mark.timeout(900)
+    def test_kubeai_model_example_mutates_for_vllm_gpu(self, kube_context, k8s_clients):
+        try:
+            _wait_for_global_configuration_ready(k8s_clients)
+            apply_manifest(KUBEAI_MODEL_MANIFEST, kube_context)
+
+            annotated_pod = None
+
+            def model_pod_mutated() -> bool:
+                nonlocal annotated_pod
+                pods = k8s_clients.core.list_namespaced_pod("default").items
+                for pod in pods:
+                    owners = pod.metadata.owner_references or []
+                    if not any(owner.kind == "Model" and owner.name == "kubeai-demo-model" for owner in owners):
+                        continue
+                    if (pod.metadata.annotations or {}).get("gpu-fraction") == "0.7":
+                        annotated_pod = pod
+                        return True
+                return False
+
+            wait_for(model_pod_mutated, timeout=300, message="kubeai model pod gpu-fraction to update")
+            pod = annotated_pod
+            assert pod is not None
+            resources = get_pod_resources(k8s_clients.core, "default", pod.metadata.name)
+            container = pod.spec.containers[0]
+            assert container.args is not None
+            assert "--gpu-memory-utilization=0.9" in container.args
+            assert pod.metadata.annotations.get("gpu-fraction") == "0.7"
+            assert resources[container.name]["requests"].get("cpu") == "500m"
+            assert resources[container.name]["limits"].get("cpu") == "1"
+            assert resources[container.name]["requests"].get("nvidia.com/gpu") is None
+            assert resources[container.name]["limits"].get("nvidia.com/gpu") is None
+        finally:
+            delete_manifest_in_reverse(KUBEAI_MODEL_MANIFEST, kube_context)
+
     @pytest.mark.timeout(900)
     def test_gpu_example_mutates_for_kai(self, kube_context, k8s_clients):
         try:

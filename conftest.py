@@ -260,6 +260,7 @@ def kind_cluster(
             recommendations_file=request.config.getoption("--recommendations-file"),
             kind_node_image=request.config.getoption("--kind-node-image"),
             install_gpu_suite=request.config.getoption("--gpu-suite"),
+            install_kubeai=request.config.getoption("--gpu-suite"),
             install_gpu_process_exporter=request.config.getoption("--gpu-suite"),
             gpu_kind_config=request.config.getoption("--gpu-kind-config"),
             install_prometheus=request.config.getoption("--gpu-suite"),
