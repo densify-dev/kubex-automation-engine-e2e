@@ -29,6 +29,8 @@ GPU coverage can be folded into the standard suite by enabling `GPU_SUITE=true` 
 
 The CI matrix runs two variants, and both include GPU coverage: **v1.35.0** with the full stack and **v1.32.0** with metrics-server only (`WITH_KEDA=false WITH_VPA=false`).
 
+GPU coverage runs through the standard suite when `GPU_SUITE=true`; there is no separate GPU-only lane.
+
 Controller installation is handled by the Python bootstrap module. It installs the Helm charts using chart defaults by default, and only generates image override values when you pass `--controller-image-repository` and `--controller-image-tag`.
 
 By default the runners also load [examples/recommendations.json](examples/recommendations.json) into a `recommendations` `ConfigMap` and enable the chart's `localRecommendations` mode so recommendation-dependent tests exercise real data instead of just status fields.
@@ -50,66 +52,57 @@ After bootstrap, the suite expects these controller-managed resources to exist:
 
 ```bash
 # Basic run against the default test cluster
-./scripts/run-full-suite.sh
+./run-full-suite.sh
 
 # Run just the GPU-focused tests
-./scripts/run-gpu-suite.sh
+GPU_SUITE=true ./run-full-suite.sh tests/test_gpu_kai.py
 
 # Explicit environment overrides
 WITH_METRICS_SERVER=true \
 WITH_KEDA=true \
 WITH_VPA=true \
-./scripts/run-full-suite.sh
+./run-full-suite.sh
 
 # Keep the cluster for inspection
-pytest tests/ -v \
-  --keep-kind-cluster
+KEEP_KIND_CLUSTER=1 ./run-full-suite.sh
 
 # Run the full suite against Kubernetes v1.35.0 (full stack) and
 # v1.32.0 (metrics-server only)
-./scripts/run-full-matrix-local.sh
+./run-full-matrix-local.sh
 
 # The local suite uses an in-cluster mock Kubex upstream by default.
 # Disable it if you want the older local recommendations file flow.
-DEPLOY_KUBEX_STUB=false ./scripts/run-full-matrix-local.sh
+DEPLOY_KUBEX_STUB=false ./run-full-matrix-local.sh
 
 # Run a subset of tests through the matrix bootstrap
-./scripts/run-full-matrix-local.sh tests/test_automation_strategy.py
-./scripts/run-full-matrix-local.sh tests/test_policies.py::TestProactivePolicy::test_create_proactive_policy
-./scripts/run-full-matrix-local.sh tests/test_automation_strategy.py tests/test_policies.py
+./run-full-matrix-local.sh tests/test_automation_strategy.py
+./run-full-matrix-local.sh tests/test_policies.py::TestProactivePolicy::test_create_proactive_policy
+./run-full-matrix-local.sh tests/test_automation_strategy.py tests/test_policies.py
 
 # Keep the cluster alive between subset reruns while debugging
-KEEP_KIND_CLUSTER=1 ./scripts/run-full-matrix-local.sh tests/test_policies.py::TestProactivePolicy::test_create_proactive_policy
+KEEP_KIND_CLUSTER=1 ./run-full-matrix-local.sh tests/test_policies.py::TestProactivePolicy::test_create_proactive_policy
 
 
 # Pin a single run to a specific Kind node image
 NODE_IMAGE=kindest/node:v1.35.0 \
-./scripts/run-full-suite.sh
-
-# Use an existing cluster without bootstrapping a new Kind environment
-pytest tests/ -v \
-  --skip-kind-bootstrap \
-  --kube-context kind-e2e
+./run-full-suite.sh
 
 # Override the controller image instead of using chart defaults
-pytest tests/ -v \
-  --controller-image-repository <your-image-repo> \
-  --controller-image-tag <your-image-tag>
+CONTROLLER_IMAGE_REPOSITORY=<your-image-repo> \
+CONTROLLER_IMAGE_TAG=<your-image-tag> \
+./run-full-suite.sh
 
 # Validate the vendored example bundles against the bootstrapped cluster
-pytest tests/test_examples.py -v
+./run-full-matrix-local.sh tests/test_examples.py
 
 # Exercise the valid examples against a live cluster and assert workload health
-pytest tests/test_example_behavior.py -v
+./run-full-matrix-local.sh tests/test_example_behavior.py
 
 # Run a single test module
-pytest tests/test_automation_strategy.py -v
+./run-full-matrix-local.sh tests/test_automation_strategy.py
 
 # Run a single test class
-pytest tests/test_policies.py::TestStaticPolicy -v
-
-# Run with a timeout (seconds) per test
-pytest tests/ -v --timeout=120
+./run-full-matrix-local.sh tests/test_policies.py::TestStaticPolicy
 ```
 
 ### CLI Options
@@ -156,18 +149,44 @@ pytest tests/ -v --timeout=120
 | `GPU_SUITE` | `false` | Enable the GPU feature bootstrap path |
 | `GPU_KIND_CONFIG` | unset | Kind config used for the GPU suite |
 
+### Live Validation Notes
+
+- Use `--skip-kind-bootstrap` with an existing cluster when validating a single new or changed test.
+- Prefer nodeids or `-k` filters for point fixes instead of booting the full suite.
+- GPU live validation requires a real GPU-capable cluster; Kind-based GPU tests still use the GPU bootstrap path.
+- The VPA-guarded GPU live test skips automatically when the cluster does not have the `verticalpodautoscalers.autoscaling.k8s.io` CRD.
+
+```bash
+# Use an existing cluster without bootstrapping a new Kind environment
+pytest tests/ -v \
+  --skip-kind-bootstrap \
+  --kube-context kind-e2e
+
+# Run a specific e2e test or file against an existing cluster
+pytest tests/test_gpu_kai.py::TestGpuLiveValidation::test_gpu_resize_caps_at_previous_whole_gpu -v \
+  --skip-kind-bootstrap \
+  --kube-context gke_pm-testing-160714_europe-west4-a_kai-demo-cluster
+
+# Run only one focused test module on a live cluster
+pytest tests/test_gpu_kai.py -k 'gpu_resize_is_logged_by_the_controller' -v \
+  --skip-kind-bootstrap \
+  --kube-context gke_pm-testing-160714_europe-west4-a_kai-demo-cluster
+```
+
 ## Layout
 
 ```
 e2e-testing/
 ├── bootstrap.py                     # Kind bootstrap and Helm installation helpers
 ├── conftest.py                      # CLI options, fixtures, K8sClients dataclass
+├── run-full-suite.sh                # Root wrapper for the main local entry point
+├── run-full-matrix-local.sh         # Root wrapper for the matrix runner
 ├── examples/                        # Vendored example manifests used by test_examples.py
 │   └── invalid/                     # Intentionally invalid examples that should be rejected
 ├── helpers.py                       # Constants, k8s utilities, manifest builders
 ├── scripts/
-│   └── run-full-suite.sh              # Bootstrap, run the functional suite, then verify uninstall
-│   └── run-full-matrix-local.sh       # Build local images and run the full Kind version matrix
+│   ├── run-full-suite.sh            # Compatibility wrapper for the root entry point
+│   └── run-full-matrix-local.sh     # Build local images and run the full Kind version matrix
 └── tests/
     ├── test_health.py               # Controller pod, webhooks, metrics smoke tests
     ├── test_crd_validation.py       # Admission webhook schema enforcement
@@ -213,8 +232,8 @@ e2e-testing/
 ## Notes
 
 - Kind bootstrap is handled by [bootstrap.py](bootstrap.py).
-- The main local entry point is [scripts/run-full-suite.sh](scripts/run-full-suite.sh).
-- [scripts/run-full-matrix-local.sh](scripts/run-full-matrix-local.sh) builds the local controller images, then runs the full-suite flow twice with GPU enabled in both lanes: once for `v1.35.0` with the full stack (metrics-server, KEDA, VPA) and once for `v1.32.0` with metrics-server only (KEDA and VPA skipped). Pass one or more pytest nodeids/paths to run only that subset through the matrix bootstrap.
+- The main local entry point is [run-full-suite.sh](run-full-suite.sh).
+- [run-full-matrix-local.sh](run-full-matrix-local.sh) builds the local controller images, then runs the full-suite flow twice with GPU enabled in both lanes: once for `v1.35.0` with the full stack (metrics-server, KEDA, VPA) and once for `v1.32.0` with metrics-server only (KEDA and VPA skipped). Pass one or more pytest nodeids/paths to run only that subset through the matrix bootstrap.
 - `test_example_behavior.py` now waits for both `Deployment` and `StatefulSet` workloads declared in vendored examples to become ready.
 - `test_strimzipodset.py` exercises both `core.strimzi.io/v1` and `core.strimzi.io/v1beta2` using a minimal CRD fixture plus synthetic owned Pods so the controller follows the real owned-pod path.
 - The local suite can deploy an in-cluster Python mock Kubex service, feed recommendations from `examples/recommendations.json`, and assert heartbeat/policy/mutation uploads through the real gateway sidecar path.

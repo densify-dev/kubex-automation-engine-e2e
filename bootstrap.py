@@ -13,6 +13,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from kubernetes.client.rest import ApiException
+
 
 @dataclass
 class BootstrapConfig:
@@ -44,6 +46,7 @@ class BootstrapConfig:
     install_gpu_process_exporter: bool = False
     install_prometheus: bool = False
     cluster_name_value: str | None = None
+    kubeai_chart_version: str | None = "0.23.2"
     kubex_username: str = "dummy"
     kubex_epassword: str | None = None
     kubex_url_host: str | None = None
@@ -72,6 +75,15 @@ def run(
         detail = result.stderr if capture_output else ""
         raise RuntimeError(f"command failed: {' '.join(args)} (exit {result.returncode})\n{detail}")
     return result
+
+
+@contextmanager
+def ignore_not_found():
+    try:
+        yield
+    except ApiException as exc:
+        if exc.status != 404:
+            raise
 
 
 def _discover_repo_root(start: Path) -> Path:
@@ -604,8 +616,8 @@ def wait_for_api_group(config: BootstrapConfig, api_group: str, timeout_seconds:
             capture_output=True,
             check=False,
         )
-        last_output = result.stdout.strip()
-        if last_output:
+        last_output = result.stderr.strip() or result.stdout.strip()
+        if result.returncode == 0 and result.stdout.strip():
             return
         time.sleep(2)
 
@@ -615,14 +627,10 @@ def wait_for_api_group(config: BootstrapConfig, api_group: str, timeout_seconds:
 def install_kubeai(config: BootstrapConfig) -> None:
     run("helm", "repo", "add", "--force-update", "kubeai", "https://www.kubeai.org")
     run("helm", "repo", "update")
-    run(
-        "helm",
-        "upgrade",
-        "--install",
-        "kubeai",
-        "kubeai/kubeai",
-        "--version",
-        "0.23.2",
+    args = ["helm", "upgrade", "--install", "kubeai", "kubeai/kubeai"]
+    if config.kubeai_chart_version:
+        args += ["--version", config.kubeai_chart_version]
+    args += [
         "--kube-context",
         config.kube_context,
         "--namespace",
@@ -633,7 +641,8 @@ def install_kubeai(config: BootstrapConfig) -> None:
         "10m0s",
         "--set",
         "open-webui.enabled=false",
-    )
+    ]
+    run(*args)
     wait_for_api_group(config, "kubeai.org")
 
 
@@ -928,6 +937,7 @@ def parse_args() -> BootstrapConfig:
     parser.add_argument("--kubex-url-host")
     parser.add_argument("--kubex-url-scheme")
     parser.add_argument("--recommendations-file")
+    parser.add_argument("--kubeai-chart-version", default="0.23.2")
     parser.add_argument("--deploy-kubex-stub", action="store_true")
     parser.add_argument("--kind-node-image", default="kindest/node:v1.35.0")
     parser.add_argument("--load-kind-images", action="store_true")
@@ -959,6 +969,7 @@ def parse_args() -> BootstrapConfig:
         kubex_url_host=args.kubex_url_host,
         kubex_url_scheme=args.kubex_url_scheme,
         recommendations_file=args.recommendations_file,
+        kubeai_chart_version=args.kubeai_chart_version,
         kind_node_image=args.kind_node_image,
         load_kind_images=args.load_kind_images,
         install_gpu_suite=args.gpu_suite,

@@ -2,11 +2,13 @@
 
 import json
 from datetime import datetime, timezone
+from contextlib import contextmanager
 
 import pytest
 from kubernetes import client
 from kubernetes.client.rest import ApiException
 
+from bootstrap import ignore_not_found
 from example_utils import EXAMPLES_ROOT, apply_manifest, delete_manifest_in_reverse
 from helpers import (
     get_crd,
@@ -150,10 +152,42 @@ def _wait_for_prometheus_series(
     )
 
 
+def _controller_logs(kube_context: str, controller_namespace: str, since_time: str | None = None) -> str:
+    args = [
+        "logs",
+        "-n",
+        controller_namespace,
+        "--selector",
+        "app.kubernetes.io/name=kubex-automation-engine",
+        "--all-containers",
+        "--tail=1000",
+    ]
+    if since_time is not None:
+        args.append(f"--since-time={since_time}")
+    return kubectl(*args, context=kube_context)
+
+
+def _wait_for_controller_log_contains(
+    kube_context: str,
+    controller_namespace: str,
+    needles: tuple[str, ...],
+    since_time: str,
+    timeout: int = 300,
+):
+    def logs_match():
+        logs = _controller_logs(kube_context, controller_namespace, since_time=since_time)
+        return all(needle in logs for needle in needles)
+
+    wait_for(logs_match, timeout=timeout, message=f"controller logs containing {needles}")
+
+
 @pytest.mark.usefixtures("kind_cluster")
 class TestGpuKai:
     @pytest.mark.timeout(900)
     def test_kubeai_model_example_mutates_for_vllm_gpu(self, kube_context, k8s_clients):
+        if kube_context.startswith("kind-"):
+            pytest.skip("KubeAI model scheduling requires a real GPU cluster")
+
         try:
             _wait_for_global_configuration_ready(k8s_clients)
             apply_manifest(KUBEAI_MODEL_MANIFEST, kube_context)
@@ -342,6 +376,11 @@ class TestGpuKaiRollback:
         "limits": {"cpu": "400m", "memory": "640Mi"},
     }
 
+    ORIGINAL_RESOURCES = {
+        "requests": {"cpu": "100m", "memory": "256Mi"},
+        "limits": {"cpu": "200m", "memory": "512Mi"},
+    }
+
     FAILING_RESOURCES = {
         "requests": {"cpu": "300m", "memory": "128Mi"},
         "limits": {"cpu": "600m", "memory": "192Mi"},
@@ -349,6 +388,9 @@ class TestGpuKaiRollback:
 
     @pytest.fixture(autouse=True)
     def setup_teardown(self, request, k8s_clients, kube_context):
+        if kube_context.startswith("kind-"):
+            pytest.skip("KAI rollback monitoring is not reliable on fake-GPU Kind clusters")
+
         suffix = request.node.name.replace("_", "-")[:20]
         self.STRATEGY_NAME = f"e2e-kai-rollback-strategy-{suffix}"
         self.STATIC_POLICY_NAME = f"e2e-kai-rollback-static-{suffix}"
@@ -356,120 +398,97 @@ class TestGpuKaiRollback:
         self.DEPLOYMENT = f"gpu-kai-rollback-demo-{suffix}"
         self.NAMESPACE = f"gpu-kai-rollback-{suffix}"
 
-        try:
-            k8s_clients.core.create_namespace(
-                client.V1Namespace(metadata=client.V1ObjectMeta(name=self.NAMESPACE))
-            )
-        except ApiException as exc:
-            if exc.status != 409:
-                raise
+        with gpu_test_namespace(k8s_clients, self.NAMESPACE):
+            delete_deployment(k8s_clients.apps, self.NAMESPACE, self.DEPLOYMENT)
+            for plural, name in [
+                ("rollbackpolicies", self.ROLLBACK_POLICY_NAME),
+                ("staticpolicies", self.STATIC_POLICY_NAME),
+                ("automationstrategies", self.STRATEGY_NAME),
+            ]:
+                with ignore_not_found():
+                    delete_custom_object(k8s_clients.custom, GROUP, VERSION, self.NAMESPACE, plural, name)
 
-        delete_deployment(k8s_clients.apps, self.NAMESPACE, self.DEPLOYMENT)
-        for plural, name in [
-            ("rollbackpolicies", self.ROLLBACK_POLICY_NAME),
-            ("staticpolicies", self.STATIC_POLICY_NAME),
-            ("automationstrategies", self.STRATEGY_NAME),
-        ]:
-            delete_custom_object(k8s_clients.custom, GROUP, VERSION, self.NAMESPACE, plural, name)
-
-        strategy = automation_strategy_manifest(self.STRATEGY_NAME, self.NAMESPACE)
-        strategy["spec"]["enablement"]["overrideScheduler"] = "kai"
-        strategy["spec"]["podEviction"] = {"enabled": True}
-        strategy["spec"]["inPlaceResize"] = {"enabled": False}
-        strategy["spec"]["safetyChecks"] = {
-            "minReadyDuration": "0s",
-            "resizeRetryInterval": "5s",
-        }
-        strategy["spec"]["experimental"] = {"gpuKaiContract": "v1alpha1-2026-04"}
-        strategy["spec"]["kai"] = {"setQueueWhenSpecified": False}
-        k8s_clients.custom.create_namespaced_custom_object(
-            GROUP,
-            VERSION,
-            self.NAMESPACE,
-            "automationstrategies",
-            strategy,
-        )
-
-        k8s_clients.custom.create_namespaced_custom_object(
-            GROUP,
-            VERSION,
-            self.NAMESPACE,
-            "rollbackpolicies",
-            rollback_policy_manifest(
-                self.ROLLBACK_POLICY_NAME,
+            strategy = automation_strategy_manifest(self.STRATEGY_NAME, self.NAMESPACE)
+            strategy["spec"]["enablement"]["overrideScheduler"] = "kai"
+            strategy["spec"]["podEviction"] = {"enabled": True}
+            strategy["spec"]["inPlaceResize"] = {"enabled": False}
+            strategy["spec"]["safetyChecks"] = {
+                "minReadyDuration": "0s",
+                "resizeRetryInterval": "5s",
+            }
+            strategy["spec"]["experimental"] = {"gpuKaiContract": "v1alpha1-2026-04"}
+            k8s_clients.custom.create_namespaced_custom_object(
+                GROUP,
+                VERSION,
                 self.NAMESPACE,
+                "automationstrategies",
+                strategy,
+            )
+
+            k8s_clients.custom.create_namespaced_custom_object(
+                GROUP,
+                VERSION,
+                self.NAMESPACE,
+                "rollbackpolicies",
+                rollback_policy_manifest(
+                    self.ROLLBACK_POLICY_NAME,
+                    self.NAMESPACE,
+                    label_selector_app=self.DEPLOYMENT,
+                    monitoring_period="20s",
+                    weight=100,
+                    backoff={
+                        "timePeriod": "10s",
+                        "multiplyByTurn": 1,
+                        "maxAttempts": 2,
+                    },
+                ),
+            )
+
+            create_deployment(
+                k8s_clients.apps,
+                self.NAMESPACE,
+                self.DEPLOYMENT,
+                cpu_request=self.ORIGINAL_RESOURCES["requests"]["cpu"],
+                mem_request=self.ORIGINAL_RESOURCES["requests"]["memory"],
+                cpu_limit=self.ORIGINAL_RESOURCES["limits"]["cpu"],
+                mem_limit=self.ORIGINAL_RESOURCES["limits"]["memory"],
+                image="python:3.12-alpine",
+                command=["python", "-c"],
+                args=[
+                    "import time\n"
+                    "chunks = []\n"
+                    "while len(chunks) < 220:\n"
+                    "    chunks.append(bytearray(1024 * 1024))\n"
+                    "    time.sleep(0.02)\n"
+                    "time.sleep(3600)\n",
+                ],
+                resize_policy=[
+                    client.V1ContainerResizePolicy(resource_name="memory", restart_policy="RestartContainer")
+                ],
+                pod_labels={"kai.scheduler/queue": "my-queue"},
+                pod_annotations={"gpu-fraction": "0.25"},
+            )
+
+            static_policy = static_policy_manifest(
+                self.STATIC_POLICY_NAME,
+                self.NAMESPACE,
+                self.STRATEGY_NAME,
                 label_selector_app=self.DEPLOYMENT,
-                monitoring_period="20s",
-                weight=100,
-                backoff={
-                    "timePeriod": "10s",
-                    "multiplyByTurn": 1,
-                    "maxAttempts": 2,
-                },
-            ),
-        )
+                cpu_request=self.INITIAL_RESOURCES["requests"]["cpu"],
+                mem_request=self.INITIAL_RESOURCES["requests"]["memory"],
+                cpu_limit=self.INITIAL_RESOURCES["limits"]["cpu"],
+                mem_limit=self.INITIAL_RESOURCES["limits"]["memory"],
+            )
+            static_policy["spec"]["resources"]["containers"]["*"]["requests"]["gpu"] = "0.25"
+            k8s_clients.custom.create_namespaced_custom_object(
+                GROUP,
+                VERSION,
+                self.NAMESPACE,
+                "staticpolicies",
+                static_policy,
+            )
 
-        create_deployment(
-            k8s_clients.apps,
-            self.NAMESPACE,
-            self.DEPLOYMENT,
-            cpu_request=self.INITIAL_RESOURCES["requests"]["cpu"],
-            mem_request=self.INITIAL_RESOURCES["requests"]["memory"],
-            cpu_limit=self.INITIAL_RESOURCES["limits"]["cpu"],
-            mem_limit=self.INITIAL_RESOURCES["limits"]["memory"],
-            image="python:3.12-alpine",
-            command=["python", "-c"],
-            args=[
-                "import time\n"
-                "chunks = []\n"
-                "while len(chunks) < 220:\n"
-                "    chunks.append(bytearray(1024 * 1024))\n"
-                "    time.sleep(0.02)\n"
-                "time.sleep(3600)\n",
-            ],
-            resize_policy=[
-                client.V1ContainerResizePolicy(resource_name="memory", restart_policy="RestartContainer")
-            ],
-        )
-
-        static_policy = static_policy_manifest(
-            self.STATIC_POLICY_NAME,
-            self.NAMESPACE,
-            self.STRATEGY_NAME,
-            label_selector_app=self.DEPLOYMENT,
-            cpu_request=self.INITIAL_RESOURCES["requests"]["cpu"],
-            mem_request=self.INITIAL_RESOURCES["requests"]["memory"],
-            cpu_limit=self.INITIAL_RESOURCES["limits"]["cpu"],
-            mem_limit=self.INITIAL_RESOURCES["limits"]["memory"],
-        )
-        static_policy["spec"]["resources"]["containers"]["*"]["requests"]["gpu"] = "0.25"
-        k8s_clients.custom.create_namespaced_custom_object(
-            GROUP,
-            VERSION,
-            self.NAMESPACE,
-            "staticpolicies",
-            static_policy,
-        )
-
-        yield
-
-        delete_deployment(k8s_clients.apps, self.NAMESPACE, self.DEPLOYMENT)
-        for plural, name in [
-            ("rollbackpolicies", self.ROLLBACK_POLICY_NAME),
-            ("staticpolicies", self.STATIC_POLICY_NAME),
-            ("automationstrategies", self.STRATEGY_NAME),
-        ]:
-            delete_custom_object(k8s_clients.custom, GROUP, VERSION, self.NAMESPACE, plural, name)
-        try:
-            k8s_clients.core.delete_namespace(self.NAMESPACE)
-        except ApiException:
-            pass
-
-        wait_for(
-            lambda: _namespace_gone(k8s_clients, self.NAMESPACE),
-            timeout=120,
-            message=f"namespace {self.NAMESPACE} deletion",
-        )
+            yield
 
     def _deployment(self, k8s_clients):
         return get_deployment(k8s_clients.apps, self.NAMESPACE, self.DEPLOYMENT)
@@ -670,11 +689,8 @@ class TestGpuKaiRollback:
                 for status in statuses
             ):
                 continue
-            try:
+            with ignore_not_found():
                 k8s_clients.core.delete_namespaced_pod(pod.metadata.name, self.NAMESPACE)
-            except ApiException as exc:
-                if exc.status != 404:
-                    raise
 
     def _poke_owner_reconcile(self, k8s_clients) -> None:
         k8s_clients.apps.patch_namespaced_deployment(
@@ -683,7 +699,7 @@ class TestGpuKaiRollback:
             {"metadata": {"annotations": {"e2e.rightsizing.kubex.ai/poke": "rollback-kai"}}},
         )
 
-    @pytest.mark.timeout(900)
+    @pytest.mark.timeout(2700)
     def test_kai_rollback_backoff_completion_clears_annotations(self, k8s_clients):
         self._wait_for_initial_monitoring_success(k8s_clients)
         self._wait_for_second_monitoring_start(k8s_clients)
@@ -702,6 +718,209 @@ class TestGpuKaiRollback:
         wait_for(gpu_fraction_restored, timeout=180, message="kai gpu-fraction restored after rollback")
 
 
+class TestGpuLiveValidation:
+    STRATEGY_NAME = "e2e-gpu-live-strategy"
+    STATIC_POLICY_NAME = "e2e-gpu-live-static-policy"
+    VPA_NAME = "e2e-gpu-live-vpa"
+    DEPLOYMENT = "gpu-live-demo"
+    NAMESPACE = "gpu-live"
+
+    @pytest.fixture(autouse=True)
+    def setup_teardown(self, request, k8s_clients, kube_context):
+        if kube_context.startswith("kind-"):
+            pytest.skip("GPU/KAI live validation requires a real GPU cluster")
+
+        suffix = request.node.name.replace("_", "-")[:20]
+        self.STRATEGY_NAME = f"e2e-gpu-kai-live-strategy-{suffix}"
+        self.STATIC_POLICY_NAME = f"e2e-gpu-kai-live-static-{suffix}"
+        self.VPA_NAME = f"e2e-gpu-kai-live-vpa-{suffix}"
+        self.DEPLOYMENT = f"gpu-kai-live-demo-{suffix}"
+        self.NAMESPACE = f"gpu-kai-live-{suffix}"
+
+        with gpu_test_namespace(k8s_clients, self.NAMESPACE):
+            self._cleanup(k8s_clients)
+            yield
+            self._cleanup(k8s_clients)
+
+    def _cleanup(self, k8s_clients):
+        delete_deployment(k8s_clients.apps, self.NAMESPACE, self.DEPLOYMENT)
+        for group, version, plural, name in [
+            ("autoscaling.k8s.io", "v1", "verticalpodautoscalers", self.VPA_NAME),
+            (GROUP, VERSION, "staticpolicies", self.STATIC_POLICY_NAME),
+            (GROUP, VERSION, "automationstrategies", self.STRATEGY_NAME),
+        ]:
+            with ignore_not_found():
+                delete_custom_object(k8s_clients.custom, group, version, self.NAMESPACE, plural, name)
+
+    def _create_gpu_strategy(self, k8s_clients):
+        strategy = automation_strategy_manifest(self.STRATEGY_NAME, self.NAMESPACE)
+        strategy["spec"]["enablement"]["gpu"] = {
+            "requests": {"downsize": True, "upsize": True, "setFromUnspecified": True}
+        }
+        k8s_clients.custom.create_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            self.NAMESPACE,
+            "automationstrategies",
+            strategy,
+        )
+
+    def _create_gpu_policy(self, k8s_clients, gpu_fraction: str):
+        policy = static_policy_manifest(
+            self.STATIC_POLICY_NAME,
+            self.NAMESPACE,
+            self.STRATEGY_NAME,
+            label_selector_app=self.DEPLOYMENT,
+            cpu_request="100m",
+            mem_request="256Mi",
+            cpu_limit="200m",
+            mem_limit="512Mi",
+        )
+        policy["spec"]["resources"]["containers"]["*"]["requests"]["gpu"] = gpu_fraction
+        k8s_clients.custom.create_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            self.NAMESPACE,
+            "staticpolicies",
+            policy,
+        )
+
+    def _patch_gpu_policy(self, k8s_clients, gpu_fraction: str):
+        k8s_clients.custom.patch_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            self.NAMESPACE,
+            "staticpolicies",
+            self.STATIC_POLICY_NAME,
+            {
+                "spec": {
+                    "resources": {
+                        "containers": {"*": {"requests": {"gpu": gpu_fraction}}}
+                    }
+                }
+            },
+        )
+
+    def _create_gpu_deployment(self, k8s_clients, nvidia_gpu: str | None = None):
+        create_deployment(
+            k8s_clients.apps,
+            self.NAMESPACE,
+            self.DEPLOYMENT,
+            cpu_request="100m",
+            mem_request="256Mi",
+            cpu_limit="200m",
+            mem_limit="512Mi",
+            image="registry.k8s.io/pause:3.10",
+        )
+
+        k8s_clients.apps.patch_namespaced_deployment(
+            self.DEPLOYMENT,
+            self.NAMESPACE,
+            {
+                "spec": {
+                    "template": {
+                        "spec": {
+                            "containers": [
+                                {
+                                    "name": "app",
+                                    **(
+                                        {
+                                            "resources": {
+                                                "requests": {"nvidia.com/gpu": nvidia_gpu},
+                                                "limits": {"nvidia.com/gpu": nvidia_gpu},
+                                            }
+                                        }
+                                        if nvidia_gpu is not None
+                                        else {}
+                                    ),
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+        )
+
+    def _wait_for_gpu_request(self, k8s_clients, expected: str):
+        def gpu_request_applied():
+            pod = get_deployment_pod(k8s_clients.core, self.NAMESPACE, self.DEPLOYMENT)
+            resources = get_pod_resources(k8s_clients.core, self.NAMESPACE, pod.metadata.name)["app"]
+            return resources["requests"].get("nvidia.com/gpu") == expected
+
+        wait_for(
+            gpu_request_applied,
+            timeout=300,
+            message=f"pod nvidia.com/gpu {expected} on {self.NAMESPACE}/{self.DEPLOYMENT}",
+        )
+
+    def _trigger_gpu_upsize(self, k8s_clients, kube_context, gpu_fraction: str):
+        self._create_gpu_strategy(k8s_clients)
+        self._create_gpu_deployment(k8s_clients)
+        self._create_gpu_policy(k8s_clients, gpu_fraction=gpu_fraction)
+        self._wait_for_gpu_request(k8s_clients, "1")
+        return get_deployment_pod(k8s_clients.core, self.NAMESPACE, self.DEPLOYMENT)
+
+    @pytest.mark.timeout(900)
+    def test_gpu_resize_caps_at_previous_whole_gpu(self, kube_context, k8s_clients):
+        self._trigger_gpu_upsize(k8s_clients, kube_context, gpu_fraction="0.7")
+
+        self._wait_for_gpu_request(k8s_clients, "1")
+
+        pod = get_deployment_pod(k8s_clients.core, self.NAMESPACE, self.DEPLOYMENT)
+        resources = get_pod_resources(k8s_clients.core, self.NAMESPACE, pod.metadata.name)["app"]
+        assert resources["requests"].get("nvidia.com/gpu") == "1"
+        assert resources["limits"].get("nvidia.com/gpu") == "1"
+
+    @pytest.mark.timeout(900)
+    def test_gpu_resize_is_logged_by_the_controller(self, kube_context, k8s_clients, controller_namespace):
+        started = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        self._trigger_gpu_upsize(k8s_clients, kube_context, gpu_fraction="0.7")
+
+        self._wait_for_gpu_request(k8s_clients, "1")
+        _wait_for_controller_log_contains(
+            kube_context,
+            controller_namespace,
+            ("Applied rightsizing requests [app:[gpu=0.7]] limits [none]",),
+            since_time=started,
+            timeout=720,
+        )
+
+    @pytest.mark.timeout(900)
+    def test_vpa_offline_mode_does_not_block_resize(self, kube_context, k8s_clients):
+        self._create_gpu_strategy(k8s_clients)
+        self._create_gpu_deployment(k8s_clients)
+        self._create_gpu_policy(k8s_clients, gpu_fraction="0.7")
+
+        vpa = {
+            "apiVersion": "autoscaling.k8s.io/v1",
+            "kind": "VerticalPodAutoscaler",
+            "metadata": {"name": self.VPA_NAME, "namespace": self.NAMESPACE},
+            "spec": {
+                "targetRef": {
+                    "apiVersion": "apps/v1",
+                    "kind": "Deployment",
+                    "name": self.DEPLOYMENT,
+                },
+                "updatePolicy": {"updateMode": "Off"},
+            },
+        }
+        try:
+            k8s_clients.custom.create_namespaced_custom_object(
+                "autoscaling.k8s.io",
+                "v1",
+                self.NAMESPACE,
+                "verticalpodautoscalers",
+                vpa,
+            )
+        except ApiException as exc:
+            if exc.status == 404:
+                pytest.skip("VPA CRD is not available on this cluster")
+            raise
+
+        self._wait_for_gpu_request(k8s_clients, "1")
+
+
+
 def _namespace_gone(k8s_clients, namespace: str) -> bool:
     try:
         k8s_clients.core.read_namespace(namespace)
@@ -710,3 +929,23 @@ def _namespace_gone(k8s_clients, namespace: str) -> bool:
             return True
         raise
     return False
+
+
+@contextmanager
+def gpu_test_namespace(k8s_clients, namespace: str):
+    try:
+        k8s_clients.core.create_namespace(client.V1Namespace(metadata=client.V1ObjectMeta(name=namespace)))
+    except ApiException as exc:
+        if exc.status != 409:
+            raise
+
+    try:
+        yield
+    finally:
+        with ignore_not_found():
+            k8s_clients.core.delete_namespace(namespace)
+        wait_for(
+            lambda: _namespace_gone(k8s_clients, namespace),
+            timeout=120,
+            message=f"namespace {namespace} deletion",
+        )

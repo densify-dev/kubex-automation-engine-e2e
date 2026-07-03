@@ -20,7 +20,7 @@ This directory contains example bundles that focus on `AutomationStrategySafetyC
 
 5) `vpa-filter.yaml`
    - Adds a VPA targeting the Deployment and filters CPU resizing once VPA publishes a CPU recommendation.
-   - Exercises `enableVpaFilter`.
+   - Exercises `enableVpaFilter`. VPAs with `updateMode: Off` are allowed by default; set `blockVpaOffModeAutomation: true` to make offline VPAs block matching actions too.
 
 6) `vpa-filter-default.yaml`
    - Adds a VPA without `resourcePolicy` (VPA defaults to all containers, CPU+memory once recommendations are published).

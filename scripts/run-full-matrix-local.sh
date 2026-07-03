@@ -74,7 +74,7 @@ run_suite() {
     CLEANUP_IMAGE_REPOSITORY="${CLEANUP_IMG%:*}" \
     CLEANUP_IMAGE_TAG="${CLEANUP_IMG##*:}" \
     LOAD_KIND_IMAGES=true \
-    "${E2E_ROOT}/scripts/run-full-suite.sh" ${pytest_targets[@]+"${pytest_targets[@]}"}
+    "${E2E_ROOT}/run-full-suite.sh" ${pytest_targets[@]+"${pytest_targets[@]}"}
 }
 
 echo "==> Building local controller images"

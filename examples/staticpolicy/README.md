@@ -77,7 +77,17 @@ This directory has example bundles:
     - Uses `ephemeral-storage` request/limit targets so the in-place resize path hits a different API rejection than the memory-downsize-specific error.
     - Intended to verify the controller logs the generic in-place failure fallback path.
 
-19) `model.yaml`
+19) `with-skip-containers.yaml`
+    - Single `AutomationStrategy` + single `StaticPolicy` bundled with 4 minimal Deployments.
+    - Cases covered:
+      - `container-skip-owner-level`: owner annotation `"app"`; `app` filtered, `sidecar` proceeds.
+      - `container-skip-pod-level`: pod annotation `" app, sidecar, app "`; trim + dedupe, both containers filtered.
+      - `container-skip-pod-overrides-owner`: owner `"app"`, pod `"sidecar"`; pod wins, only `sidecar` filtered.
+      - `container-skip-empty-pod-clears-owner-fallback`: owner `"app"`, pod `" , "`; present-but-empty pod value clears owner fallback.
+    - Apply with:
+      - `kubectl apply -f examples/staticpolicy/with-skip-containers.yaml`
+
+20) `model.yaml`
     - Demonstrates `StaticPolicy` targeting KubeAI `kubeai.org/v1` `Model` workloads.
     - Includes sample `Model`; when KubeAI creates model-owned pods, recommendations anchor on `Model` and flow to those pods.
     - Requires KubeAI CRD installed in cluster.
@@ -103,6 +113,7 @@ kubectl apply -f examples/staticpolicy/cronjob.yaml
 kubectl apply -f examples/staticpolicy/request-exceeds-limit-after-limit-filter.yaml
 kubectl apply -f examples/staticpolicy/in-place-memory-decrease-success.yaml
 kubectl apply -f examples/staticpolicy/in-place-memory-decrease-fail.yaml
+kubectl apply -f examples/staticpolicy/with-skip-containers.yaml
 kubectl apply -f examples/staticpolicy/model.yaml
 ```
 

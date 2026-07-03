@@ -8,7 +8,7 @@ import pytest
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
-from bootstrap import BootstrapConfig, bootstrap
+from bootstrap import BootstrapConfig, bootstrap, ignore_not_found
 from helpers import kubectl, kubectl_diagnostics
 
 # Make helpers.py importable from tests/ subdirectory
@@ -83,6 +83,11 @@ def pytest_addoption(parser):
     )
     parser.addoption(
         "--recommendations-file", default=None, help="Path to a recommendations JSON fixture file"
+    )
+    parser.addoption(
+        "--kubeai-chart-version",
+        default="0.23.2",
+        help="Helm chart version used for KubeAI installations",
     )
     parser.addoption(
         "--kubex-url-host",
@@ -258,6 +263,7 @@ def kind_cluster(
             kubex_url_host=request.config.getoption("--kubex-url-host"),
             kubex_url_scheme=request.config.getoption("--kubex-url-scheme"),
             recommendations_file=request.config.getoption("--recommendations-file"),
+            kubeai_chart_version=request.config.getoption("--kubeai-chart-version"),
             kind_node_image=request.config.getoption("--kind-node-image"),
             install_gpu_suite=request.config.getoption("--gpu-suite"),
             install_kubeai=request.config.getoption("--gpu-suite"),
@@ -311,10 +317,8 @@ def supports_in_place_resize(kube_server_version):
 @pytest.fixture(scope="session")
 def actual_in_place_resize_support(k8s_clients, test_namespace):
     pod_name = "e2e-in-place-resize-probe"
-    try:
+    with ignore_not_found():
         k8s_clients.core.delete_namespaced_pod(pod_name, test_namespace)
-    except ApiException:
-        pass
 
     pod = client.V1Pod(
         metadata=client.V1ObjectMeta(name=pod_name, namespace=test_namespace),
@@ -394,10 +398,8 @@ def actual_in_place_resize_support(k8s_clients, test_namespace):
     except ApiException:
         return False
     finally:
-        try:
+        with ignore_not_found():
             k8s_clients.core.delete_namespaced_pod(pod_name, test_namespace)
-        except ApiException:
-            pass
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -411,10 +413,8 @@ def test_namespace_setup(k8s_clients, test_namespace):
         if e.status != 409:  # ignore AlreadyExists
             raise
     yield
-    try:
+    with ignore_not_found():
         k8s_clients.core.delete_namespace(test_namespace)
-    except ApiException:
-        pass
 
 
 @pytest.fixture(scope="session")

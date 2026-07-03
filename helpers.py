@@ -357,15 +357,20 @@ def create_deployment(
     command: list[str] | None = None,
     args: list[str] | None = None,
     resize_policy: list[client.V1ContainerResizePolicy] | None = None,
+    pod_labels: dict[str, str] | None = None,
+    pod_annotations: dict[str, str] | None = None,
 ) -> client.V1Deployment:
     """Create a minimal Deployment for testing resource mutation."""
+    labels = {"app": name}
+    if pod_labels:
+        labels.update(pod_labels)
     deployment = client.V1Deployment(
         metadata=client.V1ObjectMeta(name=name, namespace=namespace, labels={"app": name}),
         spec=client.V1DeploymentSpec(
             replicas=replicas,
             selector=client.V1LabelSelector(match_labels={"app": name}),
             template=client.V1PodTemplateSpec(
-                metadata=client.V1ObjectMeta(labels={"app": name}),
+                metadata=client.V1ObjectMeta(labels=labels, annotations=pod_annotations),
                 spec=client.V1PodSpec(
                     containers=[
                         client.V1Container(
