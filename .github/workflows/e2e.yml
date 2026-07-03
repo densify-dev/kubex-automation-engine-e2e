@@ -69,8 +69,8 @@ jobs:
       CONTROLLER_IMAGE_REPOSITORY: ${{ github.event_name == 'schedule' && 'densify/automation-controller' || github.event.inputs.controller_image_repository }}
       CONTROLLER_IMAGE_TAG: ${{ github.event_name == 'schedule' && 'latest' || github.event.inputs.controller_image_tag }}
       HELM_REPO_URL: ${{ github.event.inputs.controller_chart_repo_url || 'https://densify-dev.github.io/helm-charts' }}
-      HELM_CRDS_CHART: ${{ github.event_name == 'schedule' && 'kubex-crds' || 'charts/kubex-crds' }}
-      HELM_CONTROLLER_CHART: ${{ github.event_name == 'schedule' && 'kubex-automation-engine' || 'charts/kubex-automation-engine' }}
+      HELM_CRDS_CHART: ${{ github.event_name == 'schedule' && 'kubex/kubex-crds' || 'charts/kubex-crds' }}
+      HELM_CONTROLLER_CHART: ${{ github.event_name == 'schedule' && 'kubex/kubex-automation-engine' || 'charts/kubex-automation-engine' }}
       HELM_CRDS_CHART_VERSION: ${{ github.event_name == 'schedule' && '' || github.event.inputs.crds_chart_version }}
       HELM_CONTROLLER_CHART_VERSION: ${{ github.event_name == 'schedule' && '' || github.event.inputs.controller_chart_version }}
       CLUSTER_NAME: ${{ matrix.kubernetes.cluster_name }}

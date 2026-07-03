@@ -1,0 +1,88 @@
+name: Nightly GKE E2E
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  HELM_RELEASE: kubex-automation-engine
+  HELM_NAMESPACE: kubex
+
+jobs:
+  gke-live-e2e:
+    name: Nightly GKE E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.GCP_NIGHTLY_SA_JSON }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v3
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          cluster_name: ${{ secrets.GKE_CLUSTER_NAME }}
+          location: ${{ secrets.GKE_LOCATION }}
+
+      - name: Capture kube context
+        run: echo "KUBE_CONTEXT=$(kubectl config current-context)" >> "$GITHUB_ENV"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Install Python test dependencies
+        working-directory: test/e2e
+        run: pip install -r requirements.txt
+
+      - name: Preflight live cluster
+        working-directory: test/e2e
+        run: |
+          set -euo pipefail
+
+          kubectl cluster-info
+          kubectl get ns kubex kai-scheduler kubeai monitoring
+          kubectl rollout status deploy/kubex-automation-engine -n kubex --timeout=5m
+          kubectl get globalconfiguration global-config -o name
+          kubectl get globalconfiguration global-config \
+            -o jsonpath='{.status.conditions[?(@.type=="PodAdmissionWebhookHealthy")].status}' \
+            | grep -qx 'True'
+          kubectl get nodes -l 'nvidia.com/gpu.present=true' -o name | grep -q .
+          kubectl get deploy -n kai-scheduler admission binder kai-operator kai-scheduler-default node-scale-adjuster pod-grouper podgroup-controller queue-controller
+          kubectl get deploy -n kubeai kubeai
+          kubectl get pods -n kubeai
+          kubectl get crd staticpolicies.rightsizing.kubex.ai gpurebalancingpolicies.rightsizing.kubex.ai
+
+      - name: Run live-cluster smoke
+        working-directory: test/e2e
+        run: |
+          python -m pytest -v -rs \
+            --skip-kind-bootstrap \
+            --kube-context "${KUBE_CONTEXT}" \
+            --namespace "${HELM_NAMESPACE}" \
+            --helm-release "${HELM_RELEASE}" \
+            tests/test_health.py
+
+      - name: Run live-cluster rollback coverage
+        working-directory: test/e2e
+        run: |
+          python -m pytest -v -rs \
+            --skip-kind-bootstrap \
+            --kube-context "${KUBE_CONTEXT}" \
+            --namespace "${HELM_NAMESPACE}" \
+            --helm-release "${HELM_RELEASE}" \
+            tests/test_gpu_kai.py -k rollback
