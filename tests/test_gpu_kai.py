@@ -752,11 +752,16 @@ class TestGpuLiveValidation:
             with ignore_not_found():
                 delete_custom_object(k8s_clients.custom, group, version, self.NAMESPACE, plural, name)
 
-    def _create_gpu_strategy(self, k8s_clients):
+    def _create_gpu_strategy(self, k8s_clients, *, block_vpa_controlled_resources: bool = False):
         strategy = automation_strategy_manifest(self.STRATEGY_NAME, self.NAMESPACE)
         strategy["spec"]["enablement"]["gpu"] = {
             "requests": {"downsize": True, "upsize": True, "setFromUnspecified": True}
         }
+        if block_vpa_controlled_resources:
+            strategy["spec"]["safetyChecks"] = {
+                "enableVPAFilter": True,
+                "blockResizeOnVpaControlledResources": True,
+            }
         k8s_clients.custom.create_namespaced_custom_object(
             GROUP,
             VERSION,
@@ -918,6 +923,79 @@ class TestGpuLiveValidation:
             raise
 
         self._wait_for_gpu_request(k8s_clients, "1")
+
+        def pod_rightsizing_info_written():
+            pod = get_deployment_pod(k8s_clients.core, self.NAMESPACE, self.DEPLOYMENT)
+            return (pod.metadata.annotations or {}).get("automation-webhook.kubex.ai/pod-rightsizing-info")
+
+        wait_for(
+            pod_rightsizing_info_written,
+            timeout=180,
+            message="pod-rightsizing-info annotation after offline VPA resize",
+        )
+
+    @pytest.mark.timeout(900)
+    def test_vpa_controlled_gpu_resize_is_blocked_when_flag_enabled(
+        self, kube_context, k8s_clients, controller_namespace
+    ):
+        self._create_gpu_strategy(k8s_clients, block_vpa_controlled_resources=True)
+        self._create_gpu_deployment(k8s_clients, nvidia_gpu="0.25")
+        self._create_gpu_policy(k8s_clients, gpu_fraction="0.7")
+
+        vpa = {
+            "apiVersion": "autoscaling.k8s.io/v1",
+            "kind": "VerticalPodAutoscaler",
+            "metadata": {"name": self.VPA_NAME, "namespace": self.NAMESPACE},
+            "spec": {
+                "targetRef": {
+                    "apiVersion": "apps/v1",
+                    "kind": "Deployment",
+                    "name": self.DEPLOYMENT,
+                },
+                "updatePolicy": {"updateMode": "Off"},
+                "resourcePolicy": {
+                    "containerPolicies": [
+                        {
+                            "containerName": "app",
+                            "controlledResources": ["gpu"],
+                        }
+                    ]
+                },
+            },
+        }
+
+        try:
+            k8s_clients.custom.create_namespaced_custom_object(
+                "autoscaling.k8s.io",
+                "v1",
+                self.NAMESPACE,
+                "verticalpodautoscalers",
+                vpa,
+            )
+        except ApiException as exc:
+            if exc.status == 404:
+                pytest.skip("VPA CRD is not available on this cluster")
+            raise
+
+        started = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+        def gpu_request_remains_blocked():
+            pod = get_deployment_pod(k8s_clients.core, self.NAMESPACE, self.DEPLOYMENT)
+            resources = get_pod_resources(k8s_clients.core, self.NAMESPACE, pod.metadata.name)["app"]
+            return resources["requests"].get("nvidia.com/gpu") == "0.25"
+
+        wait_for(
+            gpu_request_remains_blocked,
+            timeout=180,
+            message="gpu request to remain blocked at 0.25",
+        )
+        _wait_for_controller_log_contains(
+            kube_context,
+            controller_namespace,
+            (f"VPA {self.VPA_NAME} (updateMode=Off) owns gpu.request; skipping Kubex action",),
+            since_time=started,
+            timeout=720,
+        )
 
 
 

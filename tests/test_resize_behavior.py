@@ -5,6 +5,7 @@ from kubernetes.client.rest import ApiException
 
 from helpers import (
     GROUP,
+    RIGHTSIZING_ANNOTATION,
     VERSION,
     automation_strategy_manifest,
     create_multi_container_deployment,
@@ -166,6 +167,13 @@ class TestResizeBehavior:
             assert used_resize_subresource(resized_pod["value"]), (
                 "the workload pod kept the same UID, but the pod metadata does "
                 "not show a resize subresource update"
+            )
+            annotation = (resized_pod["value"].metadata.annotations or {}).get(
+                RIGHTSIZING_ANNOTATION, ""
+            )
+            assert annotation == (
+                "Applied rightsizing requests [demo:[cpu=250m, memory=256Mi]] "
+                "limits [demo:[cpu=400m, memory=512Mi]] via in-place resize"
             )
         else:
             assert resized_pod["value"].metadata.uid != original_uid
