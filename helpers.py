@@ -86,6 +86,17 @@ def wait_for(condition_fn, timeout=DEFAULT_TIMEOUT, interval=POLL_INTERVAL, mess
     raise TimeoutError(f"Timed out waiting for {message}. Last exception: {last_exc}")
 
 
+def namespace_gone(k8s_clients, namespace: str) -> bool:
+    """Return True once a namespace disappears; re-raise unexpected API errors."""
+    try:
+        k8s_clients.core.read_namespace(namespace)
+    except ApiException as exc:
+        if exc.status == 404:
+            return True
+        raise
+    return False
+
+
 def update_namespace_annotations(k8s_clients, namespace_name: str, mutate_annotations) -> None:
     """Retry namespace annotation updates through resource-version conflicts."""
     for attempt in range(5):

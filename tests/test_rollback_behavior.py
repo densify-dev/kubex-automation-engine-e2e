@@ -19,6 +19,7 @@ from helpers import (
     get_deployment_pod,
     get_pod_resources,
     kubectl,
+    namespace_gone,
     rollback_policy_manifest,
     static_policy_manifest,
     wait_for,
@@ -194,7 +195,7 @@ class TestRollbackBehavior:
                 pass
 
             wait_for(
-                lambda: _namespace_gone(k8s_clients, self.NAMESPACE),
+                lambda: namespace_gone(k8s_clients, self.NAMESPACE),
                 timeout=120,
                 message=f"namespace {self.NAMESPACE} deletion",
             )
@@ -583,13 +584,3 @@ class TestRollbackBehavior:
 
         assert threshold_failure["failureReason"] == "adoptionThresholdNotMet"
         assert "adoption threshold" in threshold_failure["failureMessage"]
-
-
-def _namespace_gone(k8s_clients, namespace: str) -> bool:
-    try:
-        k8s_clients.core.read_namespace(namespace)
-    except ApiException as exc:
-        if exc.status == 404:
-            return True
-        return False
-    return False

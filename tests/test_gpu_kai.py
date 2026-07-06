@@ -23,6 +23,7 @@ from helpers import (
     get_deployment,
     get_pod_resources,
     kubectl,
+    namespace_gone,
     rollback_policy_manifest,
     static_policy_manifest,
     prometheus_query,
@@ -158,10 +159,11 @@ def _controller_logs(kube_context: str, controller_namespace: str, since_time: s
         "--selector",
         "app.kubernetes.io/name=kubex-automation-engine",
         "--all-containers",
-        "--tail=1000",
     ]
     if since_time is not None:
         args.append(f"--since-time={since_time}")
+    else:
+        args.append("--tail=1000")
     return kubectl(*args, context=kube_context)
 
 
@@ -996,18 +998,6 @@ class TestGpuLiveValidation:
             timeout=720,
         )
 
-
-
-def _namespace_gone(k8s_clients, namespace: str) -> bool:
-    try:
-        k8s_clients.core.read_namespace(namespace)
-    except ApiException as exc:
-        if exc.status == 404:
-            return True
-        return False
-    return False
-
-
 @contextmanager
 def gpu_test_namespace(k8s_clients, namespace: str):
     created = False
@@ -1025,7 +1015,7 @@ def gpu_test_namespace(k8s_clients, namespace: str):
             with ignore_not_found():
                 k8s_clients.core.delete_namespace(namespace)
             wait_for(
-                lambda: _namespace_gone(k8s_clients, namespace),
+                lambda: namespace_gone(k8s_clients, namespace),
                 timeout=120,
                 message=f"namespace {namespace} deletion",
             )
