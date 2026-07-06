@@ -82,6 +82,14 @@ make -C "${CONTROLLER_ROOT}" docker-build docker-build-cleanup IMG="${IMG}" CLEA
 
 echo "==> Running the full Kind version matrix"
 reset_cluster "${NEWER_CLUSTER_NAME}"
-run_suite "kubernetes-${NEWER_VERSION}" "${NEWER_CLUSTER_NAME}" "${NEWER_NODE_IMAGE}" "true" "true" "true" "true" "${E2E_ROOT}/features/gpu/kind-config.yaml" "$(normalize_target "$1")"
+if [[ $# -gt 0 ]]; then
+  run_suite "kubernetes-${NEWER_VERSION}" "${NEWER_CLUSTER_NAME}" "${NEWER_NODE_IMAGE}" "true" "true" "true" "true" "${E2E_ROOT}/features/gpu/kind-config.yaml" "$(normalize_target "$1")"
+else
+  run_suite "kubernetes-${NEWER_VERSION}" "${NEWER_CLUSTER_NAME}" "${NEWER_NODE_IMAGE}" "true" "true" "true" "true" "${E2E_ROOT}/features/gpu/kind-config.yaml"
+fi
 reset_cluster "${OLDER_CLUSTER_NAME}"
-run_suite "kubernetes-${OLDER_VERSION}" "${OLDER_CLUSTER_NAME}" "${OLDER_NODE_IMAGE}" "true" "false" "false" "true" "${E2E_ROOT}/features/gpu/kind-config.yaml" "$(normalize_target "$1")"
+if [[ $# -gt 0 ]]; then
+  run_suite "kubernetes-${OLDER_VERSION}" "${OLDER_CLUSTER_NAME}" "${OLDER_NODE_IMAGE}" "true" "false" "false" "true" "${E2E_ROOT}/features/gpu/kind-config.yaml" "$(normalize_target "$1")"
+else
+  run_suite "kubernetes-${OLDER_VERSION}" "${OLDER_CLUSTER_NAME}" "${OLDER_NODE_IMAGE}" "true" "false" "false" "true" "${E2E_ROOT}/features/gpu/kind-config.yaml"
+fi

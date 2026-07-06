@@ -16,6 +16,9 @@ from pathlib import Path
 from kubernetes.client.rest import ApiException
 
 
+DEFAULT_KUBEAI_CHART_VERSION = "0.23.2"
+
+
 @dataclass
 class BootstrapConfig:
     kube_context: str
@@ -46,7 +49,7 @@ class BootstrapConfig:
     install_gpu_process_exporter: bool = False
     install_prometheus: bool = False
     cluster_name_value: str | None = None
-    kubeai_chart_version: str | None = "0.23.2"
+    kubeai_chart_version: str | None = DEFAULT_KUBEAI_CHART_VERSION
     kubex_username: str = "dummy"
     kubex_epassword: str | None = None
     kubex_url_host: str | None = None
@@ -937,7 +940,7 @@ def parse_args() -> BootstrapConfig:
     parser.add_argument("--kubex-url-host")
     parser.add_argument("--kubex-url-scheme")
     parser.add_argument("--recommendations-file")
-    parser.add_argument("--kubeai-chart-version", default="0.23.2")
+    parser.add_argument("--kubeai-chart-version", default=DEFAULT_KUBEAI_CHART_VERSION)
     parser.add_argument("--deploy-kubex-stub", action="store_true")
     parser.add_argument("--kind-node-image", default="kindest/node:v1.35.0")
     parser.add_argument("--load-kind-images", action="store_true")
@@ -946,6 +949,7 @@ def parse_args() -> BootstrapConfig:
     parser.add_argument("--without-keda", action="store_true")
     parser.add_argument("--without-vpa", action="store_true")
     parser.add_argument("--gpu-suite", action="store_true")
+    parser.add_argument("--install-kubeai", action="store_true")
     parser.add_argument("--gpu-kind-config")
     args = parser.parse_args()
     return BootstrapConfig(
@@ -973,7 +977,7 @@ def parse_args() -> BootstrapConfig:
         kind_node_image=args.kind_node_image,
         load_kind_images=args.load_kind_images,
         install_gpu_suite=args.gpu_suite,
-        install_kubeai=args.gpu_suite,
+        install_kubeai=args.gpu_suite or args.install_kubeai,
         gpu_kind_config=args.gpu_kind_config,
         install_gpu_process_exporter=args.gpu_suite,
         install_prometheus=args.gpu_suite,

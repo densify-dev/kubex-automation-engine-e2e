@@ -30,6 +30,8 @@ HELM_CRDS_CHART_VERSION="${HELM_CRDS_CHART_VERSION:-}"
 HELM_CONTROLLER_CHART_VERSION="${HELM_CONTROLLER_CHART_VERSION:-}"
 KUBEX_URL_HOST="${KUBEX_URL_HOST:-}"
 KUBEX_URL_SCHEME="${KUBEX_URL_SCHEME:-}"
+KUBEAI_CHART_VERSION="${KUBEAI_CHART_VERSION:-}"
+INSTALL_KUBEAI="${INSTALL_KUBEAI:-}"
 DEPLOY_KUBEX_STUB="${DEPLOY_KUBEX_STUB:-true}"
 GPU_SUITE="${GPU_SUITE:-false}"
 GPU_KIND_CONFIG="${GPU_KIND_CONFIG:-}"
@@ -62,6 +64,17 @@ log() {
 run_cmd() {
   echo "+ $*"
   "$@"
+}
+
+append_flag_if_set() {
+  local value="$1"
+  local flag="$2"
+  local array_name="$3"
+
+  if [[ -n "$value" ]]; then
+    local -n target="$array_name"
+    target+=("$flag" "$value")
+  fi
 }
 
 ensure_python_env() {
@@ -197,47 +210,23 @@ bootstrap_cluster() {
     --namespace "$HELM_NAMESPACE"
     --helm-release "$HELM_RELEASE"
   )
-  if [[ -n "$CONTROLLER_IMAGE_REPOSITORY" ]]; then
-    bootstrap_args+=(--controller-image-repository "$CONTROLLER_IMAGE_REPOSITORY")
-  fi
-  if [[ -n "$CONTROLLER_IMAGE_TAG" ]]; then
-    bootstrap_args+=(--controller-image-tag "$CONTROLLER_IMAGE_TAG")
-  fi
-  if [[ -n "$CLEANUP_IMAGE_REPOSITORY" ]]; then
-    bootstrap_args+=(--cleanup-image-repository "$CLEANUP_IMAGE_REPOSITORY")
-  fi
-  if [[ -n "$CLEANUP_IMAGE_TAG" ]]; then
-    bootstrap_args+=(--cleanup-image-tag "$CLEANUP_IMAGE_TAG")
-  fi
-  if [[ -n "$CLEANUP_IMAGE_PULL_POLICY" ]]; then
-    bootstrap_args+=(--cleanup-image-pull-policy "$CLEANUP_IMAGE_PULL_POLICY")
-  fi
-  if [[ -n "$NODE_IMAGE" ]]; then
-    bootstrap_args+=(--kind-node-image "$NODE_IMAGE")
-  fi
-  if [[ -n "$RECOMMENDATIONS_FILE" ]]; then
-    bootstrap_args+=(--recommendations-file "$RECOMMENDATIONS_FILE")
-  fi
-  if [[ -n "$HELM_REPO_URL" ]]; then
-    bootstrap_args+=(--helm-repo-url "$HELM_REPO_URL")
-  fi
-  if [[ -n "$HELM_CRDS_CHART" ]]; then
-    bootstrap_args+=(--helm-crds-chart "$HELM_CRDS_CHART")
-  fi
-  if [[ -n "$HELM_CONTROLLER_CHART" ]]; then
-    bootstrap_args+=(--helm-controller-chart "$HELM_CONTROLLER_CHART")
-  fi
-  if [[ -n "$HELM_CRDS_CHART_VERSION" ]]; then
-    bootstrap_args+=(--helm-crds-chart-version "$HELM_CRDS_CHART_VERSION")
-  fi
-  if [[ -n "$HELM_CONTROLLER_CHART_VERSION" ]]; then
-    bootstrap_args+=(--helm-controller-chart-version "$HELM_CONTROLLER_CHART_VERSION")
-  fi
-  if [[ -n "$KUBEX_URL_HOST" ]]; then
-    bootstrap_args+=(--kubex-url-host "$KUBEX_URL_HOST")
-  fi
-  if [[ -n "$KUBEX_URL_SCHEME" ]]; then
-    bootstrap_args+=(--kubex-url-scheme "$KUBEX_URL_SCHEME")
+  append_flag_if_set "$CONTROLLER_IMAGE_REPOSITORY" --controller-image-repository bootstrap_args
+  append_flag_if_set "$CONTROLLER_IMAGE_TAG" --controller-image-tag bootstrap_args
+  append_flag_if_set "$CLEANUP_IMAGE_REPOSITORY" --cleanup-image-repository bootstrap_args
+  append_flag_if_set "$CLEANUP_IMAGE_TAG" --cleanup-image-tag bootstrap_args
+  append_flag_if_set "$CLEANUP_IMAGE_PULL_POLICY" --cleanup-image-pull-policy bootstrap_args
+  append_flag_if_set "$NODE_IMAGE" --kind-node-image bootstrap_args
+  append_flag_if_set "$RECOMMENDATIONS_FILE" --recommendations-file bootstrap_args
+  append_flag_if_set "$HELM_REPO_URL" --helm-repo-url bootstrap_args
+  append_flag_if_set "$HELM_CRDS_CHART" --helm-crds-chart bootstrap_args
+  append_flag_if_set "$HELM_CONTROLLER_CHART" --helm-controller-chart bootstrap_args
+  append_flag_if_set "$HELM_CRDS_CHART_VERSION" --helm-crds-chart-version bootstrap_args
+  append_flag_if_set "$HELM_CONTROLLER_CHART_VERSION" --helm-controller-chart-version bootstrap_args
+  append_flag_if_set "$KUBEX_URL_HOST" --kubex-url-host bootstrap_args
+  append_flag_if_set "$KUBEX_URL_SCHEME" --kubex-url-scheme bootstrap_args
+  append_flag_if_set "$KUBEAI_CHART_VERSION" --kubeai-chart-version bootstrap_args
+  if is_true "$INSTALL_KUBEAI"; then
+    bootstrap_args+=(--install-kubeai)
   fi
   if is_true "$DEPLOY_KUBEX_STUB"; then
     bootstrap_args+=(--deploy-kubex-stub)
@@ -289,36 +278,17 @@ run_functional_suite() {
   if [[ -n "$PYTEST_WORKERS" ]]; then
     args+=(-n "$PYTEST_WORKERS")
   fi
-  if [[ -n "$CONTROLLER_IMAGE_REPOSITORY" ]]; then
-    args+=(--controller-image-repository "$CONTROLLER_IMAGE_REPOSITORY")
-  fi
-  if [[ -n "$CONTROLLER_IMAGE_TAG" ]]; then
-    args+=(--controller-image-tag "$CONTROLLER_IMAGE_TAG")
-  fi
-  if [[ -n "$NODE_IMAGE" ]]; then
-    args+=(--kind-node-image "$NODE_IMAGE")
-  fi
-  if [[ -n "$RECOMMENDATIONS_FILE" ]]; then
-    args+=(--recommendations-file "$RECOMMENDATIONS_FILE")
-  fi
-  if [[ -n "$HELM_CRDS_CHART" ]]; then
-    args+=(--helm-crds-chart "$HELM_CRDS_CHART")
-  fi
-  if [[ -n "$HELM_CONTROLLER_CHART" ]]; then
-    args+=(--helm-controller-chart "$HELM_CONTROLLER_CHART")
-  fi
-  if [[ -n "$HELM_CRDS_CHART_VERSION" ]]; then
-    args+=(--helm-crds-chart-version "$HELM_CRDS_CHART_VERSION")
-  fi
-  if [[ -n "$HELM_CONTROLLER_CHART_VERSION" ]]; then
-    args+=(--helm-controller-chart-version "$HELM_CONTROLLER_CHART_VERSION")
-  fi
-  if [[ -n "$KUBEX_URL_HOST" ]]; then
-    args+=(--kubex-url-host "$KUBEX_URL_HOST")
-  fi
-  if [[ -n "$KUBEX_URL_SCHEME" ]]; then
-    args+=(--kubex-url-scheme "$KUBEX_URL_SCHEME")
-  fi
+  append_flag_if_set "$CONTROLLER_IMAGE_REPOSITORY" --controller-image-repository args
+  append_flag_if_set "$CONTROLLER_IMAGE_TAG" --controller-image-tag args
+  append_flag_if_set "$NODE_IMAGE" --kind-node-image args
+  append_flag_if_set "$RECOMMENDATIONS_FILE" --recommendations-file args
+  append_flag_if_set "$HELM_CRDS_CHART" --helm-crds-chart args
+  append_flag_if_set "$HELM_CONTROLLER_CHART" --helm-controller-chart args
+  append_flag_if_set "$HELM_CRDS_CHART_VERSION" --helm-crds-chart-version args
+  append_flag_if_set "$HELM_CONTROLLER_CHART_VERSION" --helm-controller-chart-version args
+  append_flag_if_set "$KUBEX_URL_HOST" --kubex-url-host args
+  append_flag_if_set "$KUBEX_URL_SCHEME" --kubex-url-scheme args
+  append_flag_if_set "$KUBEAI_CHART_VERSION" --kubeai-chart-version args
   if is_true "$DEPLOY_KUBEX_STUB"; then
     args+=(--deploy-kubex-stub)
   fi
@@ -361,6 +331,12 @@ verify_uninstall() {
     clusterstaticpolicies.rightsizing.kubex.ai
     proactivepolicies.rightsizing.kubex.ai
     clusterproactivepolicies.rightsizing.kubex.ai
+    rollbackpolicies.rightsizing.kubex.ai
+    clusterrollbackpolicies.rightsizing.kubex.ai
+    gpurebalancingpolicies.rightsizing.kubex.ai
+    clustergpurebalancingpolicies.rightsizing.kubex.ai
+    gpuconsolidationpolicies.rightsizing.kubex.ai
+    podaffinitypolicies.rightsizing.kubex.ai
   )
   for crd in "${crds[@]}"; do
     wait_for_crd_absent "$crd"

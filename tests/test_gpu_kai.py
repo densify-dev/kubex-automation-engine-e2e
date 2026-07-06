@@ -68,13 +68,7 @@ def _wait_for_gpu_recommendations(k8s_clients, namespace: str, deployment_name: 
     )
 
 
-def _wait_for_deployment_pod(
-    k8s_clients,
-    namespace: str,
-    deployment_name: str,
-    timeout: int = 300,
-    exclude_name: str | None = None,
-):
+def _wait_for_newest_pod(k8s_clients, namespace: str, timeout: int, pod_selector, message: str):
     selected_pod = None
 
     def pod_sort_key(pod):
@@ -82,49 +76,53 @@ def _wait_for_deployment_pod(
 
     def has_pod():
         nonlocal selected_pod
-        pods = k8s_clients.core.list_namespaced_pod(
-            namespace,
-            label_selector=f"app={deployment_name}",
-        ).items
-        candidates = (
-            pods
-            if exclude_name is None
-            else [pod for pod in pods if pod.metadata.name != exclude_name]
-        )
+        candidates = [pod for pod in k8s_clients.core.list_namespaced_pod(namespace).items if pod_selector(pod)]
         if candidates:
             selected_pod = max(candidates, key=pod_sort_key)
             return True
         return False
 
-    wait_for(has_pod, timeout=timeout, message=f"pod for {namespace}/{deployment_name}")
+    wait_for(has_pod, timeout=timeout, message=message)
     if selected_pod is None:
-        raise RuntimeError(f"no pod found for deployment {deployment_name}")
+        raise RuntimeError(message)
     return selected_pod
+
+
+def _wait_for_deployment_pod(
+    k8s_clients,
+    namespace: str,
+    deployment_name: str,
+    timeout: int = 300,
+    exclude_name: str | None = None,
+):
+    def matches(pod):
+        if pod.metadata.labels is None or pod.metadata.labels.get("app") != deployment_name:
+            return False
+        if exclude_name is not None and pod.metadata.name == exclude_name:
+            return False
+        return True
+
+    return _wait_for_newest_pod(
+        k8s_clients,
+        namespace,
+        timeout,
+        matches,
+        f"pod for {namespace}/{deployment_name}",
+    )
 
 
 def _wait_for_model_pod(k8s_clients, namespace: str, model_name: str, timeout: int = 300):
-    selected_pod = None
+    def matches(pod):
+        owners = pod.metadata.owner_references or []
+        return any(owner.kind == "Model" and owner.name == model_name for owner in owners)
 
-    def pod_sort_key(pod):
-        return pod.metadata.creation_timestamp or datetime.min.replace(tzinfo=timezone.utc)
-
-    def has_model_pod():
-        nonlocal selected_pod
-        pods = k8s_clients.core.list_namespaced_pod(namespace).items
-        candidates = []
-        for pod in pods:
-            owners = pod.metadata.owner_references or []
-            if any(owner.kind == "Model" and owner.name == model_name for owner in owners):
-                candidates.append(pod)
-        if candidates:
-            selected_pod = max(candidates, key=pod_sort_key)
-            return True
-        return False
-
-    wait_for(has_model_pod, timeout=timeout, message=f"pod for model {namespace}/{model_name}")
-    if selected_pod is None:
-        raise RuntimeError(f"no pod found for model {model_name}")
-    return selected_pod
+    return _wait_for_newest_pod(
+        k8s_clients,
+        namespace,
+        timeout,
+        matches,
+        f"pod for model {namespace}/{model_name}",
+    )
 
 
 def _wait_for_prometheus_ready(k8s_clients):
@@ -365,11 +363,11 @@ class TestGpuKai:
 
 
 class TestGpuKaiRollback:
-    STRATEGY_NAME = "e2e-kai-rollback-strategy"
-    STATIC_POLICY_NAME = "e2e-kai-rollback-static-policy"
-    ROLLBACK_POLICY_NAME = "e2e-kai-rollback-policy"
-    DEPLOYMENT = "gpu-kai-rollback-demo"
-    NAMESPACE = "gpu-kai-rollback"
+    STRATEGY_NAME_PREFIX = "e2e-kai-rollback-strategy"
+    STATIC_POLICY_NAME_PREFIX = "e2e-kai-rollback-static-policy"
+    ROLLBACK_POLICY_NAME_PREFIX = "e2e-kai-rollback-policy"
+    DEPLOYMENT_PREFIX = "gpu-kai-rollback-demo"
+    NAMESPACE_PREFIX = "gpu-kai-rollback"
 
     INITIAL_RESOURCES = {
         "requests": {"cpu": "250m", "memory": "320Mi"},
@@ -392,23 +390,23 @@ class TestGpuKaiRollback:
             pytest.skip("KAI rollback monitoring is not reliable on fake-GPU Kind clusters")
 
         suffix = request.node.name.replace("_", "-")[:20]
-        self.STRATEGY_NAME = f"e2e-kai-rollback-strategy-{suffix}"
-        self.STATIC_POLICY_NAME = f"e2e-kai-rollback-static-{suffix}"
-        self.ROLLBACK_POLICY_NAME = f"e2e-kai-rollback-policy-{suffix}"
-        self.DEPLOYMENT = f"gpu-kai-rollback-demo-{suffix}"
-        self.NAMESPACE = f"gpu-kai-rollback-{suffix}"
+        self.strategy_name = f"{self.STRATEGY_NAME_PREFIX}-{suffix}"
+        self.static_policy_name = f"{self.STATIC_POLICY_NAME_PREFIX}-{suffix}"
+        self.rollback_policy_name = f"{self.ROLLBACK_POLICY_NAME_PREFIX}-{suffix}"
+        self.deployment = f"{self.DEPLOYMENT_PREFIX}-{suffix}"
+        self.namespace = f"{self.NAMESPACE_PREFIX}-{suffix}"
 
-        with gpu_test_namespace(k8s_clients, self.NAMESPACE):
-            delete_deployment(k8s_clients.apps, self.NAMESPACE, self.DEPLOYMENT)
+        with gpu_test_namespace(k8s_clients, self.namespace):
+            delete_deployment(k8s_clients.apps, self.namespace, self.deployment)
             for plural, name in [
-                ("rollbackpolicies", self.ROLLBACK_POLICY_NAME),
-                ("staticpolicies", self.STATIC_POLICY_NAME),
-                ("automationstrategies", self.STRATEGY_NAME),
+                ("rollbackpolicies", self.rollback_policy_name),
+                ("staticpolicies", self.static_policy_name),
+                ("automationstrategies", self.strategy_name),
             ]:
                 with ignore_not_found():
-                    delete_custom_object(k8s_clients.custom, GROUP, VERSION, self.NAMESPACE, plural, name)
+                    delete_custom_object(k8s_clients.custom, GROUP, VERSION, self.namespace, plural, name)
 
-            strategy = automation_strategy_manifest(self.STRATEGY_NAME, self.NAMESPACE)
+            strategy = automation_strategy_manifest(self.strategy_name, self.namespace)
             strategy["spec"]["enablement"]["overrideScheduler"] = "kai"
             strategy["spec"]["podEviction"] = {"enabled": True}
             strategy["spec"]["inPlaceResize"] = {"enabled": False}
@@ -420,7 +418,7 @@ class TestGpuKaiRollback:
             k8s_clients.custom.create_namespaced_custom_object(
                 GROUP,
                 VERSION,
-                self.NAMESPACE,
+                self.namespace,
                 "automationstrategies",
                 strategy,
             )
@@ -428,12 +426,12 @@ class TestGpuKaiRollback:
             k8s_clients.custom.create_namespaced_custom_object(
                 GROUP,
                 VERSION,
-                self.NAMESPACE,
+                self.namespace,
                 "rollbackpolicies",
                 rollback_policy_manifest(
-                    self.ROLLBACK_POLICY_NAME,
-                    self.NAMESPACE,
-                    label_selector_app=self.DEPLOYMENT,
+                    self.rollback_policy_name,
+                    self.namespace,
+                    label_selector_app=self.deployment,
                     monitoring_period="20s",
                     weight=100,
                     backoff={
@@ -446,8 +444,8 @@ class TestGpuKaiRollback:
 
             create_deployment(
                 k8s_clients.apps,
-                self.NAMESPACE,
-                self.DEPLOYMENT,
+                self.namespace,
+                self.deployment,
                 cpu_request=self.ORIGINAL_RESOURCES["requests"]["cpu"],
                 mem_request=self.ORIGINAL_RESOURCES["requests"]["memory"],
                 cpu_limit=self.ORIGINAL_RESOURCES["limits"]["cpu"],
@@ -470,10 +468,10 @@ class TestGpuKaiRollback:
             )
 
             static_policy = static_policy_manifest(
-                self.STATIC_POLICY_NAME,
-                self.NAMESPACE,
-                self.STRATEGY_NAME,
-                label_selector_app=self.DEPLOYMENT,
+                self.static_policy_name,
+                self.namespace,
+                self.strategy_name,
+                label_selector_app=self.deployment,
                 cpu_request=self.INITIAL_RESOURCES["requests"]["cpu"],
                 mem_request=self.INITIAL_RESOURCES["requests"]["memory"],
                 cpu_limit=self.INITIAL_RESOURCES["limits"]["cpu"],
@@ -483,7 +481,7 @@ class TestGpuKaiRollback:
             k8s_clients.custom.create_namespaced_custom_object(
                 GROUP,
                 VERSION,
-                self.NAMESPACE,
+                self.namespace,
                 "staticpolicies",
                 static_policy,
             )
@@ -491,7 +489,7 @@ class TestGpuKaiRollback:
             yield
 
     def _deployment(self, k8s_clients):
-        return get_deployment(k8s_clients.apps, self.NAMESPACE, self.DEPLOYMENT)
+        return get_deployment(k8s_clients.apps, self.namespace, self.deployment)
 
     def _rollback_state(self, k8s_clients) -> dict | None:
         annotations = self._deployment(k8s_clients).metadata.annotations or {}
@@ -511,9 +509,9 @@ class TestGpuKaiRollback:
         k8s_clients.custom.patch_namespaced_custom_object(
             GROUP,
             VERSION,
-            self.NAMESPACE,
+            self.namespace,
             "rollbackpolicies",
-            self.ROLLBACK_POLICY_NAME,
+            self.rollback_policy_name,
             {
                 "spec": {
                     "backoff": {
@@ -529,9 +527,9 @@ class TestGpuKaiRollback:
         k8s_clients.custom.patch_namespaced_custom_object(
             GROUP,
             VERSION,
-            self.NAMESPACE,
+            self.namespace,
             "rollbackpolicies",
-            self.ROLLBACK_POLICY_NAME,
+            self.rollback_policy_name,
             {"spec": {"monitoringPeriod": monitoring_period}},
         )
 
@@ -539,9 +537,9 @@ class TestGpuKaiRollback:
         k8s_clients.custom.patch_namespaced_custom_object(
             GROUP,
             VERSION,
-            self.NAMESPACE,
+            self.namespace,
             "staticpolicies",
-            self.STATIC_POLICY_NAME,
+            self.static_policy_name,
             {
                 "spec": {
                     "resources": {
@@ -561,15 +559,15 @@ class TestGpuKaiRollback:
             k8s_clients.custom,
             GROUP,
             VERSION,
-            self.NAMESPACE,
+            self.namespace,
             "staticpolicies",
-            self.STATIC_POLICY_NAME,
+            self.static_policy_name,
         )
 
     def _wait_for_pod_resources(self, k8s_clients, resources: dict[str, dict[str, str]], timeout: int) -> None:
         def applied():
-            pod = get_deployment_pod(k8s_clients.core, self.NAMESPACE, self.DEPLOYMENT)
-            live = get_pod_resources(k8s_clients.core, self.NAMESPACE, pod.metadata.name)["app"]
+            pod = get_deployment_pod(k8s_clients.core, self.namespace, self.deployment)
+            live = get_pod_resources(k8s_clients.core, self.namespace, pod.metadata.name)["app"]
             return (
                 live["requests"].get("cpu") == resources["requests"]["cpu"]
                 and live["requests"].get("memory") == resources["requests"]["memory"]
@@ -609,7 +607,7 @@ class TestGpuKaiRollback:
         self._wait_for_pod_resources(k8s_clients, self.INITIAL_RESOURCES, timeout=300)
 
         def pod_fraction_applied():
-            pod = get_deployment_pod(k8s_clients.core, self.NAMESPACE, self.DEPLOYMENT)
+            pod = get_deployment_pod(k8s_clients.core, self.namespace, self.deployment)
             return (pod.metadata.annotations or {}).get("gpu-fraction") == "0.25"
 
         wait_for(pod_fraction_applied, timeout=180, message="kai gpu-fraction annotation")
@@ -660,8 +658,8 @@ class TestGpuKaiRollback:
 
     def _deployment_failure_reason(self, k8s_clients) -> str | None:
         pods = k8s_clients.core.list_namespaced_pod(
-            self.NAMESPACE,
-            label_selector=f"app={self.DEPLOYMENT}",
+            self.namespace,
+            label_selector=f"app={self.deployment}",
         ).items
         for pod in pods:
             for status in pod.status.container_statuses or []:
@@ -675,8 +673,8 @@ class TestGpuKaiRollback:
 
     def _delete_healthy_pods(self, k8s_clients) -> None:
         pods = k8s_clients.core.list_namespaced_pod(
-            self.NAMESPACE,
-            label_selector=f"app={self.DEPLOYMENT}",
+            self.namespace,
+            label_selector=f"app={self.deployment}",
         ).items
         for pod in pods:
             statuses = pod.status.container_statuses or []
@@ -690,12 +688,12 @@ class TestGpuKaiRollback:
             ):
                 continue
             with ignore_not_found():
-                k8s_clients.core.delete_namespaced_pod(pod.metadata.name, self.NAMESPACE)
+                k8s_clients.core.delete_namespaced_pod(pod.metadata.name, self.namespace)
 
     def _poke_owner_reconcile(self, k8s_clients) -> None:
         k8s_clients.apps.patch_namespaced_deployment(
-            self.DEPLOYMENT,
-            self.NAMESPACE,
+            self.deployment,
+            self.namespace,
             {"metadata": {"annotations": {"e2e.rightsizing.kubex.ai/poke": "rollback-kai"}}},
         )
 
@@ -712,18 +710,19 @@ class TestGpuKaiRollback:
         assert self._rollback_annotations_cleared(k8s_clients)
 
         def gpu_fraction_restored():
-            pod = get_deployment_pod(k8s_clients.core, self.NAMESPACE, self.DEPLOYMENT)
+            pod = get_deployment_pod(k8s_clients.core, self.namespace, self.deployment)
             return (pod.metadata.annotations or {}).get("gpu-fraction") == "0.25"
 
         wait_for(gpu_fraction_restored, timeout=180, message="kai gpu-fraction restored after rollback")
 
 
 class TestGpuLiveValidation:
-    STRATEGY_NAME = "e2e-gpu-live-strategy"
-    STATIC_POLICY_NAME = "e2e-gpu-live-static-policy"
-    VPA_NAME = "e2e-gpu-live-vpa"
-    DEPLOYMENT = "gpu-live-demo"
-    NAMESPACE = "gpu-live"
+    STRATEGY_NAME_PREFIX = "e2e-gpu-live-strategy"
+    STATIC_POLICY_NAME_PREFIX = "e2e-gpu-live-static-policy"
+    VPA_NAME_PREFIX = "e2e-gpu-live-vpa"
+    VPA_BLOCK_LOG_TEMPLATE = "VPA {vpa_name} (updateMode=Off) owns gpu.request; skipping Kubex action"
+    DEPLOYMENT_PREFIX = "gpu-live-demo"
+    NAMESPACE_PREFIX = "gpu-live"
 
     @pytest.fixture(autouse=True)
     def setup_teardown(self, request, k8s_clients, kube_context):
@@ -731,29 +730,29 @@ class TestGpuLiveValidation:
             pytest.skip("GPU/KAI live validation requires a real GPU cluster")
 
         suffix = request.node.name.replace("_", "-")[:20]
-        self.STRATEGY_NAME = f"e2e-gpu-kai-live-strategy-{suffix}"
-        self.STATIC_POLICY_NAME = f"e2e-gpu-kai-live-static-{suffix}"
-        self.VPA_NAME = f"e2e-gpu-kai-live-vpa-{suffix}"
-        self.DEPLOYMENT = f"gpu-kai-live-demo-{suffix}"
-        self.NAMESPACE = f"gpu-kai-live-{suffix}"
+        self.strategy_name = f"e2e-gpu-kai-live-strategy-{suffix}"
+        self.static_policy_name = f"e2e-gpu-kai-live-static-{suffix}"
+        self.vpa_name = f"e2e-gpu-kai-live-vpa-{suffix}"
+        self.deployment = f"gpu-kai-live-demo-{suffix}"
+        self.namespace = f"gpu-kai-live-{suffix}"
 
-        with gpu_test_namespace(k8s_clients, self.NAMESPACE):
+        with gpu_test_namespace(k8s_clients, self.namespace):
             self._cleanup(k8s_clients)
             yield
             self._cleanup(k8s_clients)
 
     def _cleanup(self, k8s_clients):
-        delete_deployment(k8s_clients.apps, self.NAMESPACE, self.DEPLOYMENT)
+        delete_deployment(k8s_clients.apps, self.namespace, self.deployment)
         for group, version, plural, name in [
-            ("autoscaling.k8s.io", "v1", "verticalpodautoscalers", self.VPA_NAME),
-            (GROUP, VERSION, "staticpolicies", self.STATIC_POLICY_NAME),
-            (GROUP, VERSION, "automationstrategies", self.STRATEGY_NAME),
+            ("autoscaling.k8s.io", "v1", "verticalpodautoscalers", self.vpa_name),
+            (GROUP, VERSION, "staticpolicies", self.static_policy_name),
+            (GROUP, VERSION, "automationstrategies", self.strategy_name),
         ]:
             with ignore_not_found():
-                delete_custom_object(k8s_clients.custom, group, version, self.NAMESPACE, plural, name)
+                delete_custom_object(k8s_clients.custom, group, version, self.namespace, plural, name)
 
     def _create_gpu_strategy(self, k8s_clients, *, block_vpa_controlled_resources: bool = False):
-        strategy = automation_strategy_manifest(self.STRATEGY_NAME, self.NAMESPACE)
+        strategy = automation_strategy_manifest(self.strategy_name, self.namespace)
         strategy["spec"]["enablement"]["gpu"] = {
             "requests": {"downsize": True, "upsize": True, "setFromUnspecified": True}
         }
@@ -765,17 +764,17 @@ class TestGpuLiveValidation:
         k8s_clients.custom.create_namespaced_custom_object(
             GROUP,
             VERSION,
-            self.NAMESPACE,
+            self.namespace,
             "automationstrategies",
             strategy,
         )
 
     def _create_gpu_policy(self, k8s_clients, gpu_fraction: str):
         policy = static_policy_manifest(
-            self.STATIC_POLICY_NAME,
-            self.NAMESPACE,
-            self.STRATEGY_NAME,
-            label_selector_app=self.DEPLOYMENT,
+            self.static_policy_name,
+            self.namespace,
+            self.strategy_name,
+            label_selector_app=self.deployment,
             cpu_request="100m",
             mem_request="256Mi",
             cpu_limit="200m",
@@ -785,7 +784,7 @@ class TestGpuLiveValidation:
         k8s_clients.custom.create_namespaced_custom_object(
             GROUP,
             VERSION,
-            self.NAMESPACE,
+            self.namespace,
             "staticpolicies",
             policy,
         )
@@ -794,9 +793,9 @@ class TestGpuLiveValidation:
         k8s_clients.custom.patch_namespaced_custom_object(
             GROUP,
             VERSION,
-            self.NAMESPACE,
+            self.namespace,
             "staticpolicies",
-            self.STATIC_POLICY_NAME,
+            self.static_policy_name,
             {
                 "spec": {
                     "resources": {
@@ -809,8 +808,8 @@ class TestGpuLiveValidation:
     def _create_gpu_deployment(self, k8s_clients, nvidia_gpu: str | None = None):
         create_deployment(
             k8s_clients.apps,
-            self.NAMESPACE,
-            self.DEPLOYMENT,
+            self.namespace,
+            self.deployment,
             cpu_request="100m",
             mem_request="256Mi",
             cpu_limit="200m",
@@ -819,8 +818,8 @@ class TestGpuLiveValidation:
         )
 
         k8s_clients.apps.patch_namespaced_deployment(
-            self.DEPLOYMENT,
-            self.NAMESPACE,
+            self.deployment,
+            self.namespace,
             {
                 "spec": {
                     "template": {
@@ -848,14 +847,14 @@ class TestGpuLiveValidation:
 
     def _wait_for_gpu_request(self, k8s_clients, expected: str):
         def gpu_request_applied():
-            pod = get_deployment_pod(k8s_clients.core, self.NAMESPACE, self.DEPLOYMENT)
-            resources = get_pod_resources(k8s_clients.core, self.NAMESPACE, pod.metadata.name)["app"]
+            pod = get_deployment_pod(k8s_clients.core, self.namespace, self.deployment)
+            resources = get_pod_resources(k8s_clients.core, self.namespace, pod.metadata.name)["app"]
             return resources["requests"].get("nvidia.com/gpu") == expected
 
         wait_for(
             gpu_request_applied,
             timeout=300,
-            message=f"pod nvidia.com/gpu {expected} on {self.NAMESPACE}/{self.DEPLOYMENT}",
+            message=f"pod nvidia.com/gpu {expected} on {self.namespace}/{self.deployment}",
         )
 
     def _trigger_gpu_upsize(self, k8s_clients, kube_context, gpu_fraction: str):
@@ -863,7 +862,7 @@ class TestGpuLiveValidation:
         self._create_gpu_deployment(k8s_clients)
         self._create_gpu_policy(k8s_clients, gpu_fraction=gpu_fraction)
         self._wait_for_gpu_request(k8s_clients, "1")
-        return get_deployment_pod(k8s_clients.core, self.NAMESPACE, self.DEPLOYMENT)
+        return get_deployment_pod(k8s_clients.core, self.namespace, self.deployment)
 
     @pytest.mark.timeout(900)
     def test_gpu_resize_caps_at_previous_whole_gpu(self, kube_context, k8s_clients):
@@ -871,8 +870,8 @@ class TestGpuLiveValidation:
 
         self._wait_for_gpu_request(k8s_clients, "1")
 
-        pod = get_deployment_pod(k8s_clients.core, self.NAMESPACE, self.DEPLOYMENT)
-        resources = get_pod_resources(k8s_clients.core, self.NAMESPACE, pod.metadata.name)["app"]
+        pod = get_deployment_pod(k8s_clients.core, self.namespace, self.deployment)
+        resources = get_pod_resources(k8s_clients.core, self.namespace, pod.metadata.name)["app"]
         assert resources["requests"].get("nvidia.com/gpu") == "1"
         assert resources["limits"].get("nvidia.com/gpu") == "1"
 
@@ -899,12 +898,12 @@ class TestGpuLiveValidation:
         vpa = {
             "apiVersion": "autoscaling.k8s.io/v1",
             "kind": "VerticalPodAutoscaler",
-            "metadata": {"name": self.VPA_NAME, "namespace": self.NAMESPACE},
+            "metadata": {"name": self.vpa_name, "namespace": self.namespace},
             "spec": {
                 "targetRef": {
                     "apiVersion": "apps/v1",
                     "kind": "Deployment",
-                    "name": self.DEPLOYMENT,
+                    "name": self.deployment,
                 },
                 "updatePolicy": {"updateMode": "Off"},
             },
@@ -913,7 +912,7 @@ class TestGpuLiveValidation:
             k8s_clients.custom.create_namespaced_custom_object(
                 "autoscaling.k8s.io",
                 "v1",
-                self.NAMESPACE,
+                self.namespace,
                 "verticalpodautoscalers",
                 vpa,
             )
@@ -925,7 +924,7 @@ class TestGpuLiveValidation:
         self._wait_for_gpu_request(k8s_clients, "1")
 
         def pod_rightsizing_info_written():
-            pod = get_deployment_pod(k8s_clients.core, self.NAMESPACE, self.DEPLOYMENT)
+            pod = get_deployment_pod(k8s_clients.core, self.namespace, self.deployment)
             return (pod.metadata.annotations or {}).get("automation-webhook.kubex.ai/pod-rightsizing-info")
 
         wait_for(
@@ -945,12 +944,12 @@ class TestGpuLiveValidation:
         vpa = {
             "apiVersion": "autoscaling.k8s.io/v1",
             "kind": "VerticalPodAutoscaler",
-            "metadata": {"name": self.VPA_NAME, "namespace": self.NAMESPACE},
+            "metadata": {"name": self.vpa_name, "namespace": self.namespace},
             "spec": {
                 "targetRef": {
                     "apiVersion": "apps/v1",
                     "kind": "Deployment",
-                    "name": self.DEPLOYMENT,
+                    "name": self.deployment,
                 },
                 "updatePolicy": {"updateMode": "Off"},
                 "resourcePolicy": {
@@ -968,7 +967,7 @@ class TestGpuLiveValidation:
             k8s_clients.custom.create_namespaced_custom_object(
                 "autoscaling.k8s.io",
                 "v1",
-                self.NAMESPACE,
+                self.namespace,
                 "verticalpodautoscalers",
                 vpa,
             )
@@ -980,8 +979,8 @@ class TestGpuLiveValidation:
         started = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
         def gpu_request_remains_blocked():
-            pod = get_deployment_pod(k8s_clients.core, self.NAMESPACE, self.DEPLOYMENT)
-            resources = get_pod_resources(k8s_clients.core, self.NAMESPACE, pod.metadata.name)["app"]
+            pod = get_deployment_pod(k8s_clients.core, self.namespace, self.deployment)
+            resources = get_pod_resources(k8s_clients.core, self.namespace, pod.metadata.name)["app"]
             return resources["requests"].get("nvidia.com/gpu") == "0.25"
 
         wait_for(
@@ -992,7 +991,7 @@ class TestGpuLiveValidation:
         _wait_for_controller_log_contains(
             kube_context,
             controller_namespace,
-            (f"VPA {self.VPA_NAME} (updateMode=Off) owns gpu.request; skipping Kubex action",),
+            (self.VPA_BLOCK_LOG_TEMPLATE.format(vpa_name=self.vpa_name),),
             since_time=started,
             timeout=720,
         )
@@ -1005,14 +1004,16 @@ def _namespace_gone(k8s_clients, namespace: str) -> bool:
     except ApiException as exc:
         if exc.status == 404:
             return True
-        raise
+        return False
     return False
 
 
 @contextmanager
 def gpu_test_namespace(k8s_clients, namespace: str):
+    created = False
     try:
         k8s_clients.core.create_namespace(client.V1Namespace(metadata=client.V1ObjectMeta(name=namespace)))
+        created = True
     except ApiException as exc:
         if exc.status != 409:
             raise
@@ -1020,10 +1021,11 @@ def gpu_test_namespace(k8s_clients, namespace: str):
     try:
         yield
     finally:
-        with ignore_not_found():
-            k8s_clients.core.delete_namespace(namespace)
-        wait_for(
-            lambda: _namespace_gone(k8s_clients, namespace),
-            timeout=120,
-            message=f"namespace {namespace} deletion",
-        )
+        if created:
+            with ignore_not_found():
+                k8s_clients.core.delete_namespace(namespace)
+            wait_for(
+                lambda: _namespace_gone(k8s_clients, namespace),
+                timeout=120,
+                message=f"namespace {namespace} deletion",
+            )

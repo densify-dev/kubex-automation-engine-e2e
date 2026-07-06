@@ -67,10 +67,12 @@ class TestRollbackBehavior:
         self.DEPLOYMENT = f"rightsizing-demo-{suffix}"
         self.NAMESPACE = f"e2e-rollback-{suffix}"
 
+        created = False
         try:
             k8s_clients.core.create_namespace(
                 client.V1Namespace(metadata=client.V1ObjectMeta(name=self.NAMESPACE))
             )
+            created = True
         except ApiException as exc:
             if exc.status != 409:
                 raise
@@ -185,16 +187,17 @@ class TestRollbackBehavior:
             ("automationstrategies", self.STRATEGY_NAME),
         ]:
             delete_custom_object(k8s_clients.custom, GROUP, VERSION, self.NAMESPACE, plural, name)
-        try:
-            k8s_clients.core.delete_namespace(self.NAMESPACE)
-        except ApiException:
-            pass
+        if created:
+            try:
+                k8s_clients.core.delete_namespace(self.NAMESPACE)
+            except ApiException:
+                pass
 
-        wait_for(
-            lambda: _namespace_gone(k8s_clients, self.NAMESPACE),
-            timeout=120,
-            message=f"namespace {self.NAMESPACE} deletion",
-        )
+            wait_for(
+                lambda: _namespace_gone(k8s_clients, self.NAMESPACE),
+                timeout=120,
+                message=f"namespace {self.NAMESPACE} deletion",
+            )
 
     def _deployment(self, k8s_clients):
         return get_deployment(k8s_clients.apps, self.NAMESPACE, self.DEPLOYMENT)
@@ -588,5 +591,5 @@ def _namespace_gone(k8s_clients, namespace: str) -> bool:
     except ApiException as exc:
         if exc.status == 404:
             return True
-        raise
+        return False
     return False

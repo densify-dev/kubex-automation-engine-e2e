@@ -8,7 +8,7 @@ import pytest
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
-from bootstrap import BootstrapConfig, bootstrap, ignore_not_found
+from bootstrap import DEFAULT_KUBEAI_CHART_VERSION, BootstrapConfig, bootstrap, ignore_not_found
 from helpers import kubectl, kubectl_diagnostics
 
 # Make helpers.py importable from tests/ subdirectory
@@ -86,8 +86,13 @@ def pytest_addoption(parser):
     )
     parser.addoption(
         "--kubeai-chart-version",
-        default="0.23.2",
+        default=DEFAULT_KUBEAI_CHART_VERSION,
         help="Helm chart version used for KubeAI installations",
+    )
+    parser.addoption(
+        "--install-kubeai",
+        action="store_true",
+        help="Install KubeAI without enabling the GPU suite",
     )
     parser.addoption(
         "--kubex-url-host",
@@ -266,7 +271,8 @@ def kind_cluster(
             kubeai_chart_version=request.config.getoption("--kubeai-chart-version"),
             kind_node_image=request.config.getoption("--kind-node-image"),
             install_gpu_suite=request.config.getoption("--gpu-suite"),
-            install_kubeai=request.config.getoption("--gpu-suite"),
+            install_kubeai=request.config.getoption("--gpu-suite")
+            or request.config.getoption("--install-kubeai"),
             install_gpu_process_exporter=request.config.getoption("--gpu-suite"),
             gpu_kind_config=request.config.getoption("--gpu-kind-config"),
             install_prometheus=request.config.getoption("--gpu-suite"),
