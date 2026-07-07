@@ -312,7 +312,7 @@ verify_uninstall() {
   cleanup_rightsizing_resources
 
   log "Uninstalling controller Helm release ${HELM_RELEASE}"
-  run_cmd helm uninstall "$HELM_RELEASE" --kube-context "$KUBE_CONTEXT" --namespace "$HELM_NAMESPACE"
+  run_cmd helm uninstall "$HELM_RELEASE" --no-hooks --kube-context "$KUBE_CONTEXT" --namespace "$HELM_NAMESPACE"
 
   log "Verifying controller release removal"
   wait_for_release_absent "$HELM_RELEASE"

@@ -1,18 +1,128 @@
 """Tests: broader AutomationStrategy knob matrix."""
 
+import copy
+import hashlib
 import time
+import subprocess
 
 import pytest
 
 from example_utils import (
     EXAMPLES_ROOT,
-    apply_manifest,
-    delete_manifest_in_reverse,
     manifest_documents,
     skip_reason,
 )
 from helpers import apply_manifest as apply_manifest_object
-from helpers import get_pod_resources, pod_is_ready, wait_for, wait_for_vpa_recommendation
+from helpers import get_pod_resources, namespace_gone, pod_is_ready, wait_for, wait_for_vpa_recommendation
+
+
+def _manifest_case_suffix(manifest_path):
+    rel_path = manifest_path.relative_to(EXAMPLES_ROOT).with_suffix("").as_posix()
+    return hashlib.sha1(rel_path.encode("utf-8")).hexdigest()[:8]
+
+
+def _rewrite_manifest_documents(manifest_path, case_suffix):
+    docs = [copy.deepcopy(doc) for doc in manifest_documents(manifest_path)]
+    name_map = {}
+
+    for doc in docs:
+        kind = doc["kind"]
+        metadata = doc["metadata"]
+        original_name = metadata["name"]
+        if kind in {
+            "Namespace",
+            "Deployment",
+            "AutomationStrategy",
+            "ClusterAutomationStrategy",
+            "StaticPolicy",
+            "ClusterStaticPolicy",
+        }:
+            name_map[original_name] = f"{original_name}-{case_suffix}"
+
+    namespace_map = {
+        original_name: rewritten_name
+        for original_name, rewritten_name in name_map.items()
+        if any(doc["kind"] == "Namespace" and doc["metadata"]["name"] == original_name for doc in docs)
+    }
+
+    def rewrite_namespace(value):
+        return namespace_map.get(value, value)
+
+    for doc in docs:
+        kind = doc["kind"]
+        metadata = doc["metadata"]
+        if metadata["name"] in name_map:
+            metadata["name"] = name_map[metadata["name"]]
+        if metadata.get("namespace") in namespace_map:
+            metadata["namespace"] = namespace_map[metadata["namespace"]]
+
+        spec = doc.get("spec", {})
+        scope = spec.get("scope", {})
+        selector = scope.get("labelSelector", {}).get("matchLabels", {})
+        if selector.get("app") == "rightsizing-demo":
+            selector["app"] = name_map.get("rightsizing-demo", selector["app"])
+
+        namespace_selector = scope.get("namespaceSelector")
+        if namespace_selector and "values" in namespace_selector:
+            namespace_selector["values"] = [rewrite_namespace(value) for value in namespace_selector["values"]]
+
+        automation_strategy_ref = spec.get("automationStrategyRef")
+        if automation_strategy_ref and automation_strategy_ref.get("name") in name_map:
+            automation_strategy_ref["name"] = name_map[automation_strategy_ref["name"]]
+
+        if kind == "Deployment":
+            labels = metadata.setdefault("labels", {})
+            if labels.get("app") == "rightsizing-demo":
+                labels["app"] = name_map.get("rightsizing-demo", labels["app"])
+
+            selector_labels = spec.get("selector", {}).get("matchLabels", {})
+            if selector_labels.get("app") == "rightsizing-demo":
+                selector_labels["app"] = name_map.get("rightsizing-demo", selector_labels["app"])
+
+            template_labels = spec.get("template", {}).get("metadata", {}).get("labels", {})
+            if template_labels.get("app") == "rightsizing-demo":
+                template_labels["app"] = name_map.get("rightsizing-demo", template_labels["app"])
+
+    return docs, namespace_map
+
+
+def _apply_manifest_documents(docs, kube_context):
+    for doc in docs:
+        apply_manifest_object(doc, kube_context)
+
+
+def _delete_manifest_documents(docs, kube_context, k8s_clients):
+    for doc in reversed(docs):
+        kind = doc["kind"]
+        metadata = doc["metadata"]
+        name = metadata["name"]
+        namespace = metadata.get("namespace")
+        cmd = [
+            "kubectl",
+            "--context",
+            kube_context,
+            "delete",
+            kind,
+            name,
+            "--ignore-not-found",
+            "--wait=false",
+        ]
+        if namespace:
+            cmd += ["-n", namespace]
+        subprocess.run(cmd, capture_output=True)
+        if kind == "Namespace":
+            wait_for(
+                lambda ns=name: namespace_gone(k8s_clients, ns),
+                timeout=60,
+                message=f"namespace {name} deletion",
+            )
+
+
+def _rewrite_assertions(assertions, namespace_map, case_suffix):
+    rewritten = []
+    for namespace, deployment, expected in assertions:
+        rewritten.append((namespace_map.get(namespace, namespace), f"{deployment}-{case_suffix}", expected))
+    return rewritten
 
 
 class TestStrategyKnobMatrix:
@@ -210,20 +320,20 @@ class TestStrategyKnobMatrix:
         kube_context,
         k8s_clients,
     ):
+        case_suffix = _manifest_case_suffix(manifest_path)
+        rewritten_manifest_docs, namespace_map = _rewrite_manifest_documents(manifest_path, case_suffix)
+        rewritten_assertions = _rewrite_assertions(assertions, namespace_map, case_suffix)
+        rewritten_prewarm_docs = (
+            _rewrite_manifest_documents(pre_warm_manifest_path, case_suffix)[0]
+            if pre_warm_manifest_path is not None
+            else None
+        )
+
         reason = skip_reason(manifest_path, kube_context)
         if reason:
             pytest.skip(reason)
 
-        def apply_ordered_manifest(path):
-            ordered_paths = {
-                EXAMPLES_ROOT / "automationstrategy" / "min-ready-seconds.yaml",
-                EXAMPLES_ROOT / "automationstrategy" / "node-allocatable-headroom.yaml",
-            }
-            if path not in ordered_paths:
-                apply_manifest(path, kube_context)
-                return
-
-            docs = manifest_documents(path)
+        def apply_ordered_manifest_docs(docs):
             deployment_docs = [doc for doc in docs if doc["kind"] == "Deployment"]
             prerequisite_docs = [doc for doc in docs if doc["kind"] != "Deployment"]
 
@@ -261,7 +371,7 @@ class TestStrategyKnobMatrix:
                 # Phase 1: apply Namespace + Deployment + VPA (no AutomationStrategy).
                 # Wait for VPA to produce its first recommendation so that the filter
                 # is guaranteed to fire on the very first policyevaluation pass.
-                apply_manifest(pre_warm_manifest_path, kube_context)
+                _apply_manifest_documents(rewritten_prewarm_docs, kube_context)
                 for namespace, deployment, _ in assertions:
                     # The pre-warm manifest names the VPA after the Deployment.
                     wait_for_vpa_recommendation(
@@ -274,7 +384,13 @@ class TestStrategyKnobMatrix:
             # Phase 2 (or only phase when pre_warm_manifest_path is None): apply
             # the full manifest.  kubectl apply is idempotent so any objects
             # already created by the pre-warm step are simply confirmed.
-            apply_ordered_manifest(manifest_path)
+            if manifest_path in {
+                EXAMPLES_ROOT / "automationstrategy" / "min-ready-seconds.yaml",
+                EXAMPLES_ROOT / "automationstrategy" / "node-allocatable-headroom.yaml",
+            }:
+                apply_ordered_manifest_docs(rewritten_manifest_docs)
+            else:
+                _apply_manifest_documents(rewritten_manifest_docs, kube_context)
 
             def current_pod(namespace: str, deployment: str, expected=None):
                 pods = k8s_clients.core.list_namespaced_pod(
@@ -322,7 +438,7 @@ class TestStrategyKnobMatrix:
 
             time.sleep(5)
             if not skip_readiness:
-                for namespace, deployment, _ in assertions:
+                for namespace, deployment, _ in rewritten_assertions:
                     wait_for(
                         lambda ns=namespace, dep=deployment: pod_is_ready(current_pod(ns, dep)),
                         timeout=180,
@@ -331,7 +447,7 @@ class TestStrategyKnobMatrix:
 
             time.sleep(sleep_seconds)
 
-            for namespace, deployment, expected in assertions:
+            for namespace, deployment, expected in rewritten_assertions:
                 wait_for(
                     lambda ns=namespace, dep=deployment, exp=expected: current_pod(ns, dep, exp),
                     timeout=600,
@@ -350,6 +466,7 @@ class TestStrategyKnobMatrix:
                     if values.get("limits_memory") is not None:
                         assert container_resources["limits"].get("memory") == values["limits_memory"]
         finally:
-            delete_manifest_in_reverse(manifest_path, kube_context)
-            if pre_warm_manifest_path is not None:
-                delete_manifest_in_reverse(pre_warm_manifest_path, kube_context)
+            if rewritten_manifest_docs is not None:
+                _delete_manifest_documents(rewritten_manifest_docs, kube_context, k8s_clients)
+            if rewritten_prewarm_docs is not None:
+                _delete_manifest_documents(rewritten_prewarm_docs, kube_context, k8s_clients)
