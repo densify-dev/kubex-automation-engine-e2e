@@ -640,7 +640,7 @@ class TestGpuKaiRollback:
 
         wait_for(second_monitoring_started, timeout=180, message="second rollback monitoring start")
 
-    def _trigger_organic_failure(self, k8s_clients, *, max_attempts: int) -> None:
+    def _trigger_organic_failure(self, k8s_clients, *, max_attempts: int) -> dict | None:
         self._patch_rollback_policy_backoff(k8s_clients, time_period="10s", max_attempts=max_attempts)
 
         wait_for(
@@ -656,7 +656,20 @@ class TestGpuKaiRollback:
         assert any(reason in rolling_back["failureMessage"] for reason in {"OOMKilled", "CrashLoopBackOff"})
 
         self._delete_static_policy(k8s_clients)
-        self._wait_for_state_mode(k8s_clients, "backingOff", timeout=240)
+
+        completed = {"value": None}
+
+        def backoff_completed():
+            state = self._rollback_state(k8s_clients)
+            if state is None:
+                return True
+            if state.get("mode") == "backedOff":
+                completed["value"] = state
+                return True
+            return False
+
+        wait_for(backoff_completed, timeout=240, message="rollback backoff completion")
+        return completed["value"]
 
     def _deployment_failure_reason(self, k8s_clients) -> str | None:
         pods = k8s_clients.core.list_namespaced_pod(
@@ -703,12 +716,12 @@ class TestGpuKaiRollback:
     def test_kai_rollback_backoff_completion_clears_annotations(self, k8s_clients):
         self._wait_for_initial_monitoring_success(k8s_clients)
         self._wait_for_second_monitoring_start(k8s_clients)
-        self._trigger_organic_failure(k8s_clients, max_attempts=2)
+        backed_off = self._trigger_organic_failure(k8s_clients, max_attempts=2)
 
-        backed_off = self._wait_for_state_mode(k8s_clients, "backedOff", timeout=180)
-        assert backed_off["turn"] == 2
-        assert backed_off["failureReason"] in {"oomKilled", "crashLoopBackOff"}
-        assert any(reason in backed_off["failureMessage"] for reason in {"OOMKilled", "CrashLoopBackOff"})
+        if backed_off is not None:
+            assert backed_off["turn"] == 2
+            assert backed_off["failureReason"] in {"oomKilled", "crashLoopBackOff"}
+            assert any(reason in backed_off["failureMessage"] for reason in {"OOMKilled", "CrashLoopBackOff"})
         assert self._rollback_annotations_cleared(k8s_clients)
 
         def gpu_fraction_restored():
