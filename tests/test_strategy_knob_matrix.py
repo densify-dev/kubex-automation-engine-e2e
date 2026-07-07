@@ -383,7 +383,7 @@ class TestStrategyKnobMatrix:
                 # Wait for VPA to produce its first recommendation so that the filter
                 # is guaranteed to fire on the very first policyevaluation pass.
                 _apply_manifest_documents(rewritten_prewarm_docs, kube_context)
-                for namespace, deployment, _ in assertions:
+                for namespace, deployment, _ in rewritten_assertions:
                     # The pre-warm manifest names the VPA after the Deployment.
                     wait_for_vpa_recommendation(
                         kube_context,
