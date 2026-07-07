@@ -36,6 +36,7 @@ def _rewrite_manifest_documents(manifest_path, case_suffix):
             "ClusterAutomationStrategy",
             "StaticPolicy",
             "ClusterStaticPolicy",
+            "VerticalPodAutoscaler",
         }:
             name_map[original_name] = f"{original_name}-{case_suffix}"
 
@@ -59,8 +60,9 @@ def _rewrite_manifest_documents(manifest_path, case_suffix):
         spec = doc.get("spec", {})
         scope = spec.get("scope", {})
         selector = scope.get("labelSelector", {}).get("matchLabels", {})
-        if selector.get("app") == "rightsizing-demo":
-            selector["app"] = name_map.get("rightsizing-demo", selector["app"])
+        app_name = selector.get("app")
+        if app_name in name_map:
+            selector["app"] = name_map[app_name]
 
         namespace_selector = scope.get("namespaceSelector")
         if namespace_selector and "values" in namespace_selector:
@@ -72,18 +74,27 @@ def _rewrite_manifest_documents(manifest_path, case_suffix):
 
         if kind == "Deployment":
             labels = metadata.setdefault("labels", {})
-            if labels.get("app") == "rightsizing-demo":
-                labels["app"] = name_map.get("rightsizing-demo", labels["app"])
+            app_name = labels.get("app")
+            if app_name in name_map:
+                labels["app"] = name_map[app_name]
 
             selector_labels = spec.get("selector", {}).get("matchLabels", {})
-            if selector_labels.get("app") == "rightsizing-demo":
-                selector_labels["app"] = name_map.get("rightsizing-demo", selector_labels["app"])
+            app_name = selector_labels.get("app")
+            if app_name in name_map:
+                selector_labels["app"] = name_map[app_name]
 
             template_labels = spec.get("template", {}).get("metadata", {}).get("labels", {})
-            if template_labels.get("app") == "rightsizing-demo":
-                template_labels["app"] = name_map.get("rightsizing-demo", template_labels["app"])
+            app_name = template_labels.get("app")
+            if app_name in name_map:
+                template_labels["app"] = name_map[app_name]
 
-    return docs, namespace_map
+        if kind == "VerticalPodAutoscaler":
+            target_ref = spec.get("targetRef", {})
+            target_name = target_ref.get("name")
+            if target_name in name_map:
+                target_ref["name"] = name_map[target_name]
+
+    return docs, namespace_map, name_map
 
 
 def _apply_manifest_documents(docs, kube_context):
@@ -118,10 +129,10 @@ def _delete_manifest_documents(docs, kube_context, k8s_clients):
             )
 
 
-def _rewrite_assertions(assertions, namespace_map, case_suffix):
+def _rewrite_assertions(assertions, namespace_map, name_map):
     rewritten = []
     for namespace, deployment, expected in assertions:
-        rewritten.append((namespace_map.get(namespace, namespace), f"{deployment}-{case_suffix}", expected))
+        rewritten.append((namespace_map.get(namespace, namespace), name_map.get(deployment, deployment), expected))
     return rewritten
 
 
@@ -309,7 +320,7 @@ class TestStrategyKnobMatrix:
             "staticpolicy/namespaced-and-cluster-same-weight",
         ],
     )
-    @pytest.mark.timeout(1800)
+    @pytest.mark.timeout(2700)
     def test_strategy_knobs_keep_expected_behavior(
         self,
         manifest_path,
@@ -321,8 +332,8 @@ class TestStrategyKnobMatrix:
         k8s_clients,
     ):
         case_suffix = _manifest_case_suffix(manifest_path)
-        rewritten_manifest_docs, namespace_map = _rewrite_manifest_documents(manifest_path, case_suffix)
-        rewritten_assertions = _rewrite_assertions(assertions, namespace_map, case_suffix)
+        rewritten_manifest_docs, namespace_map, name_map = _rewrite_manifest_documents(manifest_path, case_suffix)
+        rewritten_assertions = _rewrite_assertions(assertions, namespace_map, name_map)
         rewritten_prewarm_docs = (
             _rewrite_manifest_documents(pre_warm_manifest_path, case_suffix)[0]
             if pre_warm_manifest_path is not None

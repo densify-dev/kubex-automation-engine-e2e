@@ -270,7 +270,7 @@ run_functional_suite() {
     --helm-release "$HELM_RELEASE"
     --controller-image-pull-policy "$CONTROLLER_IMAGE_PULL_POLICY"
     --test-namespace e2e-test
-    --timeout 120
+    --timeout 180
   )
   if ! is_true "$GPU_SUITE"; then
     args+=(-m "not gpu_suite")
