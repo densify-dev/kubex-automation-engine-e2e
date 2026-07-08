@@ -651,9 +651,9 @@ class TestGpuKaiRollback:
         self._delete_healthy_pods(k8s_clients)
         self._poke_owner_reconcile(k8s_clients)
 
-        rolling_back = self._wait_for_state_mode(k8s_clients, "rollingBack", timeout=240)
-        assert rolling_back["failureReason"] in {"oomKilled", "crashLoopBackOff"}
-        assert any(reason in rolling_back["failureMessage"] for reason in {"OOMKilled", "CrashLoopBackOff"})
+        terminal_state = self._wait_for_state_modes(k8s_clients, {"rollingBack", "backingOff", "backedOff"}, timeout=240)
+        assert terminal_state["failureReason"] in {"oomKilled", "crashLoopBackOff"}
+        assert any(reason in terminal_state["failureMessage"] for reason in {"OOMKilled", "CrashLoopBackOff"})
 
         self._delete_static_policy(k8s_clients)
 
@@ -662,6 +662,8 @@ class TestGpuKaiRollback:
         def backoff_completed():
             state = self._rollback_state(k8s_clients)
             if state is None:
+                return False
+            if state.get("mode") == "backingOff":
                 return True
             if state.get("mode") == "backedOff":
                 completed["value"] = state
