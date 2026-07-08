@@ -239,18 +239,12 @@ e2e-testing/
 ## Notes
 
 - Kind bootstrap is handled by [bootstrap.py](bootstrap.py).
-<<<<<<< HEAD
-- The main local entry point is [scripts/run-full-suite.sh](scripts/run-full-suite.sh).
-- [scripts/run-full-matrix-local.sh](scripts/run-full-matrix-local.sh) builds the local controller images, then runs the full-suite flow three times: once for `v1.36.0` with the full stack (metrics-server, KEDA, VPA), once for `v1.35.0` with the full stack, and once for `v1.32.0` with metrics-server only (KEDA and VPA skipped). Pass one or more pytest nodeids/paths to run only that subset through the matrix bootstrap.
-=======
 - The main local entry point is [run-full-suite.sh](run-full-suite.sh).
 - [run-full-matrix-local.sh](run-full-matrix-local.sh) builds the local controller images, then runs the full-suite flow twice with GPU enabled in both lanes: once for `v1.35.0` with the full stack (metrics-server, KEDA, VPA) and once for `v1.32.0` with metrics-server only (KEDA and VPA skipped). Pass one or more pytest nodeids/paths to run only that subset through the matrix bootstrap.
->>>>>>> 702e1616 (Merged in release/v1.6.0 (pull request #162))
 - `test_example_behavior.py` now waits for both `Deployment` and `StatefulSet` workloads declared in vendored examples to become ready.
 - `test_strimzipodset.py` exercises both `core.strimzi.io/v1` and `core.strimzi.io/v1beta2` using a minimal CRD fixture plus synthetic owned Pods so the controller follows the real owned-pod path.
 - The local suite can deploy an in-cluster Python mock Kubex service, feed recommendations from `examples/recommendations.json`, and assert heartbeat/policy/mutation uploads through the real gateway sidecar path.
 - The full-suite runner verifies install through the functional tests, then uninstalls the controller Helm release and `kubex-crds` and verifies their removal.
-<<<<<<< HEAD
 - The bootstrap flow installs `metrics-server`, `KEDA`, and VPA by default. Set `WITH_KEDA=false`, `WITH_VPA=false`, or `WITH_METRICS_SERVER=false` to skip individual addons. The CI matrix uses the full stack on v1.36.0 and v1.35.0 and metrics-server only on v1.32.0 (`WITH_KEDA=false WITH_VPA=false`).
 - The Helm-managed compaction scheduler defaults its image tag from the cluster version unless `compactionScheduler.image.tag` or `compactionScheduler.kubernetesVersionOverride` is set explicitly.
 - The default full-suite runner is serial because many tests mutate shared cluster state and vendored example resources; set `PYTEST_WORKERS` only after isolating those tests.
