@@ -391,6 +391,65 @@ kaiQueues:
   # -- Create built-in Run:ai Queue resources (`kubex-parent-queue` and `kubex-unlimited-gpu-queue`)
   enabled: false
 
+# Compaction scheduler configuration for the dedicated compaction scheduler
+compactionScheduler:
+  # -- Render a MostAllocated scheduler configuration for the dedicated compaction scheduler
+  enabled: false
+  image:
+    # -- Scheduler image repository
+    repository: registry.k8s.io/kube-scheduler
+    # -- Scheduler image tag
+    tag: ""
+    # -- Scheduler image pull policy
+    pullPolicy: IfNotPresent
+  # -- Optional pod security context for the dedicated compaction scheduler pod
+  podSecurityContext: {}
+  # -- Container security context for the dedicated compaction scheduler container
+  securityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - "ALL"
+  # -- Optional image pull secrets for the dedicated compaction scheduler pod
+  imagePullSecrets: []
+  # -- Optional override for the Kubernetes version used to auto-default and validate the scheduler image tag.
+  kubernetesVersionOverride: ""
+  # -- Scheduler name advertised to compaction pods
+  schedulerName: kubex-compaction-scheduler
+  # -- Scheduler profile name written into the generated scheduler configuration
+  profileName: compaction-most-allocated
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 25m
+      memory: 64Mi
+
+# Compaction descheduler configuration installed through Helm
+compactionDescheduler:
+  # -- Render a Helm-managed descheduler CronJob. The policy ConfigMap content is controller-generated from ClusterCompactionPolicy resources.
+  enabled: false
+  # -- Cron schedule for the descheduler run
+  schedule: "*/30 * * * *"
+  # -- Whether the descheduler CronJob is suspended
+  suspend: true
+  image:
+    # -- Descheduler image repository
+    repository: registry.k8s.io/descheduler/descheduler
+    # -- Descheduler image tag
+    tag: v0.36.0
+    # -- Descheduler image pull policy
+    pullPolicy: IfNotPresent
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 25m
+      memory: 64Mi
+
 # ================================================================
 # BACKWARD COMPATIBILITY: Legacy environment variable configuration
 # These values are OPTIONAL and customize the default CRDs.

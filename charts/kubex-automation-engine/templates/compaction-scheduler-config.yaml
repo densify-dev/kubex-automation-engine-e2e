@@ -1,0 +1,38 @@
+{{- if .Values.compactionScheduler.enabled -}}
+{{- $schedulerName := .Values.compactionScheduler.schedulerName | default "kubex-compaction-scheduler" -}}
+{{- $profileName := .Values.compactionScheduler.profileName | default "compaction-most-allocated" -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kubex-automation-engine.fullname" . }}-compaction-scheduler-config
+  labels:
+    {{- include "kubex-automation-engine.labels" . | nindent 4 }}
+    app.kubernetes.io/component: compaction-scheduler
+data:
+  scheduler-config.yaml: |
+    apiVersion: kubescheduler.config.k8s.io/v1
+    kind: KubeSchedulerConfiguration
+    clientConnection: {}
+    leaderElection:
+      leaderElect: true
+      resourceName: {{ $schedulerName | quote }}
+      resourceNamespace: {{ include "kubex-automation-engine.namespace" . | quote }}
+    profiles:
+      - schedulerName: {{ $schedulerName | quote }}
+        plugins:
+          score:
+            enabled:
+              - name: NodeResourcesFit
+        pluginConfig:
+          - name: NodeResourcesFit
+            args:
+              scoringStrategy:
+                type: MostAllocated
+                resources:
+                  - name: cpu
+                    weight: 1
+                  - name: memory
+                    weight: 1
+    # Managed profile name for reference by operators and future adoption logic.
+    # {{ $profileName }}
+{{- end -}}

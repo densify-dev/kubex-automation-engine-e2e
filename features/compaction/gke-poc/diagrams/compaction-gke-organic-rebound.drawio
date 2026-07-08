@@ -1,0 +1,37 @@
+<mxfile host="app.diagrams.net" modified="2026-06-11T03:42:00.000Z" agent="OpenCode" version="24.7.17">
+  <diagram id="compaction-gke-organic-rebound" name="Organic Rebound">
+    <mxGraphModel dx="1440" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="start" value="Initial State&#xa;candidate-0 on light node" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#2E7D32;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="100" y="260" width="220" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="open" value="Open Candidate Eligibility&#xa;busy-a and busy-b become candidate-eligible" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#1565C0;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="380" y="260" width="240" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="descheduler" value="Run Descheduler&#xa;HighNodeUtilization decides candidate is evictable" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#6A1B9A;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="700" y="260" width="280" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="evict" value="Eviction Starts&#xa;candidate-0 deletion observed" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE4EC;strokeColor=#C2185B;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="1060" y="260" width="240" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="blockers" value="Busy-Node Blockers Already Active&#xa;high-priority blocker pods consume headroom before descheduler runs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#EF6C00;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="1380" y="260" width="280" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="reschedule" value="Candidate Recreated&#xa;busy nodes no longer have room" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#2E7D32;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="700" y="470" width="280" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="result" value="Final State&#xa;new candidate UID&#xa;candidate lands back on light node" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1F5FE;strokeColor=#0277BD;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1060" y="470" width="280" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="start" target="open"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e2" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="open" target="descheduler"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e3" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="descheduler" target="evict"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e4" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="evict" target="blockers"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e5" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="blockers" target="reschedule"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1520" y="420" /><mxPoint x="840" y="420" /></Array></mxGeometry></mxCell>
+        <mxCell id="e6" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="reschedule" target="result"><mxGeometry relative="1" as="geometry" /></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

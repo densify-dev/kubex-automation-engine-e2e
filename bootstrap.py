@@ -770,6 +770,7 @@ def _controller_values(config: BootstrapConfig) -> dict:
         "webhook": {"certManager": {"enabled": False}},
         "defaultAutomationStrategy": {"enabled": False},
         "globalConfiguration": {"recommendationReloadInterval": "1m"},
+        "compactionScheduler": {"enabled": True},
     }
     if config.recommendations_file and not config.deploy_kubex_stub:
         values["localRecommendations"] = {
