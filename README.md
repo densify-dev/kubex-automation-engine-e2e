@@ -179,13 +179,12 @@ pytest tests/test_gpu_kai.py -k 'gpu_resize_is_logged_by_the_controller' -v \
 e2e-testing/
 ├── bootstrap.py                     # Kind bootstrap and Helm installation helpers
 ├── conftest.py                      # CLI options, fixtures, K8sClients dataclass
-├── run-full-suite.sh                # Root wrapper for the main local entry point
+├── run-full-suite.sh                # Main local entry point
 ├── run-full-matrix-local.sh         # Root wrapper for the matrix runner
 ├── examples/                        # Vendored example manifests used by test_examples.py
 │   └── invalid/                     # Intentionally invalid examples that should be rejected
 ├── helpers.py                       # Constants, k8s utilities, manifest builders
 ├── scripts/
-│   ├── run-full-suite.sh            # Compatibility wrapper for the root entry point
 │   └── run-full-matrix-local.sh     # Build local images and run the full Kind version matrix
 └── tests/
     ├── test_health.py               # Controller pod, webhooks, metrics smoke tests
