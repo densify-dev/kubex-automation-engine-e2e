@@ -46,11 +46,9 @@ jobs:
         uses: azure/setup-kubectl@v4
 
       - name: Install Python test dependencies
-        working-directory: test/e2e
         run: pip install -r requirements.txt
 
       - name: Preflight live cluster
-        working-directory: test/e2e
         run: |
           set -euo pipefail
 
@@ -68,7 +66,6 @@ jobs:
           kubectl get crd staticpolicies.rightsizing.kubex.ai gpurebalancingpolicies.rightsizing.kubex.ai
 
       - name: Run live-cluster smoke
-        working-directory: test/e2e
         run: |
           python -m pytest -v -rs \
             --skip-kind-bootstrap \
@@ -78,7 +75,6 @@ jobs:
             tests/test_health.py
 
       - name: Run live-cluster rollback coverage
-        working-directory: test/e2e
         run: |
           python -m pytest -v -rs \
             --skip-kind-bootstrap \
