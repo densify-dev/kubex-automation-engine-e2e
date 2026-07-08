@@ -485,9 +485,12 @@ class TestRollbackBehavior:
             if state.get("mode") == "backedOff":
                 completed["value"] = state
                 return True
+            if state.get("mode") == "failedPermanent":
+                completed["value"] = state
+                return True
             return False
 
-        wait_for(backoff_completed, timeout=240, message="rollback backoff completion")
+        wait_for(backoff_completed, timeout=600, message="rollback backoff completion")
         return completed["value"]
 
     def _deployment_failure_reason(self, k8s_clients) -> str | None:

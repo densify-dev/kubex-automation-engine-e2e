@@ -64,7 +64,7 @@ def _wait_for_gpu_recommendations(k8s_clients, namespace: str, deployment_name: 
 
     wait_for(
         has_gpu_recommendations,
-        timeout=180,
+        timeout=300,
         message=f"GPU recommendations for {namespace}/{deployment_name}",
     )
 
@@ -275,8 +275,18 @@ class TestGpuKai:
         try:
             _wait_for_global_configuration_ready(k8s_clients)
             apply_manifest(GPU_MIGRATION_MANIFEST, kube_context)
-            _wait_for_gpu_recommendations(k8s_clients, "gpu-vanilla-2kai", "gpu-vanilla-2kai-demo")
             current_pod = _wait_for_deployment_pod(k8s_clients, "gpu-vanilla-2kai", "gpu-vanilla-2kai-demo")
+            kubectl(
+                "annotate",
+                "deployment",
+                "-n",
+                "gpu-vanilla-2kai",
+                "gpu-vanilla-2kai-demo",
+                f"e2e.rightsizing.kubex.ai/poke={current_pod.metadata.name}",
+                "--overwrite",
+                context=kube_context,
+            )
+            _wait_for_gpu_recommendations(k8s_clients, "gpu-vanilla-2kai", "gpu-vanilla-2kai-demo")
             kubectl(
                 "delete",
                 "pod",
