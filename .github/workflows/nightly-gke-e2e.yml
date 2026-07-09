@@ -53,7 +53,7 @@ jobs:
           set -euo pipefail
 
           kubectl cluster-info
-          kubectl get ns kubex kai-scheduler kubeai monitoring
+          kubectl get ns kubex kai-scheduler kubeai
           kubectl rollout status deploy/kubex-automation-engine -n kubex --timeout=5m
           kubectl get globalconfiguration global-config -o name
           kubectl get globalconfiguration global-config \
