@@ -59,7 +59,10 @@ class TestRollbackBehavior:
     }
 
     @pytest.fixture(autouse=True)
-    def setup_teardown(self, request, k8s_clients, kube_context):
+    def setup_teardown(self, request, k8s_clients, kube_context, supports_in_place_resize):
+        if not supports_in_place_resize:
+            pytest.skip("rollback resize tests require Kubernetes v1.35+ in-place resize support")
+
         suffix = request.node.name.replace("_", "-")[:20]
         self.STRATEGY_NAME = f"e2e-rollback-strategy-{suffix}"
         self.STATIC_POLICY_NAME = f"e2e-rollback-static-{suffix}"

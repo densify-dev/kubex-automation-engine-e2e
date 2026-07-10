@@ -397,9 +397,11 @@ class TestGpuKaiRollback:
     }
 
     @pytest.fixture(autouse=True)
-    def setup_teardown(self, request, k8s_clients, kube_context):
+    def setup_teardown(self, request, k8s_clients, kube_context, supports_in_place_resize):
         if kube_context.startswith("kind-"):
             pytest.skip("KAI rollback monitoring is not reliable on fake-GPU Kind clusters")
+        if not supports_in_place_resize:
+            pytest.skip("KAI rollback monitoring requires Kubernetes v1.35+ in-place resize support")
 
         suffix = request.node.name.replace("_", "-")[:20]
         self.strategy_name = f"{self.STRATEGY_NAME_PREFIX}-{suffix}"
