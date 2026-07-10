@@ -16,6 +16,7 @@ STATE = {
     "heartbeats": [],
     "mutations": [],
     "policies": [],
+    "states": [],
     "recommendations": [],
     "requests": [],
 }
@@ -139,6 +140,23 @@ class Handler(BaseHTTPRequestHandler):
         if parts and parts[-1] == "policy":
             _record("policies", _cluster_name_from_path(parts, "policy"), _read_json_body(self))
             self._send_json(HTTPStatus.OK, {"status": "ok"})
+            return
+        if parts and parts[-1] == "state":
+            payload = _read_json_body(self) or []
+            _record("states", _cluster_name_from_path(parts, "state"), payload)
+            self._send_json(
+                HTTPStatus.OK,
+                {
+                    "results": [
+                        {
+                            "containerId": item.get("containerId", ""),
+                            "outcome": "applied",
+                        }
+                        for item in payload
+                        if isinstance(item, dict)
+                    ]
+                },
+            )
             return
         if parts and parts[-1] == "heartbeat":
             cluster_name = _cluster_name_from_path(parts, "heartbeat")

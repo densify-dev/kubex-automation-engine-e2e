@@ -49,6 +49,8 @@ class BootstrapConfig:
     install_gpu_process_exporter: bool = False
     install_prometheus: bool = False
     cluster_name_value: str | None = None
+    secondary_cluster_enabled: bool = False
+    primary_cluster_name: str | None = None
     kubeai_chart_version: str | None = DEFAULT_KUBEAI_CHART_VERSION
     kubex_username: str = "dummy"
     kubex_epassword: str | None = None
@@ -379,6 +381,16 @@ def ensure_kubex_stub(config: BootstrapConfig) -> None:
         "-f",
         "-",
         input_text=json.dumps(service),
+    )
+    run(
+        "kubectl",
+        "--context",
+        config.kube_context,
+        "rollout",
+        "restart",
+        "deployment/kubex-stub",
+        "--namespace",
+        config.namespace,
     )
     run(
         "kubectl",
@@ -755,7 +767,9 @@ def _controller_values(config: BootstrapConfig) -> dict:
 
     kubex_epassword = config.kubex_epassword or os.environ.get("KUBEX_E2E_EPASSWORD")
     if not config.deploy_kubex_stub and not kubex_epassword:
-        raise RuntimeError("KUBEX_E2E_EPASSWORD must be set when deploy_kubex_stub is disabled")
+        raise RuntimeError(
+            "KUBEX_E2E_EPASSWORD must be set when deploy_kubex_stub is disabled"
+        )
 
     values = {
         "createSecrets": True,
@@ -768,9 +782,24 @@ def _controller_values(config: BootstrapConfig) -> dict:
             "epassword": kubex_epassword or "",
         },
         "webhook": {"certManager": {"enabled": False}},
+        "controllerManager": {},
         "defaultAutomationStrategy": {"enabled": False},
         "globalConfiguration": {"recommendationReloadInterval": "1m"},
     }
+    if config.secondary_cluster_enabled:
+        if not config.primary_cluster_name:
+            raise RuntimeError("primary_cluster_name must be set when secondary_cluster_enabled is true")
+        values["secondaryCluster"] = {
+            "enabled": True,
+            "primaryClusterName": config.primary_cluster_name or "",
+        }
+    if config.deploy_kubex_stub:
+        values["gateway"] = {"enabled": False}
+        values["controllerManager"]["extraEnv"] = [
+            {"name": "GATEWAY_URL", "value": f"http://{kubex_url_host}"},
+            {"name": "ENABLE_AUTOMATION_STATE", "value": "true"},
+            {"name": "AUTOMATION_STATE_INTERVAL", "value": "1m"},
+        ]
     if config.recommendations_file and not config.deploy_kubex_stub:
         values["localRecommendations"] = {
             "enabled": True,
@@ -814,7 +843,8 @@ def controller_values_file(config: BootstrapConfig):
 
 def install_controller(config: BootstrapConfig) -> None:
     if not (
-        _chart_is_local(config.helm_crds_chart) and _chart_is_local(config.helm_controller_chart)
+        _chart_is_local(config.helm_crds_chart)
+        and _chart_is_local(config.helm_controller_chart)
     ):
         run("helm", "repo", "add", "--force-update", config.helm_repo_name, config.helm_repo_url)
         run("helm", "repo", "update")
@@ -942,6 +972,9 @@ def parse_args() -> BootstrapConfig:
     parser.add_argument("--recommendations-file")
     parser.add_argument("--kubeai-chart-version", default=DEFAULT_KUBEAI_CHART_VERSION)
     parser.add_argument("--deploy-kubex-stub", action="store_true")
+    parser.add_argument("--kubex-cluster-name")
+    parser.add_argument("--secondary-cluster-enabled", action="store_true")
+    parser.add_argument("--primary-cluster-name")
     parser.add_argument("--kind-node-image", default="kindest/node:v1.35.0")
     parser.add_argument("--load-kind-images", action="store_true")
     parser.add_argument("--no-controller", action="store_true")
@@ -976,6 +1009,9 @@ def parse_args() -> BootstrapConfig:
         kubeai_chart_version=args.kubeai_chart_version,
         kind_node_image=args.kind_node_image,
         load_kind_images=args.load_kind_images,
+        cluster_name_value=args.kubex_cluster_name,
+        secondary_cluster_enabled=args.secondary_cluster_enabled,
+        primary_cluster_name=args.primary_cluster_name,
         install_gpu_suite=args.gpu_suite,
         install_kubeai=args.gpu_suite or args.install_kubeai,
         gpu_kind_config=args.gpu_kind_config,

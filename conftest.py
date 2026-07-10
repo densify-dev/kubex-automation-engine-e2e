@@ -110,6 +110,21 @@ def pytest_addoption(parser):
         help="Deploy the in-cluster mock Kubex stub and point the gateway sidecar at it",
     )
     parser.addoption(
+        "--kubex-cluster-name",
+        default=None,
+        help="Override the Kubex cluster name written into the chart values",
+    )
+    parser.addoption(
+        "--secondary-cluster-enabled",
+        action="store_true",
+        help="Enable the chart's secondary/DR recommendation mode",
+    )
+    parser.addoption(
+        "--primary-cluster-name",
+        default=None,
+        help="Primary cluster name used when secondary/DR mode is enabled",
+    )
+    parser.addoption(
         "--keep-kind-cluster",
         action="store_true",
         help="Keep the Kind cluster after the test session",
@@ -270,6 +285,9 @@ def kind_cluster(
             recommendations_file=request.config.getoption("--recommendations-file"),
             kubeai_chart_version=request.config.getoption("--kubeai-chart-version"),
             kind_node_image=request.config.getoption("--kind-node-image"),
+            cluster_name_value=request.config.getoption("--kubex-cluster-name"),
+            secondary_cluster_enabled=request.config.getoption("--secondary-cluster-enabled"),
+            primary_cluster_name=request.config.getoption("--primary-cluster-name"),
             install_gpu_suite=request.config.getoption("--gpu-suite"),
             install_kubeai=request.config.getoption("--gpu-suite")
             or request.config.getoption("--install-kubeai"),

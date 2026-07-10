@@ -12,6 +12,7 @@ from helpers import (
     get_deployment_pod,
     get_crd,
     get_mock_kubex_state,
+    get_pod_resources,
     proactive_policy_manifest,
     reset_mock_kubex_state,
     wait_for,
@@ -24,6 +25,7 @@ class TestKubexMock:
     POLICY_NAME = "e2e-kubex-mock-policy"
     DEPLOYMENT = "rightsizing-demo"
     GPU_DEPLOYMENT = "gpu-kubex-demo"
+    MULTI_CONTAINER_DEPLOYMENT = "multi-container-demo"
 
     @pytest.fixture(autouse=True)
     def setup_teardown(self, request, k8s_clients, kube_context, controller_namespace):
@@ -33,6 +35,7 @@ class TestKubexMock:
         reset_mock_kubex_state(kube_context, controller_namespace)
         delete_deployment(k8s_clients.apps, "default", self.DEPLOYMENT)
         delete_deployment(k8s_clients.apps, "default", self.GPU_DEPLOYMENT)
+        delete_deployment(k8s_clients.apps, "default", self.MULTI_CONTAINER_DEPLOYMENT)
         for plural, name in [
             ("proactivepolicies", self.POLICY_NAME),
             ("automationstrategies", self.STRATEGY_NAME),
@@ -72,6 +75,7 @@ class TestKubexMock:
 
         delete_deployment(k8s_clients.apps, "default", self.DEPLOYMENT)
         delete_deployment(k8s_clients.apps, "default", self.GPU_DEPLOYMENT)
+        delete_deployment(k8s_clients.apps, "default", self.MULTI_CONTAINER_DEPLOYMENT)
         for plural, name in [
             ("proactivepolicies", self.POLICY_NAME),
             ("automationstrategies", self.STRATEGY_NAME),
@@ -104,6 +108,69 @@ class TestKubexMock:
         gc = get_crd(k8s_clients.custom, "globalconfigurations", "global-config")
         reload_status = gc.get("status", {}).get("recommendationReload", {})
         assert reload_status.get("lastCount", 0) > 0
+
+    @pytest.mark.timeout(300)
+    def test_secondary_cluster_mode_fetches_primary_and_passive_clusters(
+        self, request, k8s_clients, kube_context, controller_namespace, kind_cluster_name
+    ):
+        if not request.config.getoption("--secondary-cluster-enabled"):
+            pytest.skip("secondary cluster assertions require --secondary-cluster-enabled")
+        if not request.config.getoption("--primary-cluster-name"):
+            pytest.skip("secondary cluster assertions require --primary-cluster-name")
+
+        def current_pod():
+            return get_deployment_pod(k8s_clients.core, "default", self.DEPLOYMENT)
+
+        def current_resources():
+            return get_pod_resources(k8s_clients.core, "default", current_pod().metadata.name)
+
+        def recommendation_applied():
+            pod = current_pod()
+            resources = current_resources()
+            state = get_mock_kubex_state(kube_context, controller_namespace)
+            recommendation_clusters = {entry.get("clusterName") for entry in state["recommendations"]}
+            return (
+                pod.metadata.deletion_timestamp is None
+                and resources["demo"]["requests"].get("cpu") == "250m"
+                and resources["demo"]["requests"].get("memory") == "256Mi"
+                and resources["demo"]["limits"].get("cpu") == "400m"
+                and resources["demo"]["limits"].get("memory") == "512Mi"
+                and request.config.getoption("--primary-cluster-name") in recommendation_clusters
+                and kind_cluster_name in recommendation_clusters
+            )
+
+        k8s_clients.custom.create_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            "default",
+            "automationstrategies",
+            automation_strategy_manifest(self.STRATEGY_NAME, "default"),
+        )
+        k8s_clients.custom.create_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            "default",
+            "proactivepolicies",
+            proactive_policy_manifest(self.POLICY_NAME, "default", self.STRATEGY_NAME, 365),
+        )
+        create_multi_container_deployment(
+            k8s_clients.apps,
+            "default",
+            self.DEPLOYMENT,
+            containers=[
+                {
+                    "name": "demo",
+                    "requests": {"cpu": "100m", "memory": "128Mi"},
+                    "limits": {"cpu": "200m", "memory": "256Mi"},
+                }
+            ],
+        )
+
+        wait_for(
+            recommendation_applied,
+            timeout=300,
+            message="secondary/DR recommendation application for rightsizing-demo",
+        )
 
     @pytest.mark.timeout(300)
     def test_mock_receives_heartbeat_policy_and_mutations(
@@ -238,3 +305,62 @@ class TestKubexMock:
         mutation = captured["payload"]
         assert mutation is not None
         assert mutation["policyName"] == f"ProactivePolicy/{self.POLICY_NAME}"
+
+    @pytest.mark.timeout(300)
+    def test_mock_receives_automation_state(self, k8s_clients, kube_context, controller_namespace):
+        captured = {"state": None}
+
+        k8s_clients.custom.create_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            "default",
+            "automationstrategies",
+            automation_strategy_manifest(self.STRATEGY_NAME, "default"),
+        )
+        k8s_clients.custom.create_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            "default",
+            "proactivepolicies",
+            proactive_policy_manifest(self.POLICY_NAME, "default", self.STRATEGY_NAME, 365),
+        )
+        create_multi_container_deployment(
+            k8s_clients.apps,
+            "default",
+            self.MULTI_CONTAINER_DEPLOYMENT,
+            containers=[
+                {
+                    "name": "api",
+                    "requests": {"cpu": "200m", "memory": "256Mi"},
+                    "limits": {"cpu": "400m", "memory": "512Mi"},
+                },
+                {
+                    "name": "worker",
+                    "requests": {"cpu": "150m", "memory": "128Mi"},
+                    "limits": {"cpu": "300m", "memory": "256Mi"},
+                },
+            ],
+        )
+
+        def automation_state_uploaded():
+            state = get_mock_kubex_state(kube_context, controller_namespace)
+            captured["state"] = state
+            return len(state.get("states", [])) > 0
+
+        wait_for(
+            automation_state_uploaded,
+            timeout=180,
+            message="automation state uploads to Kubex mock",
+        )
+
+        state = captured["state"]
+        assert state is not None
+        states_payload = state["states"][-1]["payload"]
+        assert isinstance(states_payload, list)
+        api_state = next(
+            item for item in states_payload if item.get("containerId") == "container-902"
+        )
+        assert any(
+            reason.get("reasonCode") == "kubex-automation-disabled"
+            for reason in api_state["reasons"]
+        )
