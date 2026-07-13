@@ -34,6 +34,7 @@ class TestStrategyScopeBehavior:
         reason = skip_reason(self.MANIFEST_PATH, kube_context)
         if reason:
             pytest.skip(reason)
+        delete_manifest_in_reverse(self.MANIFEST_PATH, kube_context)
         apply_manifest(self.MANIFEST_PATH, kube_context)
         yield
         delete_manifest_in_reverse(self.MANIFEST_PATH, kube_context)
