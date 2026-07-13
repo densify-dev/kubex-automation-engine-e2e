@@ -307,6 +307,16 @@ def reset_mock_kubex_state(kube_context: str, namespace: str) -> None:
     mock_kubex_request(kube_context, namespace, "POST", "/debug/reset", payload={})
 
 
+def set_mock_kubex_container_id_remap(kube_context: str, namespace: str, enabled: bool) -> None:
+    mock_kubex_request(
+        kube_context,
+        namespace,
+        "POST",
+        "/debug/remap-container-ids",
+        payload={"enabled": enabled},
+    )
+
+
 def get_mock_kubex_state(kube_context: str, namespace: str) -> dict[str, Any]:
     state = mock_kubex_request(kube_context, namespace, "GET", "/debug/state")
     if not isinstance(state, dict):

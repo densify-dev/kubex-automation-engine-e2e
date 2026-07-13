@@ -15,6 +15,7 @@ from helpers import (
     get_pod_resources,
     proactive_policy_manifest,
     reset_mock_kubex_state,
+    set_mock_kubex_container_id_remap,
     wait_for,
 )
 
@@ -118,59 +119,73 @@ class TestKubexMock:
         if not request.config.getoption("--primary-cluster-name"):
             pytest.skip("secondary cluster assertions require --primary-cluster-name")
 
-        def current_pod():
-            return get_deployment_pod(k8s_clients.core, "default", self.DEPLOYMENT)
+        expected_container_id = f"{kind_cluster_name}-container-789"
+        try:
+            set_mock_kubex_container_id_remap(kube_context, controller_namespace, True)
 
-        def current_resources():
-            return get_pod_resources(k8s_clients.core, "default", current_pod().metadata.name)
+            def current_pod():
+                return get_deployment_pod(k8s_clients.core, "default", self.DEPLOYMENT)
 
-        def recommendation_applied():
-            pod = current_pod()
-            resources = current_resources()
-            state = get_mock_kubex_state(kube_context, controller_namespace)
-            recommendation_clusters = {entry.get("clusterName") for entry in state["recommendations"]}
-            return (
-                pod.metadata.deletion_timestamp is None
-                and resources["demo"]["requests"].get("cpu") == "250m"
-                and resources["demo"]["requests"].get("memory") == "256Mi"
-                and resources["demo"]["limits"].get("cpu") == "400m"
-                and resources["demo"]["limits"].get("memory") == "512Mi"
-                and request.config.getoption("--primary-cluster-name") in recommendation_clusters
-                and kind_cluster_name in recommendation_clusters
+            def current_resources():
+                return get_pod_resources(k8s_clients.core, "default", current_pod().metadata.name)
+
+            def recommendation_applied():
+                pod = current_pod()
+                resources = current_resources()
+                state = get_mock_kubex_state(kube_context, controller_namespace)
+                recommendation_clusters = {entry.get("clusterName") for entry in state["recommendations"]}
+                state_payloads = [upload.get("payload") or [] for upload in state.get("states", [])]
+                remapped_container_ids = {
+                    item.get("containerId")
+                    for payload in state_payloads
+                    for item in payload
+                    if isinstance(item, dict)
+                }
+                return (
+                    pod.metadata.deletion_timestamp is None
+                    and resources["demo"]["requests"].get("cpu") == "250m"
+                    and resources["demo"]["requests"].get("memory") == "256Mi"
+                    and resources["demo"]["limits"].get("cpu") == "400m"
+                    and resources["demo"]["limits"].get("memory") == "512Mi"
+                    and request.config.getoption("--primary-cluster-name") in recommendation_clusters
+                    and kind_cluster_name in recommendation_clusters
+                    and expected_container_id in remapped_container_ids
+                )
+
+            k8s_clients.custom.create_namespaced_custom_object(
+                GROUP,
+                VERSION,
+                "default",
+                "automationstrategies",
+                automation_strategy_manifest(self.STRATEGY_NAME, "default"),
+            )
+            k8s_clients.custom.create_namespaced_custom_object(
+                GROUP,
+                VERSION,
+                "default",
+                "proactivepolicies",
+                proactive_policy_manifest(self.POLICY_NAME, "default", self.STRATEGY_NAME, 365),
+            )
+            create_multi_container_deployment(
+                k8s_clients.apps,
+                "default",
+                self.DEPLOYMENT,
+                containers=[
+                    {
+                        "name": "demo",
+                        "requests": {"cpu": "100m", "memory": "128Mi"},
+                        "limits": {"cpu": "200m", "memory": "256Mi"},
+                    }
+                ],
             )
 
-        k8s_clients.custom.create_namespaced_custom_object(
-            GROUP,
-            VERSION,
-            "default",
-            "automationstrategies",
-            automation_strategy_manifest(self.STRATEGY_NAME, "default"),
-        )
-        k8s_clients.custom.create_namespaced_custom_object(
-            GROUP,
-            VERSION,
-            "default",
-            "proactivepolicies",
-            proactive_policy_manifest(self.POLICY_NAME, "default", self.STRATEGY_NAME, 365),
-        )
-        create_multi_container_deployment(
-            k8s_clients.apps,
-            "default",
-            self.DEPLOYMENT,
-            containers=[
-                {
-                    "name": "demo",
-                    "requests": {"cpu": "100m", "memory": "128Mi"},
-                    "limits": {"cpu": "200m", "memory": "256Mi"},
-                }
-            ],
-        )
-
-        wait_for(
-            recommendation_applied,
-            timeout=300,
-            message="secondary/DR recommendation application for rightsizing-demo",
-        )
+            wait_for(
+                recommendation_applied,
+                timeout=300,
+                message="secondary/DR recommendation application for rightsizing-demo",
+            )
+        finally:
+            set_mock_kubex_container_id_remap(kube_context, controller_namespace, False)
 
     @pytest.mark.timeout(300)
     def test_mock_receives_heartbeat_policy_and_mutations(

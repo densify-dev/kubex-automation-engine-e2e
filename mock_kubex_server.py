@@ -20,6 +20,7 @@ STATE = {
     "recommendations": [],
     "requests": [],
 }
+REMAP_CONTAINER_IDS = False
 
 
 def _fixture_path() -> Path:
@@ -67,6 +68,24 @@ def _cluster_name_from_path(parts: list[str], marker: str) -> str:
     return parts[idx - 1]
 
 
+def _recommendations_for_cluster(cluster_name: str) -> list[dict]:
+    fixture_path = _fixture_path()
+    if not fixture_path.is_file():
+        return []
+
+    recommendations = json.loads(fixture_path.read_text(encoding="utf-8"))
+    if not REMAP_CONTAINER_IDS or cluster_name == "local-cluster":
+        return recommendations
+
+    for item in recommendations:
+        if not isinstance(item, dict):
+            continue
+        if item.get("ContainerId"):
+            item["ContainerId"] = f"{cluster_name}-{item['ContainerId']}"
+        item["Cluster"] = cluster_name
+    return recommendations
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "kubex-mock/1.0"
 
@@ -101,12 +120,9 @@ class Handler(BaseHTTPRequestHandler):
 
         parts = path.strip("/").split("/")
         if parts and parts[-1] == "containers":
-            _record("recommendations", _cluster_name_from_path(parts, "containers"), None)
-            fixture_path = _fixture_path()
-            if not fixture_path.is_file():
-                self._send_json(HTTPStatus.OK, [])
-                return
-            self._send_json(HTTPStatus.OK, json.loads(fixture_path.read_text(encoding="utf-8")))
+            cluster_name = _cluster_name_from_path(parts, "containers")
+            _record("recommendations", cluster_name, None)
+            self._send_json(HTTPStatus.OK, _recommendations_for_cluster(cluster_name))
             return
 
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
@@ -129,6 +145,12 @@ class Handler(BaseHTTPRequestHandler):
             with STATE_LOCK:
                 for key in STATE:
                     STATE[key].clear()
+            self._send_empty(HTTPStatus.NO_CONTENT)
+            return
+        if path == "/debug/remap-container-ids":
+            payload = _read_json_body(self) or {}
+            global REMAP_CONTAINER_IDS
+            REMAP_CONTAINER_IDS = bool(payload.get("enabled", False))
             self._send_empty(HTTPStatus.NO_CONTENT)
             return
 

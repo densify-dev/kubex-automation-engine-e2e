@@ -241,6 +241,7 @@ e2e-testing/
 - `test_example_behavior.py` now waits for both `Deployment` and `StatefulSet` workloads declared in vendored examples to become ready.
 - `test_strimzipodset.py` exercises both `core.strimzi.io/v1` and `core.strimzi.io/v1beta2` using a minimal CRD fixture plus synthetic owned Pods so the controller follows the real owned-pod path.
 - The local suite can deploy an in-cluster Python mock Kubex service, point the controller directly at it for stub-backed runs, feed recommendations from `examples/recommendations.json`, enable automation-state uploads for the test release, and assert heartbeat/policy/mutation/automation-state uploads end to end.
+- When `--secondary-cluster-enabled` is set, the mock rewrites recommendation container IDs per cluster so the secondary-mode test can prove the controller remaps primary recommendations onto the passive cluster IDs.
 - The full-suite runner verifies install through the functional tests, then uninstalls the controller Helm release and `kubex-crds` and verifies their removal.
 - The bootstrap flow installs `metrics-server`, `KEDA`, and VPA by default. Set `WITH_KEDA=false`, `WITH_VPA=false`, or `WITH_METRICS_SERVER=false` to skip individual addons. The CI matrix uses the full stack plus GPU coverage on v1.35.0 and metrics-server plus GPU coverage on v1.32.0 (`WITH_KEDA=false WITH_VPA=false`).
 - The default full-suite runner is serial because many tests mutate shared cluster state and vendored example resources; set `PYTEST_WORKERS` only after isolating those tests.
