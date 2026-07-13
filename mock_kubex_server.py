@@ -74,16 +74,22 @@ def _recommendations_for_cluster(cluster_name: str) -> list[dict]:
         return []
 
     recommendations = json.loads(fixture_path.read_text(encoding="utf-8"))
-    if not REMAP_CONTAINER_IDS or cluster_name == "local-cluster":
+    with STATE_LOCK:
+        remap_container_ids = REMAP_CONTAINER_IDS
+    if not remap_container_ids or cluster_name == "local-cluster":
         return recommendations
 
+    remapped: list[dict] = []
     for item in recommendations:
         if not isinstance(item, dict):
+            remapped.append(item)
             continue
-        if item.get("ContainerId"):
-            item["ContainerId"] = f"{cluster_name}-{item['ContainerId']}"
-        item["Cluster"] = cluster_name
-    return recommendations
+        copy = dict(item)
+        if copy.get("ContainerId"):
+            copy["ContainerId"] = f"{cluster_name}-{copy['ContainerId']}"
+        copy["Cluster"] = cluster_name
+        remapped.append(copy)
+    return remapped
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -128,6 +134,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802
+        global REMAP_CONTAINER_IDS
         parsed = urlparse(self.path)
         path = parsed.path
         _record_request("POST", path)
@@ -145,12 +152,13 @@ class Handler(BaseHTTPRequestHandler):
             with STATE_LOCK:
                 for key in STATE:
                     STATE[key].clear()
+                REMAP_CONTAINER_IDS = False
             self._send_empty(HTTPStatus.NO_CONTENT)
             return
         if path == "/debug/remap-container-ids":
             payload = _read_json_body(self) or {}
-            global REMAP_CONTAINER_IDS
-            REMAP_CONTAINER_IDS = bool(payload.get("enabled", False))
+            with STATE_LOCK:
+                REMAP_CONTAINER_IDS = bool(payload.get("enabled", False))
             self._send_empty(HTTPStatus.NO_CONTENT)
             return
 

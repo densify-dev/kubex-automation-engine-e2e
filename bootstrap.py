@@ -791,7 +791,7 @@ def _controller_values(config: BootstrapConfig) -> dict:
             raise RuntimeError("primary_cluster_name must be set when secondary_cluster_enabled is true")
         values["secondaryCluster"] = {
             "enabled": True,
-            "primaryClusterName": config.primary_cluster_name or "",
+            "primaryClusterName": config.primary_cluster_name,
         }
     if config.deploy_kubex_stub:
         values["gateway"] = {"enabled": False}

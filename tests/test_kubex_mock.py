@@ -1,8 +1,11 @@
 """Tests: in-cluster Kubex mock receives recommendations and gateway uploads."""
 
+import json
+
 import pytest
 from kubernetes.client.rest import ApiException
 
+from example_utils import EXAMPLES_ROOT
 from helpers import (
     GROUP,
     VERSION,
@@ -119,7 +122,13 @@ class TestKubexMock:
         if not request.config.getoption("--primary-cluster-name"):
             pytest.skip("secondary cluster assertions require --primary-cluster-name")
 
-        expected_container_id = f"{kind_cluster_name}-container-789"
+        recommendations = json.loads((EXAMPLES_ROOT / "recommendations.json").read_text(encoding="utf-8"))
+        demo_recommendation = next(
+            item
+            for item in recommendations["results"]
+            if item.get("PodOwnerName") == self.DEPLOYMENT and item.get("Container") == "demo"
+        )
+        expected_container_id = f"{kind_cluster_name}-{demo_recommendation['ContainerId']}"
         try:
             set_mock_kubex_container_id_remap(kube_context, controller_namespace, True)
 
