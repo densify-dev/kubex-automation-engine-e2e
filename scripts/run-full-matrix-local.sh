@@ -5,12 +5,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 E2E_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CONTROLLER_ROOT="$(cd "${E2E_ROOT}/../.." && pwd)"
 
+LATEST_VERSION="${LATEST_VERSION:-v1.36.0}"
 NEWER_VERSION="${NEWER_VERSION:-v1.35.0}"
 OLDER_VERSION="${OLDER_VERSION:-v1.32.0}"
 
+LATEST_CLUSTER_NAME="${LATEST_CLUSTER_NAME:-e2e-136}"
 NEWER_CLUSTER_NAME="${NEWER_CLUSTER_NAME:-e2e-135}"
 OLDER_CLUSTER_NAME="${OLDER_CLUSTER_NAME:-e2e-132}"
 
+LATEST_NODE_IMAGE="${LATEST_NODE_IMAGE:-kindest/node:${LATEST_VERSION}}"
 NEWER_NODE_IMAGE="${NEWER_NODE_IMAGE:-kindest/node:${NEWER_VERSION}}"
 OLDER_NODE_IMAGE="${OLDER_NODE_IMAGE:-kindest/node:${OLDER_VERSION}}"
 
@@ -81,6 +84,8 @@ echo "==> Building local controller images"
 make -C "${CONTROLLER_ROOT}" docker-build docker-build-cleanup IMG="${IMG}" CLEANUP_IMG="${CLEANUP_IMG}"
 
 echo "==> Running the full Kind version matrix"
+reset_cluster "${LATEST_CLUSTER_NAME}"
+run_suite "kubernetes-${LATEST_VERSION}" "${LATEST_CLUSTER_NAME}" "${LATEST_NODE_IMAGE}" "true" "true" "true" "$(normalize_target "$1")"
 reset_cluster "${NEWER_CLUSTER_NAME}"
 if [[ $# -gt 0 ]]; then
   run_suite "kubernetes-${NEWER_VERSION}" "${NEWER_CLUSTER_NAME}" "${NEWER_NODE_IMAGE}" "true" "true" "true" "true" "${E2E_ROOT}/features/gpu/kind-config.yaml" "$(normalize_target "$1")"

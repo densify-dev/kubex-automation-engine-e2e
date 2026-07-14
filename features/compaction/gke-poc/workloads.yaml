@@ -1,0 +1,156 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: compaction-poc
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: compaction-rebound-high
+value: 1000000
+preemptionPolicy: Never
+globalDefault: false
+description: Non-preempting blockers for the organic rebound compaction test.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: busy-a
+  namespace: compaction-poc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: busy-a
+  template:
+    metadata:
+      labels:
+        app: busy-a
+    spec:
+      nodeSelector:
+        scheduling.kubex.ai/role: busy-a
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.10
+          resources:
+            requests:
+              cpu: "700m"
+              memory: "1024Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: busy-b
+  namespace: compaction-poc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: busy-b
+  template:
+    metadata:
+      labels:
+        app: busy-b
+    spec:
+      nodeSelector:
+        scheduling.kubex.ai/role: busy-b
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.10
+          resources:
+            requests:
+              cpu: "700m"
+              memory: "1024Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rebound-busy-a
+  namespace: compaction-poc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rebound-busy-a
+  template:
+    metadata:
+      labels:
+        app: rebound-busy-a
+    spec:
+      priorityClassName: compaction-rebound-high
+      nodeSelector:
+        scheduling.kubex.ai/role: busy-a
+        scheduling.kubex.ai/rebound-enabled: "true"
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.10
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "256Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rebound-busy-b
+  namespace: compaction-poc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rebound-busy-b
+  template:
+    metadata:
+      labels:
+        app: rebound-busy-b
+    spec:
+      priorityClassName: compaction-rebound-high
+      nodeSelector:
+        scheduling.kubex.ai/role: busy-b
+        scheduling.kubex.ai/rebound-enabled: "true"
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.10
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: candidate
+  namespace: compaction-poc
+spec:
+  clusterIP: None
+  selector:
+    app: candidate
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: candidate
+  namespace: compaction-poc
+spec:
+  serviceName: candidate
+  replicas: 1
+  updateStrategy:
+    type: OnDelete
+  selector:
+    matchLabels:
+      app: candidate
+  template:
+    metadata:
+      labels:
+        app: candidate
+        scheduling.kubex.ai/binpack: "true"
+    spec:
+      nodeSelector:
+        scheduling.kubex.ai/candidate-eligible: "true"
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.10
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"

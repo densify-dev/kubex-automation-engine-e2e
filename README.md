@@ -27,7 +27,7 @@ The framework assumes it can create and manage its own Kind cluster for a test r
 
 GPU coverage can be folded into the standard suite by enabling `GPU_SUITE=true` and pointing `GPU_KIND_CONFIG` at `test/e2e/features/gpu/kind-config.yaml`.
 
-The CI matrix runs two variants, and both include GPU coverage: **v1.35.0** with the full stack and **v1.32.0** with metrics-server only (`WITH_KEDA=false WITH_VPA=false`).
+The CI matrix runs three variants, all including GPU coverage: **v1.36.0** with the full stack, **v1.35.0** with the full stack, and **v1.32.0** with metrics-server only (`WITH_KEDA=false WITH_VPA=false`).
 
 GPU coverage runs through the standard suite when `GPU_SUITE=true`; there is no separate GPU-only lane.
 
@@ -66,9 +66,9 @@ WITH_VPA=true \
 # Keep the cluster for inspection
 KEEP_KIND_CLUSTER=1 ./run-full-suite.sh
 
-# Run the full suite against Kubernetes v1.35.0 (full stack) and
-# v1.32.0 (metrics-server only)
-./run-full-matrix-local.sh
+# Run the full suite against Kubernetes v1.36.0 and v1.35.0 (full stack)
+# plus v1.32.0 (metrics-server only)
+./scripts/run-full-matrix-local.sh
 
 # The local suite uses an in-cluster mock Kubex upstream by default.
 # Disable it if you want the older local recommendations file flow.
@@ -84,6 +84,14 @@ KEEP_KIND_CLUSTER=1 ./run-full-matrix-local.sh tests/test_policies.py::TestProac
 
 
 # Pin a single run to a specific Kind node image
+NODE_IMAGE=kindest/node:v1.36.0 \
+./scripts/run-full-suite.sh
+
+# Use an existing cluster without bootstrapping a new Kind environment
+pytest tests/ -v \
+  --skip-kind-bootstrap \
+  --kube-context kind-e2e
+
 NODE_IMAGE=kindest/node:v1.35.0 \
 ./run-full-suite.sh
 
@@ -243,7 +251,8 @@ e2e-testing/
 - The local suite can deploy an in-cluster Python mock Kubex service, point the controller directly at it for stub-backed runs, feed recommendations from `examples/recommendations.json`, enable automation-state uploads for the test release, and assert heartbeat/policy/mutation/automation-state uploads end to end.
 - When `--secondary-cluster-enabled` is set, the mock rewrites recommendation container IDs per cluster so the secondary-mode test can prove the controller remaps primary recommendations onto the passive cluster IDs.
 - The full-suite runner verifies install through the functional tests, then uninstalls the controller Helm release and `kubex-crds` and verifies their removal.
-- The bootstrap flow installs `metrics-server`, `KEDA`, and VPA by default. Set `WITH_KEDA=false`, `WITH_VPA=false`, or `WITH_METRICS_SERVER=false` to skip individual addons. The CI matrix uses the full stack plus GPU coverage on v1.35.0 and metrics-server plus GPU coverage on v1.32.0 (`WITH_KEDA=false WITH_VPA=false`).
+- The bootstrap flow installs `metrics-server`, `KEDA`, and VPA by default. Set `WITH_KEDA=false`, `WITH_VPA=false`, or `WITH_METRICS_SERVER=false` to skip individual addons. The CI matrix uses the full stack plus GPU coverage on v1.36.0 and v1.35.0 and metrics-server plus GPU coverage on v1.32.0 (`WITH_KEDA=false WITH_VPA=false`).
+- The Helm-managed compaction scheduler defaults its image tag from the cluster version unless `compactionScheduler.image.tag` or `compactionScheduler.kubernetesVersionOverride` is set explicitly.
 - The default full-suite runner is serial because many tests mutate shared cluster state and vendored example resources; set `PYTEST_WORKERS` only after isolating those tests.
 - Tests can use `supports_in_place_resize` as a coarse version check, but behavior-sensitive tests should gate on the live `actual_in_place_resize_support` probe fixture.
 - Test workloads are created in `--test-namespace` and cleaned up after each test class via `autouse` fixtures.

@@ -94,6 +94,20 @@ spec:
         {{- end }}
         - name: IMAGE_TAG
           value: {{ .Values.image.tag | quote }}
+        - name: COMPACTION_SCHEDULER_IMAGE_REPOSITORY
+          value: {{ .Values.compactionScheduler.image.repository | quote }}
+        - name: COMPACTION_DESCHEDULER_IMAGE
+          value: {{ printf "%s:%s" .Values.compactionDescheduler.image.repository .Values.compactionDescheduler.image.tag | quote }}
+        - name: COMPACTION_DESCHEDULER_INTERVAL
+          value: {{ .Values.compactionDescheduler.interval | quote }}
+        - name: COMPACTION_DESCHEDULER_PULL_POLICY
+          value: {{ .Values.compactionDescheduler.image.pullPolicy | quote }}
+        - name: COMPACTION_DESCHEDULER_RESOURCE_PREFIX
+          value: {{ printf "%s-compaction-descheduler" (include "kubex-automation-engine.fullname" .) | quote }}
+        - name: COMPACTION_DESCHEDULER_SERVICE_ACCOUNT_NAME
+          value: {{ printf "%s-compaction-descheduler" (include "kubex-automation-engine.fullname" .) | quote }}
+        - name: COMPACTION_DESCHEDULER_RESOURCES_JSON
+          value: {{ toJson .Values.compactionDescheduler.resources | quote }}
         - name: POD_NAMESPACE
           valueFrom:
             fieldRef:

@@ -1,0 +1,37 @@
+<mxfile host="app.diagrams.net" modified="2026-06-11T03:30:00.000Z" agent="OpenCode" version="24.7.17">
+  <diagram id="compaction-gke-single-pass" name="Single Pass">
+    <mxGraphModel dx="1440" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="s1" value="1. Label Nodes&#xa;1 light node&#xa;2 busy nodes" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#2E7D32;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="80" y="220" width="220" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="s2" value="2. Apply Workloads&#xa;candidate-0 lands on light node" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#1565C0;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="360" y="220" width="220" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="s3" value="3. Open Busy Nodes&#xa;mark busy-a and busy-b as candidate-eligible" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#EF6C00;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="640" y="220" width="250" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="s4" value="4. Run Descheduler Once&#xa;HighNodeUtilization" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#6A1B9A;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="950" y="220" width="220" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="s5" value="5. Verify Move&#xa;candidate-0 moves to busy-a or busy-b" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1F5FE;strokeColor=#0277BD;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1230" y="220" width="240" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="s1" target="s2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="s2" target="s3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="s3" target="s4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="s4" target="s5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
