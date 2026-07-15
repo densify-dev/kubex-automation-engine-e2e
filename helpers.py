@@ -380,6 +380,8 @@ def create_deployment(
     resize_policy: list[client.V1ContainerResizePolicy] | None = None,
     pod_labels: dict[str, str] | None = None,
     pod_annotations: dict[str, str] | None = None,
+    node_selector: dict[str, str] | None = None,
+    tolerations: list[client.V1Toleration] | None = None,
 ) -> client.V1Deployment:
     """Create a minimal Deployment for testing resource mutation."""
     labels = {"app": name}
@@ -393,6 +395,8 @@ def create_deployment(
             template=client.V1PodTemplateSpec(
                 metadata=client.V1ObjectMeta(labels=labels, annotations=pod_annotations),
                 spec=client.V1PodSpec(
+                    node_selector=node_selector,
+                    tolerations=tolerations,
                     containers=[
                         client.V1Container(
                             name="app",
@@ -679,6 +683,21 @@ def get_deployment_resources(apps: client.AppsV1Api, namespace: str, name: str) 
 def get_deployment(apps: client.AppsV1Api, namespace: str, name: str) -> client.V1Deployment:
     """Fetch a deployment."""
     return apps.read_namespaced_deployment(name, namespace)
+
+
+def wait_for_deployment_ready(
+    apps: client.AppsV1Api, namespace: str, name: str, min_replicas: int = 1
+) -> None:
+    """Wait until a Deployment reports the desired number of ready and updated replicas."""
+
+    def ready():
+        deployment = get_deployment(apps, namespace, name)
+        status = deployment.status
+        if status is None:
+            return False
+        return (status.ready_replicas or 0) >= min_replicas and (status.updated_replicas or 0) >= min_replicas
+
+    wait_for(ready, timeout=180, message=f"deployment {namespace}/{name} readiness")
 
 
 def get_stateful_set(apps: client.AppsV1Api, namespace: str, name: str) -> client.V1StatefulSet:

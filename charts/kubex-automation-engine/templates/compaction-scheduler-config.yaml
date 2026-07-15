@@ -4,7 +4,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "kubex-automation-engine.fullname" . }}-compaction-scheduler-config
+  name: kubex-compaction-scheduler-config
   labels:
     {{- include "kubex-automation-engine.labels" . | nindent 4 }}
     app.kubernetes.io/component: compaction-scheduler

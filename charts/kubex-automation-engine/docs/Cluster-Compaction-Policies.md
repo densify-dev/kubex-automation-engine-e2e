@@ -125,7 +125,7 @@ status:
 - Suppression only blocks descheduler disruption; it does not disable workload participation in the scheduler.
 - The controller now also reads `COMPACTION_SCHEDULER_IMAGE_REPOSITORY` from its Deployment, then reconciles the scheduler ConfigMap and image tag at runtime when active policies use the Kubex-managed scheduler.
 - External scheduler mode is workload targeting only; Kubex does not manage scheduler runtime/config for those policies.
-- The compaction scheduler ConfigMap is labeled with `app.kubernetes.io/component: compaction-scheduler` so the controller can patch it without knowing the Helm release name.
-- The controller also reads `COMPACTION_DESCHEDULER_*` settings from its Deployment and creates one descheduler Deployment/ConfigMap per active descheduler policy.
+- The compaction scheduler ConfigMap is a fixed name: `kubex-compaction-scheduler-config`.
+- The controller also reads `COMPACTION_DESCHEDULER_*` settings from its Deployment and creates one descheduler Deployment/ConfigMap per active descheduler policy using the fixed `kubex-compaction-descheduler` prefix.
 - A policy with `spec.descheduler.enabled: true` but no managed workloads does not get a descheduler Deployment.
 - OpenShift compatibility settings apply to the Kubex-managed scheduler Deployment; external scheduler mode does not create a Kubex scheduler workload.

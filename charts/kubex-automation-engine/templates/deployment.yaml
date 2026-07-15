@@ -103,9 +103,9 @@ spec:
         - name: COMPACTION_DESCHEDULER_PULL_POLICY
           value: {{ .Values.compactionDescheduler.image.pullPolicy | quote }}
         - name: COMPACTION_DESCHEDULER_RESOURCE_PREFIX
-          value: {{ printf "%s-compaction-descheduler" (include "kubex-automation-engine.fullname" .) | quote }}
+          value: "kubex-compaction-descheduler"
         - name: COMPACTION_DESCHEDULER_SERVICE_ACCOUNT_NAME
-          value: {{ printf "%s-compaction-descheduler" (include "kubex-automation-engine.fullname" .) | quote }}
+          value: "kubex-compaction-descheduler"
         - name: COMPACTION_DESCHEDULER_RESOURCES_JSON
           value: {{ toJson .Values.compactionDescheduler.resources | quote }}
         - name: POD_NAMESPACE

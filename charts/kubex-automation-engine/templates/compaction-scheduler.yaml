@@ -1,7 +1,7 @@
 {{- if .Values.compactionScheduler.enabled -}}
 {{- include "kubex-automation-engine.validateCompactionSchedulerVersion" . -}}
-{{- $resourceName := printf "%s-compaction-scheduler" (include "kubex-automation-engine.fullname" .) -}}
-{{- $configName := printf "%s-compaction-scheduler-config" (include "kubex-automation-engine.fullname" .) -}}
+{{- $resourceName := "kubex-compaction-scheduler" -}}
+{{- $configName := "kubex-compaction-scheduler-config" -}}
 {{- $imageTag := include "kubex-automation-engine.compactionSchedulerImageTag" . -}}
 {{- $openshiftFsGroupConfigured := and .Values.openshift.enabled (not (empty .Values.openshift.fsGroup)) -}}
 {{- $hasPodFsGroup := hasKey .Values.compactionScheduler.podSecurityContext "fsGroup" -}}

@@ -1,5 +1,5 @@
 {{- if .Values.compactionDescheduler.enabled -}}
-{{- $resourceName := printf "%s-compaction-descheduler" (include "kubex-automation-engine.fullname" .) -}}
+{{- $resourceName := "kubex-compaction-descheduler" -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
