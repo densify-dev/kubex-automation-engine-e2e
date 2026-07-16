@@ -187,8 +187,10 @@ spec:
                     minimum: 0
                     type: integer
                   nodeSelector:
-                    description: nodeSelector narrows this policy to nodes with matching
-                      labels.
+                    description: |-
+                      nodeSelector narrows this policy to nodes with matching labels.
+                      matchExpressions support In/NotIn/Exists/DoesNotExist, and values in In/NotIn
+                      may include shell-style "*" wildcards.
                     properties:
                       matchExpressions:
                         description: matchExpressions is a list of label selector

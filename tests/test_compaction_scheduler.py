@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import time
-
 import pytest
 from kubernetes.client.rest import ApiException
 
@@ -11,12 +9,16 @@ from helpers import (
     GROUP,
     VERSION,
     create_deployment,
+    create_stateful_set,
     delete_deployment,
+    delete_stateful_set,
     get_crd,
     get_deployment,
+    get_stateful_set_pod,
     kubectl,
     wait_for,
     wait_for_crd_condition,
+    wait_for_stateful_set_ready,
 )
 
 
@@ -31,11 +33,19 @@ class TestCompactionScheduler:
         "e2e-compaction-green",
         "e2e-compaction-drift",
     ]
+    STATEFULSET_NAMES = [
+        "e2e-compaction-green",
+        "e2e-compaction-move",
+        "busy-a",
+        "busy-b",
+    ]
     NODE_GROUP_LABEL = "kubex.ai/compaction-group"
     NODE_TIER_LABEL = "kubex.ai/compaction-tier"
     NODE_ZONE_LABEL = "kubex.ai/compaction-zone"
+    NODE_POOL_LABEL = "kubex.ai/compaction-group"
     SCHEDULER_NAME = "kubex-compaction-scheduler"
     RUNTIME_NAMESPACE = "kubex"
+    DESCHEDULER_PREFIX = "kubex-compaction-descheduler"
 
     @pytest.fixture(autouse=True)
     def cleanup(self, k8s_clients, kube_context, test_namespace):
@@ -46,6 +56,9 @@ class TestCompactionScheduler:
 
         for name in self.DEPLOYMENT_NAMES:
             delete_deployment(k8s_clients.apps, test_namespace, name)
+
+        for name in self.STATEFULSET_NAMES:
+            delete_stateful_set(k8s_clients.apps, k8s_clients.core, test_namespace, name)
 
         self._clear_node_labels(kube_context, k8s_clients)
 
@@ -72,15 +85,33 @@ class TestCompactionScheduler:
             raise
         return False
 
-    def _worker_nodes(self, k8s_clients) -> list[str]:
-        workers = sorted(
+    def _schedulable_nodes(self, k8s_clients) -> list[str]:
+        nodes = sorted(
             node.metadata.name
             for node in k8s_clients.core.list_node().items
-            if node.metadata and node.metadata.labels and "worker" in node.metadata.name
+            if node.metadata
+            and node.metadata.name
+            and "control-plane" not in node.metadata.name
         )
-        if len(workers) < 2:
-            raise RuntimeError("compaction e2e requires at least two Kind worker nodes")
-        return workers
+        if len(nodes) < 3:
+            raise RuntimeError("compaction e2e requires at least three schedulable nodes")
+        return nodes
+
+    def _runtime_names(self, policy_name: str) -> tuple[str, str]:
+        deployment_name = f"{self.DESCHEDULER_PREFIX}-{policy_name}"
+        return deployment_name, f"{deployment_name}-config"
+
+    def _assert_compaction_runtime(self, k8s_clients, policy_name: str, expected_selector: str) -> None:
+        deployment_name, configmap_name = self._runtime_names(policy_name)
+        runtime = get_deployment(k8s_clients.apps, self.RUNTIME_NAMESPACE, deployment_name)
+        assert runtime.spec.replicas == 1
+        assert runtime.spec.template.spec.service_account_name == self.DESCHEDULER_PREFIX
+        assert runtime.spec.template.spec.containers[0].image.startswith("registry.k8s.io/descheduler/descheduler:")
+
+        configmap = k8s_clients.core.read_namespaced_config_map(configmap_name, self.RUNTIME_NAMESPACE)
+        rendered = configmap.data["policy.yaml"]
+        assert "kind: DeschedulerPolicy" in rendered
+        assert expected_selector in rendered
 
     def _label_node(self, kube_context: str, node_name: str, labels: dict[str, str]) -> None:
         args = ["label", "node", node_name]
@@ -91,7 +122,7 @@ class TestCompactionScheduler:
 
     def _clear_node_labels(self, kube_context: str, k8s_clients) -> None:
         try:
-            for node in self._worker_nodes(k8s_clients):
+            for node in self._schedulable_nodes(k8s_clients):
                 for key in [self.NODE_GROUP_LABEL, self.NODE_TIER_LABEL, self.NODE_ZONE_LABEL]:
                     kubectl("label", "node", node, f"{key}-", context=kube_context, check=False)
         except Exception:
@@ -165,21 +196,30 @@ class TestCompactionScheduler:
 
     @pytest.mark.timeout(900)
     def test_workloads_and_runtime_follow_distinct_node_groups(self, k8s_clients, kube_context, test_namespace):
-        workers = self._worker_nodes(k8s_clients)
+        nodes = self._schedulable_nodes(k8s_clients)
         self._label_node(
             kube_context,
-            workers[0],
+            nodes[0],
             {
-                self.NODE_GROUP_LABEL: "blue",
+                self.NODE_POOL_LABEL: "blue-a",
                 self.NODE_TIER_LABEL: "standard",
                 self.NODE_ZONE_LABEL: "north",
             },
         )
         self._label_node(
             kube_context,
-            workers[1],
+            nodes[1],
             {
-                self.NODE_GROUP_LABEL: "green",
+                self.NODE_POOL_LABEL: "green-a",
+                self.NODE_TIER_LABEL: "spot",
+                self.NODE_ZONE_LABEL: "south",
+            },
+        )
+        self._label_node(
+            kube_context,
+            nodes[2],
+            {
+                self.NODE_POOL_LABEL: "green-b",
                 self.NODE_TIER_LABEL: "spot",
                 self.NODE_ZONE_LABEL: "south",
             },
@@ -188,59 +228,210 @@ class TestCompactionScheduler:
         cases = [
             {
                 "policy": "e2e-compaction-blue",
-                "node_selector": {self.NODE_GROUP_LABEL: "blue"},
-                "workload_selector": {self.NODE_GROUP_LABEL: "blue"},
-                "expected_selector": f"nodeSelector: {self.NODE_GROUP_LABEL}=blue",
-                "expected_node": workers[0],
+                "node_selector": {self.NODE_POOL_LABEL: "blue-a"},
+                "workload_selector": {self.NODE_POOL_LABEL: "blue-a"},
+                "expected_selector": f"{self.NODE_POOL_LABEL}=blue-a",
+                "expected_node": nodes[0],
             },
             {
                 "policy": "e2e-compaction-green",
-                "node_selector": {self.NODE_GROUP_LABEL: "green", self.NODE_TIER_LABEL: "spot"},
-                "workload_selector": {self.NODE_GROUP_LABEL: "green"},
-                "expected_selector": f"nodeSelector: {self.NODE_GROUP_LABEL}=green,{self.NODE_TIER_LABEL}=spot",
-                "expected_node": workers[1],
-            },
-            {
-                "policy": "e2e-compaction-drift",
                 "node_selector": {
                     "matchExpressions": [
-                        {"key": self.NODE_GROUP_LABEL, "operator": "In", "values": ["green"]},
-                        {"key": self.NODE_ZONE_LABEL, "operator": "In", "values": ["south"]},
+                        {"key": self.NODE_POOL_LABEL, "operator": "In", "values": ["green-*"]},
                     ]
                 },
-                "workload_selector": {self.NODE_ZONE_LABEL: "south"},
-                "expected_selector": f"nodeSelector: {self.NODE_GROUP_LABEL} in (green),{self.NODE_ZONE_LABEL} in (south)",
-                "expected_node": workers[1],
+                "workload_selector": {self.NODE_POOL_LABEL: "green-a"},
+                "expected_selector": f"{self.NODE_POOL_LABEL} in (green-a,green-b)",
+                "expected_node": nodes[1],
             },
         ]
 
         for case in cases:
             self._create_policy(k8s_clients, test_namespace, case["policy"], case["node_selector"])
-            create_deployment(
-                k8s_clients.apps,
-                test_namespace,
-                case["policy"],
-                node_selector=case["workload_selector"],
-            )
+            if case["policy"] == "e2e-compaction-green":
+                create_stateful_set(
+                    k8s_clients.apps,
+                    test_namespace,
+                    case["policy"],
+                    service_name=case["policy"],
+                    labels={"app": case["policy"]},
+                    node_selector=case["workload_selector"],
+                    containers=[
+                        {
+                            "name": "pause",
+                            "image": "registry.k8s.io/pause:3.10",
+                            "requests": {"cpu": "100m", "memory": "64Mi"},
+                            "limits": {"cpu": "200m", "memory": "128Mi"},
+                        }
+                    ],
+                )
+            else:
+                create_deployment(
+                    k8s_clients.apps,
+                    test_namespace,
+                    case["policy"],
+                    node_selector=case["workload_selector"],
+                )
 
             self._wait_for_policy_ready(k8s_clients, case["policy"])
-            self._wait_for_workload_targeting(k8s_clients, test_namespace, case["policy"])
-            self._assert_policy_runtime(k8s_clients)
+            if case["policy"] == "e2e-compaction-green":
+                wait_for_stateful_set_ready(k8s_clients.apps, test_namespace, case["policy"])
+                wait_for(
+                    lambda: get_stateful_set_pod(k8s_clients.core, test_namespace, case["policy"]).spec.scheduler_name
+                    == self.SCHEDULER_NAME,
+                    timeout=300,
+                    message=f"statefulset {test_namespace}/{case['policy']} targeting",
+                )
+            else:
+                self._wait_for_workload_targeting(k8s_clients, test_namespace, case["policy"])
+            self._assert_compaction_runtime(k8s_clients, case["policy"], case["expected_selector"])
 
             def pod_scheduled_to_expected_node() -> bool:
-                pods = k8s_clients.core.list_namespaced_pod(test_namespace, label_selector=f"app={case['policy']}").items
+                pods = k8s_clients.core.list_namespaced_pod(
+                    test_namespace,
+                    label_selector=f"app={case['policy']}",
+                ).items
                 return any(pod.spec and pod.spec.node_name == case["expected_node"] for pod in pods)
 
             wait_for(pod_scheduled_to_expected_node, timeout=300, message=f"pod {case['policy']} scheduling")
 
-            deployment = get_deployment(k8s_clients.apps, test_namespace, case["policy"])
-            assert deployment.spec.template.spec.scheduler_name == self.SCHEDULER_NAME
+            if case["policy"] == "e2e-compaction-green":
+                pod = get_stateful_set_pod(k8s_clients.core, test_namespace, case["policy"])
+                assert pod.spec and pod.spec.scheduler_name == self.SCHEDULER_NAME
+            else:
+                deployment = get_deployment(k8s_clients.apps, test_namespace, case["policy"])
+                assert deployment.spec.template.spec.scheduler_name == self.SCHEDULER_NAME
 
             policy = get_crd(k8s_clients.custom, "clustercompactionpolicies", case["policy"])
             assert policy["status"]["summary"]["managedWorkloads"] == 1
 
-            delete_deployment(k8s_clients.apps, test_namespace, case["policy"])
+            if case["policy"] == "e2e-compaction-green":
+                delete_stateful_set(k8s_clients.apps, k8s_clients.core, test_namespace, case["policy"])
+            else:
+                delete_deployment(k8s_clients.apps, test_namespace, case["policy"])
             self._delete_policy(k8s_clients, case["policy"])
+
+    @pytest.mark.timeout(1200)
+    def test_controller_managed_descheduler_moves_candidate_within_wildcard_pool(
+        self, k8s_clients, kube_context, test_namespace
+    ):
+        nodes = self._schedulable_nodes(k8s_clients)
+        for node, pool in zip(nodes[:3], ["green-a", "green-b", "green-c"], strict=True):
+            self._label_node(
+                kube_context,
+                node,
+                {
+                    self.NODE_POOL_LABEL: pool,
+                    self.NODE_TIER_LABEL: "standard",
+                    self.NODE_ZONE_LABEL: "south",
+                },
+            )
+
+        policy_name = "e2e-compaction-move"
+        self._create_policy(
+            k8s_clients,
+            test_namespace,
+            policy_name,
+            {
+                "matchExpressions": [
+                    {"key": self.NODE_POOL_LABEL, "operator": "In", "values": ["green-*"]},
+                ]
+            },
+        )
+
+        workload_labels = {"app": policy_name}
+        create_stateful_set(
+            k8s_clients.apps,
+            test_namespace,
+            "busy-a",
+            service_name="busy-a",
+            labels={**workload_labels, "role": "busy-a"},
+            node_selector={self.NODE_POOL_LABEL: "green-b"},
+            containers=[
+                {
+                    "name": "pause",
+                    "image": "registry.k8s.io/pause:3.10",
+                    "requests": {"cpu": "700m", "memory": "1024Mi"},
+                    "limits": {"cpu": "1000m", "memory": "1024Mi"},
+                }
+            ],
+        )
+        wait_for_stateful_set_ready(k8s_clients.apps, test_namespace, "busy-a")
+        create_stateful_set(
+            k8s_clients.apps,
+            test_namespace,
+            "busy-b",
+            service_name="busy-b",
+            labels={**workload_labels, "role": "busy-b"},
+            node_selector={self.NODE_POOL_LABEL: "green-c"},
+            containers=[
+                {
+                    "name": "pause",
+                    "image": "registry.k8s.io/pause:3.10",
+                    "requests": {"cpu": "700m", "memory": "1024Mi"},
+                    "limits": {"cpu": "1000m", "memory": "1024Mi"},
+                }
+            ],
+        )
+        wait_for_stateful_set_ready(k8s_clients.apps, test_namespace, "busy-b")
+        create_stateful_set(
+            k8s_clients.apps,
+            test_namespace,
+            policy_name,
+            service_name=policy_name,
+            labels={**workload_labels, "role": "candidate"},
+            node_selector={self.NODE_POOL_LABEL: "green-a"},
+            containers=[
+                {
+                    "name": "pause",
+                    "image": "registry.k8s.io/pause:3.10",
+                    "requests": {"cpu": "100m", "memory": "128Mi"},
+                    "limits": {"cpu": "200m", "memory": "256Mi"},
+                }
+            ],
+        )
+        wait_for_stateful_set_ready(k8s_clients.apps, test_namespace, policy_name)
+
+        self._wait_for_policy_ready(k8s_clients, policy_name)
+        self._assert_compaction_runtime(
+            k8s_clients,
+            policy_name,
+            f"{self.NODE_POOL_LABEL} in (green-a,green-b,green-c)",
+        )
+
+        wait_for(
+            lambda: get_stateful_set_pod(k8s_clients.core, test_namespace, policy_name).spec.node_name
+            == nodes[0],
+            timeout=300,
+            message=f"candidate {policy_name} initial scheduling",
+        )
+
+        initial_pod = get_stateful_set_pod(k8s_clients.core, test_namespace, policy_name)
+        initial_uid = initial_pod.metadata.uid
+        initial_node = initial_pod.spec.node_name
+
+        def candidate_moved() -> bool:
+            pod = get_stateful_set_pod(k8s_clients.core, test_namespace, policy_name)
+            return (
+                pod.metadata.uid != initial_uid
+                and pod.spec is not None
+                and pod.spec.node_name is not None
+                and pod.spec.node_name != initial_node
+                and pod.spec.node_name in {nodes[1], nodes[2]}
+            )
+
+        wait_for(candidate_moved, timeout=900, message="candidate relocation by controller-managed descheduler")
+
+        moved_pod = get_stateful_set_pod(k8s_clients.core, test_namespace, policy_name)
+        assert moved_pod.spec and moved_pod.spec.node_name in {nodes[1], nodes[2]}
+        assert moved_pod.metadata.uid != initial_uid
+
+        policy = get_crd(k8s_clients.custom, "clustercompactionpolicies", policy_name)
+        assert policy["status"]["summary"]["managedWorkloads"] == 3
+
+        for name in ["busy-a", "busy-b", policy_name]:
+            delete_stateful_set(k8s_clients.apps, k8s_clients.core, test_namespace, name)
+        self._delete_policy(k8s_clients, policy_name)
 
     @pytest.mark.timeout(900)
     def test_scheduler_image_catches_up_after_drift(self, k8s_clients, kube_context, test_namespace, kube_server_version):
