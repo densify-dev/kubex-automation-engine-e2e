@@ -119,7 +119,7 @@ jobs:
           fi
 
       - name: Run full suite
-        run: ./scripts/run-full-suite.sh
+        run: ./run-full-suite.sh
         env:
           CLUSTER_NAME: ${{ env.CLUSTER_NAME }}
           NODE_IMAGE: ${{ env.NODE_IMAGE }}
