@@ -9,6 +9,7 @@ from kubernetes.client.rest import ApiException
 
 from helpers import (
     GROUP,
+    POLL_INTERVAL,
     ROLLBACK_STATE_ANNOTATION,
     VERSION,
     automation_strategy_manifest,
@@ -416,7 +417,7 @@ class TestRollbackBehavior:
 
         wait_for(applied, timeout=timeout, message="live resource update")
 
-    def _wait_for_state_mode(self, k8s_clients, mode: str, timeout: int) -> dict:
+    def _wait_for_state_mode(self, k8s_clients, mode: str, timeout: int, interval: float = POLL_INTERVAL) -> dict:
         state_box = {"value": None}
 
         def state_matches():
@@ -426,7 +427,7 @@ class TestRollbackBehavior:
                 return True
             return False
 
-        wait_for(state_matches, timeout=timeout, message=f"rollback state {mode}")
+        wait_for(state_matches, timeout=timeout, interval=interval, message=f"rollback state {mode}")
         return state_box["value"]
 
     def _wait_for_state_modes(self, k8s_clients, modes: set[str], timeout: int) -> dict:
@@ -642,10 +643,11 @@ class TestRollbackBehavior:
         self._patch_rollback_policy_threshold(k8s_clients, 20)
         self._patch_static_policy_resources(k8s_clients, self.PARTIAL_ADOPTION_RESOURCES)
 
-        self._wait_for_state_mode(k8s_clients, "monitoring", timeout=180)
+        self._wait_for_state_mode(k8s_clients, "monitoring", timeout=180, interval=0.2)
         wait_for(
             lambda: 0 < self._count_pods_with_resources(k8s_clients, self.PARTIAL_ADOPTION_RESOURCES) < 5,
             timeout=120,
+            interval=0.2,
             message="partial adoption observed",
         )
         succeeded = self._wait_for_state_mode(k8s_clients, "monitoringSucceeded", timeout=180)
@@ -665,10 +667,11 @@ class TestRollbackBehavior:
         self._patch_rollback_policy_threshold(k8s_clients, 100)
         self._patch_static_policy_resources(k8s_clients, self.PARTIAL_ADOPTION_RESOURCES)
 
-        self._wait_for_state_mode(k8s_clients, "monitoring", timeout=180)
+        self._wait_for_state_mode(k8s_clients, "monitoring", timeout=180, interval=0.2)
         wait_for(
             lambda: 0 < self._count_pods_with_resources(k8s_clients, self.PARTIAL_ADOPTION_RESOURCES) < 5,
             timeout=120,
+            interval=0.2,
             message="partial adoption observed before threshold failure",
         )
         threshold_failure = self._wait_for_state_modes(k8s_clients, {"rollingBack", "backingOff", "backedOff"}, timeout=240)
