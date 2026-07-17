@@ -28,11 +28,6 @@ def pytest_addoption(parser):
         help="Kind node image to use when creating the cluster, for example kindest/node:v1.35.0",
     )
     parser.addoption(
-        "--kind-config",
-        default=None,
-        help="Optional Kind cluster config file used when creating the test cluster",
-    )
-    parser.addoption(
         "--namespace", default="kubex", help="Namespace where the controller is deployed"
     )
     parser.addoption(
@@ -290,7 +285,6 @@ def kind_cluster(
             recommendations_file=request.config.getoption("--recommendations-file"),
             kubeai_chart_version=request.config.getoption("--kubeai-chart-version"),
             kind_node_image=request.config.getoption("--kind-node-image"),
-            kind_config=request.config.getoption("--kind-config"),
             cluster_name_value=request.config.getoption("--kubex-cluster-name"),
             secondary_cluster_enabled=request.config.getoption("--secondary-cluster-enabled"),
             primary_cluster_name=request.config.getoption("--primary-cluster-name"),
@@ -407,7 +401,7 @@ def actual_in_place_resize_support(k8s_clients, test_namespace):
                 ]
             }
         }
-        k8s_clients.core.patch_namespaced_pod(pod_name, test_namespace, patch)
+        k8s_clients.core.patch_namespaced_pod_resize(pod_name, test_namespace, patch)
 
         deadline = time.time() + 120
         while time.time() < deadline:

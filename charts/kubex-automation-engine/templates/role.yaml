@@ -9,18 +9,6 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - configmaps
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - ""
-  resources:
   - limitranges
   - nodes
   - resourcequotas
@@ -65,12 +53,9 @@ rules:
   - deployments
   - statefulsets
   verbs:
-  - create
-  - delete
   - get
   - list
   - patch
-  - update
   - watch
 - apiGroups:
   - apps
@@ -150,7 +135,6 @@ rules:
   resources:
   - automationstrategies
   - clusterautomationstrategies
-  - clustercompactionpolicies
   - clustergpurebalancingpolicies
   - clusterproactivepolicies
   - clusterrollbackpolicies
@@ -174,7 +158,6 @@ rules:
 - apiGroups:
   - rightsizing.kubex.ai
   resources:
-  - clustercompactionpolicies/finalizers
   - clustergpurebalancingpolicies/finalizers
   - clusterproactivepolicies/finalizers
   - clusterrollbackpolicies/finalizers
@@ -192,7 +175,6 @@ rules:
 - apiGroups:
   - rightsizing.kubex.ai
   resources:
-  - clustercompactionpolicies/status
   - clustergpurebalancingpolicies/status
   - clusterproactivepolicies/status
   - clusterrollbackpolicies/status

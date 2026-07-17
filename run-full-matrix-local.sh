@@ -2,18 +2,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-E2E_ROOT="${SCRIPT_DIR}"
+E2E_ROOT="$(cd "${SCRIPT_DIR}" && pwd)"
+CONTROLLER_ROOT="$(cd "${E2E_ROOT}/../.." && pwd)"
 
-LATEST_VERSION="${LATEST_VERSION:-v1.36.0}"
 NEWER_VERSION="${NEWER_VERSION:-v1.35.0}"
 OLDER_VERSION="${OLDER_VERSION:-v1.32.0}"
 
-LATEST_CLUSTER_NAME="${LATEST_CLUSTER_NAME:-e2e-136}"
 NEWER_CLUSTER_NAME="${NEWER_CLUSTER_NAME:-e2e-135}"
 OLDER_CLUSTER_NAME="${OLDER_CLUSTER_NAME:-e2e-132}"
 
-LATEST_NODE_IMAGE="${LATEST_NODE_IMAGE:-kindest/node:${LATEST_VERSION}}"
 NEWER_NODE_IMAGE="${NEWER_NODE_IMAGE:-kindest/node:${NEWER_VERSION}}"
 OLDER_NODE_IMAGE="${OLDER_NODE_IMAGE:-kindest/node:${OLDER_VERSION}}"
 
@@ -48,11 +45,6 @@ reset_cluster() {
   fi
 }
 
-target_path=""
-if [[ $# -gt 0 ]]; then
-  target_path="$(normalize_target "$1")"
-fi
-
 run_suite() {
   local label="$1"
   local cluster_name="$2"
@@ -71,12 +63,11 @@ run_suite() {
     WITH_METRICS_SERVER="${with_metrics_server}" \
     WITH_KEDA="${with_keda}" \
     WITH_VPA="${with_vpa}" \
-    KIND_CONFIG="${KIND_CONFIG:-}" \
     GPU_SUITE="${gpu_suite}" \
     GPU_KIND_CONFIG="${gpu_kind_config}" \
-    EXAMPLES_ROOT="${REPO_ROOT}/examples" \
-    HELM_CRDS_CHART="${REPO_ROOT}/charts/kubex-crds" \
-    HELM_CONTROLLER_CHART="${REPO_ROOT}/charts/kubex-automation-engine" \
+    EXAMPLES_ROOT="${CONTROLLER_ROOT}/examples" \
+    HELM_CRDS_CHART="${CONTROLLER_ROOT}/charts/kubex-crds" \
+    HELM_CONTROLLER_CHART="${CONTROLLER_ROOT}/charts/kubex-automation-engine" \
     HELM_REPO_URL="" \
     CONTROLLER_IMAGE_REPOSITORY="${IMG%:*}" \
     CONTROLLER_IMAGE_TAG="${IMG##*:}" \
@@ -87,24 +78,18 @@ run_suite() {
 }
 
 echo "==> Building local controller images"
-make -C "${REPO_ROOT}" docker-build docker-build-cleanup IMG="${IMG}" CLEANUP_IMG="${CLEANUP_IMG}"
+make -C "${CONTROLLER_ROOT}" docker-build docker-build-cleanup IMG="${IMG}" CLEANUP_IMG="${CLEANUP_IMG}"
 
 echo "==> Running the full Kind version matrix"
-reset_cluster "${LATEST_CLUSTER_NAME}"
-if [[ -n "$target_path" ]]; then
-  run_suite "kubernetes-${LATEST_VERSION}" "${LATEST_CLUSTER_NAME}" "${LATEST_NODE_IMAGE}" "true" "true" "true" "$target_path"
-else
-  run_suite "kubernetes-${LATEST_VERSION}" "${LATEST_CLUSTER_NAME}" "${LATEST_NODE_IMAGE}" "true" "true" "true"
-fi
 reset_cluster "${NEWER_CLUSTER_NAME}"
 if [[ $# -gt 0 ]]; then
-  run_suite "kubernetes-${NEWER_VERSION}" "${NEWER_CLUSTER_NAME}" "${NEWER_NODE_IMAGE}" "true" "true" "true" "true" "${E2E_ROOT}/features/gpu/kind-config.yaml" "$target_path"
+  run_suite "kubernetes-${NEWER_VERSION}" "${NEWER_CLUSTER_NAME}" "${NEWER_NODE_IMAGE}" "true" "true" "true" "true" "${E2E_ROOT}/features/gpu/kind-config.yaml" "$(normalize_target "$1")"
 else
   run_suite "kubernetes-${NEWER_VERSION}" "${NEWER_CLUSTER_NAME}" "${NEWER_NODE_IMAGE}" "true" "true" "true" "true" "${E2E_ROOT}/features/gpu/kind-config.yaml"
 fi
 reset_cluster "${OLDER_CLUSTER_NAME}"
 if [[ $# -gt 0 ]]; then
-  run_suite "kubernetes-${OLDER_VERSION}" "${OLDER_CLUSTER_NAME}" "${OLDER_NODE_IMAGE}" "true" "false" "false" "true" "${E2E_ROOT}/features/gpu/kind-config.yaml" "$target_path"
+  run_suite "kubernetes-${OLDER_VERSION}" "${OLDER_CLUSTER_NAME}" "${OLDER_NODE_IMAGE}" "true" "false" "false" "true" "${E2E_ROOT}/features/gpu/kind-config.yaml" "$(normalize_target "$1")"
 else
   run_suite "kubernetes-${OLDER_VERSION}" "${OLDER_CLUSTER_NAME}" "${OLDER_NODE_IMAGE}" "true" "false" "false" "true" "${E2E_ROOT}/features/gpu/kind-config.yaml"
 fi

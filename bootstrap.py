@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -14,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from kubernetes.client.rest import ApiException
+import yaml
 
 
 DEFAULT_KUBEAI_CHART_VERSION = "0.23.2"
@@ -38,7 +40,6 @@ class BootstrapConfig:
     cleanup_image_tag: str | None = None
     cleanup_image_pull_policy: str = "IfNotPresent"
     kind_node_image: str | None = None
-    kind_config: str | None = None
     install_controller: bool = True
     install_metrics_server: bool = True
     install_keda: bool = True
@@ -49,7 +50,6 @@ class BootstrapConfig:
     gpu_kind_config: str | None = None
     install_gpu_process_exporter: bool = False
     install_prometheus: bool = False
-    skip_kind_cluster_create: bool = False
     cluster_name_value: str | None = None
     secondary_cluster_enabled: bool = False
     primary_cluster_name: str | None = None
@@ -100,14 +100,6 @@ def _discover_repo_root(start: Path) -> Path:
     raise RuntimeError("unable to locate repo root for recommendations fixture")
 
 
-def _resolve_repo_path(path_value: str) -> Path:
-    path = Path(path_value)
-    if path.is_absolute():
-        return path
-    repo_root = _discover_repo_root(Path(__file__).resolve().parent)
-    return (repo_root / path).resolve()
-
-
 def ensure_kind_cluster(config: BootstrapConfig) -> None:
     clusters = run("kind", "get", "clusters", capture_output=True).stdout.splitlines()
     if config.kind_cluster_name in clusters:
@@ -116,11 +108,100 @@ def ensure_kind_cluster(config: BootstrapConfig) -> None:
     args = ["kind", "create", "cluster", "--name", config.kind_cluster_name]
     if config.kind_node_image:
         args += ["--image", config.kind_node_image]
-    if config.kind_config:
-        args += ["--config", str(_resolve_repo_path(config.kind_config))]
-    elif config.install_gpu_suite and config.gpu_kind_config:
-        args += ["--config", str(_resolve_repo_path(config.gpu_kind_config))]
+    if config.install_gpu_suite and config.gpu_kind_config:
+        config.gpu_kind_config = prepare_gpu_kind_config(config)
+        args += ["--config", config.gpu_kind_config]
     run(*args)
+
+
+def prepare_gpu_kind_config(config: BootstrapConfig) -> str:
+    if not config.gpu_kind_config:
+        raise RuntimeError("gpu kind config path is required")
+
+    config_path = Path(config.gpu_kind_config)
+    if not config_path.is_file():
+        raise RuntimeError(f"gpu kind config not found: {config_path}")
+
+    if not kind_node_supports_in_place_resize(config.kind_node_image):
+        return str(config_path)
+
+    with config_path.open("r", encoding="utf-8") as handle:
+        kind_config = yaml.safe_load(handle)
+
+    if not isinstance(kind_config, dict):
+        raise RuntimeError(f"unexpected kind config structure in {config_path}")
+
+    feature_gate = "InPlacePodVerticalScaling=true"
+    nodes = kind_config.get("nodes")
+    if not isinstance(nodes, list):
+        raise RuntimeError(f"unexpected nodes list in {config_path}")
+
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        role = node.get("role")
+        patches = list(node.get("kubeadmConfigPatches") or [])
+        if role == "control-plane":
+            patches = [
+                _kind_init_patch(feature_gate),
+                _kind_cluster_patch(feature_gate),
+                *patches,
+            ]
+        elif role == "worker":
+            patches = [_kind_join_patch(feature_gate), *patches]
+        else:
+            continue
+        node["kubeadmConfigPatches"] = patches
+
+    temp_dir = Path(tempfile.mkdtemp(prefix="kind-gpu-config-"))
+    temp_path = temp_dir / config_path.name
+    with temp_path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(kind_config, handle, sort_keys=False)
+    return str(temp_path)
+
+
+def kind_node_supports_in_place_resize(kind_node_image: str | None) -> bool:
+    if not kind_node_image:
+        return False
+    match = re.search(r"v(\d+)\.(\d+)\.(\d+)", kind_node_image)
+    if not match:
+        return False
+    major = int(match.group(1))
+    minor = int(match.group(2))
+    return (major, minor) >= (1, 33)
+
+
+def _kind_init_patch(feature_gate: str) -> str:
+    return (
+        "kind: InitConfiguration\n"
+        "nodeRegistration:\n"
+        "  kubeletExtraArgs:\n"
+        f"    feature-gates: \"{feature_gate}\"\n"
+    )
+
+
+def _kind_join_patch(feature_gate: str) -> str:
+    return (
+        "kind: JoinConfiguration\n"
+        "nodeRegistration:\n"
+        "  kubeletExtraArgs:\n"
+        f"    feature-gates: \"{feature_gate}\"\n"
+    )
+
+
+def _kind_cluster_patch(feature_gate: str) -> str:
+    return (
+        "kind: ClusterConfiguration\n"
+        "apiServer:\n"
+        "  extraArgs:\n"
+        f"    feature-gates: \"{feature_gate}\"\n"
+        "controllerManager:\n"
+        "  extraArgs:\n"
+        f"    feature-gates: \"{feature_gate}\"\n"
+        "scheduler:\n"
+        "  extraArgs:\n"
+        f"    feature-gates: \"{feature_gate}\"\n"
+    )
 
 
 def ensure_fake_gpu_capacity(config: BootstrapConfig) -> None:
@@ -797,8 +878,6 @@ def _controller_values(config: BootstrapConfig) -> dict:
         "controllerManager": {},
         "defaultAutomationStrategy": {"enabled": False},
         "globalConfiguration": {"recommendationReloadInterval": "1m"},
-        "compactionScheduler": {"enabled": True},
-        "compactionDescheduler": {"enabled": True, "interval": "1m"},
     }
     if config.secondary_cluster_enabled:
         if not config.primary_cluster_name:
@@ -941,10 +1020,9 @@ def install_controller(config: BootstrapConfig) -> None:
 
 
 def bootstrap(config: BootstrapConfig) -> None:
-    if not config.skip_kind_cluster_create:
-        ensure_kind_cluster(config)
-        ensure_fake_gpu_capacity(config)
-    if config.load_kind_images and not config.skip_kind_cluster_create:
+    ensure_kind_cluster(config)
+    ensure_fake_gpu_capacity(config)
+    if config.load_kind_images:
         load_kind_images(config)
     if config.install_metrics_server:
         install_metrics_server(config)
@@ -991,7 +1069,6 @@ def parse_args() -> BootstrapConfig:
     parser.add_argument("--secondary-cluster-enabled", action="store_true")
     parser.add_argument("--primary-cluster-name")
     parser.add_argument("--kind-node-image", default="kindest/node:v1.35.0")
-    parser.add_argument("--kind-config")
     parser.add_argument("--load-kind-images", action="store_true")
     parser.add_argument("--no-controller", action="store_true")
     parser.add_argument("--without-metrics-server", action="store_true")
@@ -1000,7 +1077,6 @@ def parse_args() -> BootstrapConfig:
     parser.add_argument("--gpu-suite", action="store_true")
     parser.add_argument("--install-kubeai", action="store_true")
     parser.add_argument("--gpu-kind-config")
-    parser.add_argument("--skip-kind-cluster-create", action="store_true")
     args = parser.parse_args()
     return BootstrapConfig(
         kube_context=args.kube_context,
@@ -1025,7 +1101,6 @@ def parse_args() -> BootstrapConfig:
         recommendations_file=args.recommendations_file,
         kubeai_chart_version=args.kubeai_chart_version,
         kind_node_image=args.kind_node_image,
-        kind_config=args.kind_config,
         load_kind_images=args.load_kind_images,
         cluster_name_value=args.kubex_cluster_name,
         secondary_cluster_enabled=args.secondary_cluster_enabled,
@@ -1035,7 +1110,6 @@ def parse_args() -> BootstrapConfig:
         gpu_kind_config=args.gpu_kind_config,
         install_gpu_process_exporter=args.gpu_suite,
         install_prometheus=args.gpu_suite,
-        skip_kind_cluster_create=args.skip_kind_cluster_create,
         deploy_kubex_stub=args.deploy_kubex_stub,
         install_controller=not args.no_controller,
         install_metrics_server=not args.without_metrics_server,

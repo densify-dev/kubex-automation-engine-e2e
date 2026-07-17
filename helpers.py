@@ -380,25 +380,19 @@ def create_deployment(
     resize_policy: list[client.V1ContainerResizePolicy] | None = None,
     pod_labels: dict[str, str] | None = None,
     pod_annotations: dict[str, str] | None = None,
-    node_selector: dict[str, str] | None = None,
-    tolerations: list[client.V1Toleration] | None = None,
-    app_label: str | None = None,
 ) -> client.V1Deployment:
     """Create a minimal Deployment for testing resource mutation."""
-    app_label = app_label or name
-    labels = {"app": app_label}
+    labels = {"app": name}
     if pod_labels:
         labels.update(pod_labels)
     deployment = client.V1Deployment(
-        metadata=client.V1ObjectMeta(name=name, namespace=namespace, labels={"app": app_label}),
+        metadata=client.V1ObjectMeta(name=name, namespace=namespace, labels={"app": name}),
         spec=client.V1DeploymentSpec(
             replicas=replicas,
-            selector=client.V1LabelSelector(match_labels={"app": app_label}),
+            selector=client.V1LabelSelector(match_labels={"app": name}),
             template=client.V1PodTemplateSpec(
                 metadata=client.V1ObjectMeta(labels=labels, annotations=pod_annotations),
                 spec=client.V1PodSpec(
-                    node_selector=node_selector,
-                    tolerations=tolerations,
                     containers=[
                         client.V1Container(
                             name="app",
@@ -462,7 +456,6 @@ def create_stateful_set(
     containers: list[dict[str, Any]],
     labels: dict[str, str] | None = None,
     replicas: int = 1,
-    node_selector: dict[str, str] | None = None,
 ) -> client.V1StatefulSet:
     """Create a minimal StatefulSet for affinity and replacement tests."""
     workload_labels = dict(labels or {"app": name})
@@ -476,7 +469,6 @@ def create_stateful_set(
                 metadata=client.V1ObjectMeta(labels=workload_labels),
                 spec=client.V1PodSpec(
                     termination_grace_period_seconds=0,
-                    node_selector=node_selector,
                     containers=[
                         client.V1Container(
                             name=container["name"],
@@ -689,21 +681,6 @@ def get_deployment(apps: client.AppsV1Api, namespace: str, name: str) -> client.
     return apps.read_namespaced_deployment(name, namespace)
 
 
-def wait_for_deployment_ready(
-    apps: client.AppsV1Api, namespace: str, name: str, min_replicas: int = 1
-) -> None:
-    """Wait until a Deployment reports the desired number of ready and updated replicas."""
-
-    def ready():
-        deployment = get_deployment(apps, namespace, name)
-        status = deployment.status
-        if status is None:
-            return False
-        return (status.ready_replicas or 0) >= min_replicas and (status.updated_replicas or 0) >= min_replicas
-
-    wait_for(ready, timeout=180, message=f"deployment {namespace}/{name} readiness")
-
-
 def get_stateful_set(apps: client.AppsV1Api, namespace: str, name: str) -> client.V1StatefulSet:
     """Fetch a StatefulSet."""
     return apps.read_namespaced_stateful_set(name, namespace)
@@ -723,17 +700,11 @@ def wait_for_stateful_set_ready(
     )
 
 
-def get_deployment_pod(
-    core: client.CoreV1Api,
-    namespace: str,
-    deployment_name: str,
-    label_selector: str | None = None,
-):
+def get_deployment_pod(core: client.CoreV1Api, namespace: str, deployment_name: str):
     """Return the single pod created for a deployment-style test workload."""
-    label_selector = label_selector or f"app={deployment_name}"
     pods = core.list_namespaced_pod(
         namespace,
-        label_selector=label_selector,
+        label_selector=f"app={deployment_name}",
     ).items
     if not pods:
         raise RuntimeError(f"no pod found for deployment {deployment_name}")

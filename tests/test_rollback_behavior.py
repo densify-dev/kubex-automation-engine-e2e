@@ -18,6 +18,7 @@ from helpers import (
     get_deployment,
     get_deployment_pod,
     get_pod_resources,
+    pod_is_ready,
     kubectl,
     namespace_gone,
     rollback_policy_manifest,
@@ -58,10 +59,15 @@ class TestRollbackBehavior:
         "limits": {"cpu": "200m", "memory": "512Mi"},
     }
 
+    @pytest.fixture(params=["eviction", "in-place"], ids=["eviction", "in-place"])
+    def rollback_resize_mode(self, request, supports_in_place_resize):
+        if request.param == "in-place" and not supports_in_place_resize:
+            pytest.skip("rollback in-place tests require Kubernetes v1.35+ in-place resize support")
+        return request.param
+
     @pytest.fixture(autouse=True)
-    def setup_teardown(self, request, k8s_clients, kube_context, supports_in_place_resize):
-        if not supports_in_place_resize:
-            pytest.skip("rollback resize tests require Kubernetes v1.35+ in-place resize support")
+    def setup_teardown(self, request, k8s_clients, kube_context, rollback_resize_mode):
+        self.resize_mode = rollback_resize_mode
 
         suffix = request.node.name.replace("_", "-")[:20]
         self.STRATEGY_NAME = f"e2e-rollback-strategy-{suffix}"
@@ -99,7 +105,7 @@ class TestRollbackBehavior:
             delete_custom_object(k8s_clients.custom, GROUP, VERSION, self.NAMESPACE, plural, name)
 
         strategy = automation_strategy_manifest(self.STRATEGY_NAME, self.NAMESPACE)
-        strategy["spec"]["inPlaceResize"] = {"enabled": False}
+        strategy["spec"]["inPlaceResize"] = {"enabled": self.resize_mode == "in-place"}
         strategy["spec"]["podEviction"] = {"enabled": True}
         strategy["spec"]["safetyChecks"] = {
             "minReadyDuration": "0s",
@@ -150,9 +156,11 @@ class TestRollbackBehavior:
                 "    time.sleep(0.02)\n"
                 "time.sleep(3600)\n",
             ],
-            resize_policy=[
-                client.V1ContainerResizePolicy(resource_name="memory", restart_policy="RestartContainer")
-            ],
+            resize_policy=(
+                [client.V1ContainerResizePolicy(resource_name="memory", restart_policy="RestartContainer")]
+                if self.resize_mode == "in-place"
+                else None
+            ),
         )
 
         k8s_clients.custom.create_namespaced_custom_object(
@@ -324,6 +332,21 @@ class TestRollbackBehavior:
             return True
         return False
 
+    def _event_count(self, k8s_clients, reason: str, message_substring: str | None = None) -> int:
+        count = 0
+        for event in k8s_clients.core.list_namespaced_event(self.NAMESPACE).items:
+            involved = event.involved_object
+            if not involved:
+                continue
+            if involved.kind != "Deployment" or involved.name != self.DEPLOYMENT:
+                continue
+            if event.reason != reason:
+                continue
+            if message_substring and message_substring not in (event.message or ""):
+                continue
+            count = max(count, int(event.count or 0))
+        return count
+
     def _scale_deployment(self, k8s_clients, replicas: int) -> None:
         k8s_clients.apps.patch_namespaced_deployment(
             self.DEPLOYMENT,
@@ -460,6 +483,48 @@ class TestRollbackBehavior:
 
         wait_for(second_monitoring_started, timeout=180, message="second rollback monitoring start")
 
+    def _wait_for_same_fingerprint_monitoring_restart(self, k8s_clients) -> None:
+        initial_success = self._rollback_state(k8s_clients)
+        initial_fingerprint = initial_success.get("activeRecommendationFingerprint") if initial_success else None
+        assert initial_fingerprint, "expected initial rollback fingerprint after monitoring success"
+        initial_event_count = self._event_count(
+            k8s_clients,
+            "RollbackMonitoringStarted",
+            "Started rollback monitoring for resolved policy",
+        )
+
+        current_pod = get_deployment_pod(k8s_clients.core, self.NAMESPACE, self.DEPLOYMENT)
+        current_name = current_pod.metadata.name
+        k8s_clients.core.delete_namespaced_pod(current_name, self.NAMESPACE)
+
+        def replacement_ready():
+            pod = get_deployment_pod(k8s_clients.core, self.NAMESPACE, self.DEPLOYMENT)
+            return pod.metadata.name != current_name and pod_is_ready(pod)
+
+        wait_for(replacement_ready, timeout=180, message="replacement pod after monitoring success")
+        self._wait_for_pod_resources(k8s_clients, self.INITIAL_RESOURCES, timeout=180)
+
+        wait_for(
+            lambda: self._event_count(
+                k8s_clients,
+                "RollbackMonitoringStarted",
+                "Started rollback monitoring for resolved policy",
+            )
+            > initial_event_count,
+            timeout=180,
+            message="same fingerprint monitoring restart event",
+        )
+
+        def monitoring_restarted():
+            state = self._rollback_state(k8s_clients)
+            return bool(
+                state
+                and state.get("mode") in {"monitoring", "monitoringSucceeded"}
+                and state.get("activeRecommendationFingerprint") == initial_fingerprint
+            )
+
+        wait_for(monitoring_restarted, timeout=180, message="same fingerprint monitoring restart")
+
     def _trigger_organic_failure(self, k8s_clients, *, max_attempts: int) -> dict | None:
         self._patch_rollback_policy_backoff(k8s_clients, time_period="10s", max_attempts=max_attempts)
 
@@ -536,6 +601,11 @@ class TestRollbackBehavior:
     @pytest.mark.timeout(900)
     def test_rollback_monitoring_succeeds_and_clears_annotations(self, k8s_clients):
         self._wait_for_initial_monitoring_success(k8s_clients)
+
+    @pytest.mark.timeout(900)
+    def test_rollback_monitoring_restarts_for_new_pod_with_same_fingerprint(self, k8s_clients):
+        self._wait_for_initial_monitoring_success(k8s_clients)
+        self._wait_for_same_fingerprint_monitoring_restart(k8s_clients)
 
     @pytest.mark.timeout(900)
     def test_rollback_backoff_completion_clears_annotations(self, k8s_clients):
