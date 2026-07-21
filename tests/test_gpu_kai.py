@@ -428,7 +428,7 @@ class TestGpuKaiRollback:
                 "minReadyDuration": "0s",
                 "resizeRetryInterval": "5s",
             }
-            strategy["spec"]["experimental"] = {"gpuKaiContract": "v1alpha1-2026-04"}
+            strategy["spec"]["experimental"] = {"gpuKaiContract": "v1alpha1-2026-07"}
             k8s_clients.custom.create_namespaced_custom_object(
                 GROUP,
                 VERSION,

@@ -2,7 +2,7 @@
 
 This directory contains examples for GPU-aware rightsizing.
 
-All GPU/KAI fields and custom resources are experimental and may change. Every manifest in this directory sets `spec.experimental.gpuKaiContract: v1alpha1-2026-04` where required.
+All GPU/KAI fields and custom resources are experimental and may change. Every manifest in this directory sets `spec.experimental.gpuKaiContract: v1alpha1-2026-07` where required.
 
 1) `simple-static-gpu-vanilla.yaml`
    - Namespaced `AutomationStrategy` + `StaticPolicy` using `gpu` under `resources.containers["*"].requests`.

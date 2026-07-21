@@ -4,7 +4,7 @@ metadata:
   name: gpu-consolidation-pool-a
 spec:
   experimental:
-    gpuKaiContract: v1alpha1-2026-04
+    gpuKaiContract: v1alpha1-2026-07
   nodeSelector:
     matchLabels:
       kubex.ai/gpu-pool: pool-a
@@ -18,7 +18,7 @@ metadata:
   name: gpu-consolidation-pool-b-l40s
 spec:
   experimental:
-    gpuKaiContract: v1alpha1-2026-04
+    gpuKaiContract: v1alpha1-2026-07
   nodeSelector:
     matchExpressions:
     - key: kubex.ai/gpu-pool

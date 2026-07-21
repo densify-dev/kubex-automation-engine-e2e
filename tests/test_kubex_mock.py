@@ -264,7 +264,7 @@ class TestKubexMock:
     ):
         strategy = automation_strategy_manifest(self.STRATEGY_NAME, "default")
         strategy["spec"]["enablement"]["overrideScheduler"] = "kai"
-        strategy["spec"]["experimental"] = {"gpuKaiContract": "v1alpha1-2026-04"}
+        strategy["spec"]["experimental"] = {"gpuKaiContract": "v1alpha1-2026-07"}
 
         k8s_clients.custom.create_namespaced_custom_object(
             GROUP,

@@ -5,7 +5,7 @@ metadata:
   namespace: default
 spec:
   experimental:
-    gpuKaiContract: v1alpha1-2026-04
+    gpuKaiContract: v1alpha1-2026-07
   enablement:
     overrideScheduler: none
     gpu:
@@ -22,7 +22,7 @@ metadata:
   namespace: default
 spec:
   experimental:
-    gpuKaiContract: v1alpha1-2026-04
+    gpuKaiContract: v1alpha1-2026-07
   scope:
     labelSelector:
       matchLabels:
