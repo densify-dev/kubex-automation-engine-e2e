@@ -264,6 +264,10 @@ class TestKubexMock:
     ):
         strategy = automation_strategy_manifest(self.STRATEGY_NAME, "default")
         strategy["spec"]["enablement"]["overrideScheduler"] = "kai"
+        # GPU requests default to setFromUnspecified: false (unlike CPU/memory, which
+        # default to true), so this must be opted in explicitly for the controller to
+        # set a fractional GPU request on a pod that doesn't request GPU at all yet.
+        strategy["spec"]["enablement"]["gpu"] = {"requests": {"setFromUnspecified": True}}
         strategy["spec"]["experimental"] = {"gpuKaiContract": "v1alpha1-2026-07"}
 
         k8s_clients.custom.create_namespaced_custom_object(
