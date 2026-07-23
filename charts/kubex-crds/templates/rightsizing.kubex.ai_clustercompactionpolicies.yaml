@@ -137,9 +137,41 @@ spec:
                         format: int32
                         minimum: 0
                         type: integer
+                      targetThresholds:
+                        description: |-
+                          targetThresholds defines the upper-bound thresholds for destination nodes. Evicted pods are
+                          only rescheduled on nodes whose utilization does not exceed any of these values. Must be
+                          greater than thresholds for at least one resource. The descheduler requires this field.
+                        properties:
+                          cpu:
+                            default: 80
+                            description: cpu is the CPU utilization upper-bound percentage
+                              for destination nodes.
+                            format: int32
+                            maximum: 100
+                            minimum: 0
+                            type: integer
+                          memory:
+                            default: 80
+                            description: memory is the memory utilization upper-bound
+                              percentage for destination nodes.
+                            format: int32
+                            maximum: 100
+                            minimum: 0
+                            type: integer
+                          pods:
+                            default: 80
+                            description: pods is the pod utilization upper-bound percentage
+                              for destination nodes.
+                            format: int32
+                            maximum: 100
+                            minimum: 0
+                            type: integer
+                        type: object
                       thresholds:
-                        description: thresholds configures request-based utilization
-                          thresholds.
+                        description: |-
+                          thresholds defines the underutilization thresholds. Nodes whose request-based utilization
+                          falls below all of these values are considered underutilized and will have pods evicted.
                         properties:
                           cpu:
                             default: 25

@@ -220,7 +220,10 @@ class TestCompactionScale:
                 node_selector={self.SCALE_TIER_LABEL: "dense"},
             )
 
-        # Candidate deployments on the sparse node — 15 × 30m CPU = 450m ≈ 24% utilization.
+        # Candidate deployments — no nodeSelector so they can migrate after the compaction
+        # scheduler takes over. The default LeastAllocated scheduler places all 15 on the
+        # empty sparse node (0% util beats 49% on dense nodes). Once the policy assigns
+        # kubex-compaction-scheduler (MostAllocated), replacement pods go to dense nodes.
         create_deployments_bulk(
             k8s_clients.apps,
             test_namespace,
@@ -230,10 +233,28 @@ class TestCompactionScale:
             mem_request="64Mi",
             cpu_limit="50m",
             mem_limit="64Mi",
-            node_selector={self.SCALE_TIER_LABEL: "sparse"},
         )
 
+        # Wait for all candidates to land on sparse before creating the policy; this ensures
+        # before_on_sparse == CANDIDATE_COUNT and prevents a race where the policy's rolling
+        # update starts before pods have even been scheduled.
+        def candidates_on_sparse() -> bool:
+            return (
+                self._pods_on_node(
+                    k8s_clients, test_namespace, self.CANDIDATE_BASE, self.CANDIDATE_COUNT, sparse
+                )
+                == self.CANDIDATE_COUNT
+            )
+
+        wait_for(candidates_on_sparse, timeout=120, message="all candidates scheduled on sparse node")
+
         t_start = time.time()
+
+        # Scope the policy to candidates only (not fillers). Targeting filler Deployments
+        # triggers rolling updates that deadlock: each dense node is full (900m filler), so
+        # the new filler pod can't be scheduled until the old one terminates, which doesn't
+        # happen until the new one is Running — a scheduling deadlock.
+        candidate_app_labels = [f"{self.CANDIDATE_BASE}-{i}" for i in range(self.CANDIDATE_COUNT)]
 
         k8s_clients.custom.create_cluster_custom_object(
             GROUP,
@@ -248,6 +269,15 @@ class TestCompactionScale:
                     "scope": {
                         "workloadTypes": ["Deployment"],
                         "namespaceSelector": {"operator": "In", "values": [test_namespace]},
+                        "labelSelector": {
+                            "matchExpressions": [
+                                {
+                                    "key": "app",
+                                    "operator": "In",
+                                    "values": candidate_app_labels,
+                                }
+                            ]
+                        },
                     },
                     "scheduler": {"useKubexScheduler": True},
                     "descheduler": {
