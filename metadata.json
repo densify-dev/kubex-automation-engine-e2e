@@ -1,4 +1,4 @@
 {
   "controller_image_repository": "densify/automation-controller",
-  "controller_image_tag": "1.8.0-beta2"
+  "controller_image_tag": "1.8.0-beta-gke4"
 }

@@ -185,3 +185,64 @@ Validate Helm-managed allowedPodOwners values before CR creation so users get a 
   {{- end }}
 {{- end }}
 {{- end }}
+
+{{/*
+Normalize a Kubernetes version to vMAJOR.MINOR.PATCH, dropping vendor suffixes.
+*/}}
+{{- define "kubex-automation-engine.normalizeKubernetesVersion" -}}
+{{- $raw := trim (default "" .) -}}
+{{- $normalized := regexFind "v[0-9]+\\.[0-9]+\\.[0-9]+" $raw -}}
+{{- if not $normalized -}}
+{{- fail (printf "unable to normalize Kubernetes version %q; expected vMAJOR.MINOR.PATCH" $raw) -}}
+{{- end -}}
+{{- $normalized -}}
+{{- end }}
+
+{{/*
+Resolve the Kubernetes version used for scheduler compatibility checks.
+*/}}
+{{- define "kubex-automation-engine.compactionSchedulerKubernetesVersion" -}}
+{{- $override := trim (default "" .Values.compactionScheduler.kubernetesVersionOverride) -}}
+{{- if $override -}}
+{{- include "kubex-automation-engine.normalizeKubernetesVersion" $override -}}
+{{- else -}}
+{{- include "kubex-automation-engine.normalizeKubernetesVersion" .Capabilities.KubeVersion.Version -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+Resolve the effective kube-scheduler image tag.
+*/}}
+{{- define "kubex-automation-engine.compactionSchedulerImageTag" -}}
+{{- $explicitTag := trim (default "" .Values.compactionScheduler.image.tag) -}}
+{{- if $explicitTag -}}
+{{- include "kubex-automation-engine.normalizeKubernetesVersion" $explicitTag -}}
+{{- else -}}
+{{- include "kubex-automation-engine.compactionSchedulerKubernetesVersion" . -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+Validate scheduler version skew against the target cluster version.
+*/}}
+{{- define "kubex-automation-engine.validateCompactionSchedulerVersion" -}}
+{{- if .Values.compactionScheduler.enabled -}}
+{{- $clusterVersion := include "kubex-automation-engine.compactionSchedulerKubernetesVersion" . -}}
+{{- $schedulerVersion := include "kubex-automation-engine.compactionSchedulerImageTag" . -}}
+{{- if semverCompare (printf "> %s" $clusterVersion) $schedulerVersion -}}
+{{- fail (printf "compactionScheduler image tag %s must not be newer than cluster version %s" $schedulerVersion $clusterVersion) -}}
+{{- end -}}
+{{- $allowedOlderMajorMinor := regexReplaceAll "^v([0-9]+)\\.([0-9]+)\\.[0-9]+$" $clusterVersion "${1}.${2}" -}}
+{{- $parts := splitList "." $allowedOlderMajorMinor -}}
+{{- $major := int (index $parts 0) -}}
+{{- $minor := int (index $parts 1) -}}
+{{- $floorMinor := 0 -}}
+{{- if gt $minor 0 -}}
+{{- $floorMinor = sub $minor 1 -}}
+{{- end -}}
+{{- $allowedOlder := printf "v%d.%d.0" $major $floorMinor -}}
+{{- if semverCompare (printf "< %s" $allowedOlder) $schedulerVersion -}}
+{{- fail (printf "compactionScheduler image tag %s must match cluster version %s or be at most one minor older" $schedulerVersion $clusterVersion) -}}
+{{- end -}}
+{{- end -}}
+{{- end }}

@@ -1,0 +1,23 @@
+---
+# Minimal compaction policy: consolidate all Deployments in the "production"
+# namespace onto fewer nodes using the Kubex-managed scheduler and descheduler.
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: ClusterCompactionPolicy
+metadata:
+  name: simple-compaction
+spec:
+  scope:
+    namespaceSelector:
+      operator: In
+      values:
+        - production
+    workloadTypes:
+      - Deployment
+  enabled: true
+  scheduler:
+    useKubexScheduler: true
+  descheduler:
+    enabled: true
+    maxNoOfPodsToEvictPerNode: 1
+    maxNoOfPodsToEvictPerNamespace: 1
+    maxNoOfPodsToEvictTotal: 1

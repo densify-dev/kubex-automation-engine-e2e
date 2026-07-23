@@ -28,6 +28,11 @@ def pytest_addoption(parser):
         help="Kind node image to use when creating the cluster, for example kindest/node:v1.35.0",
     )
     parser.addoption(
+        "--kind-config",
+        default=None,
+        help="Optional Kind cluster config file used when creating the test cluster",
+    )
+    parser.addoption(
         "--namespace", default="kubex", help="Namespace where the controller is deployed"
     )
     parser.addoption(
@@ -285,6 +290,7 @@ def kind_cluster(
             recommendations_file=request.config.getoption("--recommendations-file"),
             kubeai_chart_version=request.config.getoption("--kubeai-chart-version"),
             kind_node_image=request.config.getoption("--kind-node-image"),
+            kind_config=request.config.getoption("--kind-config"),
             cluster_name_value=request.config.getoption("--kubex-cluster-name"),
             secondary_cluster_enabled=request.config.getoption("--secondary-cluster-enabled"),
             primary_cluster_name=request.config.getoption("--primary-cluster-name"),

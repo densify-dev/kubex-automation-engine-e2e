@@ -11,6 +11,7 @@ OLDER_VERSION="${OLDER_VERSION:-v1.32.0}"
 NEWER_CLUSTER_NAME="${NEWER_CLUSTER_NAME:-e2e-135}"
 OLDER_CLUSTER_NAME="${OLDER_CLUSTER_NAME:-e2e-132}"
 
+
 NEWER_NODE_IMAGE="${NEWER_NODE_IMAGE:-kindest/node:${NEWER_VERSION}}"
 OLDER_NODE_IMAGE="${OLDER_NODE_IMAGE:-kindest/node:${OLDER_VERSION}}"
 
@@ -45,6 +46,8 @@ reset_cluster() {
   fi
 }
 
+
+
 run_suite() {
   local label="$1"
   local cluster_name="$2"
@@ -63,6 +66,7 @@ run_suite() {
     WITH_METRICS_SERVER="${with_metrics_server}" \
     WITH_KEDA="${with_keda}" \
     WITH_VPA="${with_vpa}" \
+    KIND_CONFIG="${KIND_CONFIG:-}" \
     GPU_SUITE="${gpu_suite}" \
     GPU_KIND_CONFIG="${gpu_kind_config}" \
     EXAMPLES_ROOT="${CONTROLLER_ROOT}/examples" \

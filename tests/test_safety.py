@@ -9,6 +9,7 @@ from kubernetes.client.rest import ApiException
 from helpers import (
     clear_pause_annotations,
     GROUP,
+    RIGHTSIZING_ANNOTATION,
     STATIC_POLICY_ANNOTATION,
     VERSION,
     automation_strategy_manifest,
@@ -355,4 +356,143 @@ class TestNamespacePauseUntil:
             resources_resized,
             timeout=450,
             message="resize applied after namespace pause removed",
+        )
+
+
+class TestNodeAllocatableAdmissionGap:
+    """Reproduce admission-time upsizes that bypass the scheduled-pod node capacity filter."""
+
+    STRATEGY_NAME = "e2e-node-capacity-strategy"
+    POLICY_NAME = "e2e-node-capacity-policy"
+    DEPLOYMENT = "e2e-node-capacity-workload"
+    UNSCHEDULABLE_RESOURCES = {
+        "requests": {"cpu": "80", "memory": "200Gi"},
+        "limits": {"cpu": "120", "memory": "240Gi"},
+    }
+
+    def _cleanup(self, k8s_clients, test_namespace):
+        delete_deployment(k8s_clients.apps, test_namespace, self.DEPLOYMENT)
+        for plural, name in [
+            ("staticpolicies", self.POLICY_NAME),
+            ("automationstrategies", self.STRATEGY_NAME),
+        ]:
+            try:
+                k8s_clients.custom.delete_namespaced_custom_object(
+                    GROUP, VERSION, test_namespace, plural, name
+                )
+            except ApiException:
+                pass
+
+    @pytest.fixture(autouse=True)
+    def setup_teardown(self, k8s_clients, test_namespace):
+        self._cleanup(k8s_clients, test_namespace)
+        yield
+        self._cleanup(k8s_clients, test_namespace)
+
+    @pytest.mark.timeout(900)
+    def test_unscheduled_admission_pod_can_bypass_node_allocatable_filter(self, k8s_clients, test_namespace):
+        strategy = automation_strategy_manifest(self.STRATEGY_NAME, test_namespace)
+        strategy["spec"]["inPlaceResize"] = {"enabled": False}
+        strategy["spec"]["podEviction"] = {"enabled": False}
+        strategy["spec"]["safetyChecks"] = {
+            "requireNodeAllocatable": True,
+            "nodeCpuHeadroom": "50%",
+            "nodeMemoryHeadroom": "4Gi",
+            "minReadyDuration": "0s",
+            "resizeRetryInterval": "5s",
+        }
+        k8s_clients.custom.create_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            test_namespace,
+            "automationstrategies",
+            strategy,
+        )
+
+        create_deployment(
+            k8s_clients.apps,
+            test_namespace,
+            self.DEPLOYMENT,
+            cpu_request="500m",
+            mem_request="512Mi",
+            cpu_limit="1",
+            mem_limit="1Gi",
+        )
+
+        policy = static_policy_manifest(
+            self.POLICY_NAME,
+            test_namespace,
+            strategy_name=self.STRATEGY_NAME,
+            label_selector_app=self.DEPLOYMENT,
+            cpu_request=self.UNSCHEDULABLE_RESOURCES["requests"]["cpu"],
+            mem_request=self.UNSCHEDULABLE_RESOURCES["requests"]["memory"],
+            cpu_limit=self.UNSCHEDULABLE_RESOURCES["limits"]["cpu"],
+            mem_limit=self.UNSCHEDULABLE_RESOURCES["limits"]["memory"],
+        )
+        k8s_clients.custom.create_namespaced_custom_object(
+            GROUP, VERSION, test_namespace, "staticpolicies", policy
+        )
+
+        def owner_annotation_updated():
+            deployment = k8s_clients.apps.read_namespaced_deployment(self.DEPLOYMENT, test_namespace)
+            raw = (deployment.metadata.annotations or {}).get(STATIC_POLICY_ANNOTATION, "")
+            return '"cpu":"80"' in raw and '"memory":"200Gi"' in raw
+
+        wait_for(
+            owner_annotation_updated,
+            timeout=180,
+            message="updated owner annotation for node capacity reproduction",
+        )
+
+        k8s_clients.apps.patch_namespaced_deployment_scale(
+            self.DEPLOYMENT,
+            test_namespace,
+            {"spec": {"replicas": 2}},
+        )
+
+        def pending_unschedulable_pod():
+            pods = k8s_clients.core.list_namespaced_pod(
+                test_namespace,
+                label_selector=f"app={self.DEPLOYMENT}",
+            ).items
+            for pod in pods:
+                if pod.status.phase != "Pending":
+                    continue
+                if any(
+                    condition.type == "PodScheduled"
+                    and condition.status == "False"
+                    and condition.reason == "Unschedulable"
+                    for condition in (pod.status.conditions or [])
+                ):
+                    return True
+            return False
+
+        wait_for(
+            pending_unschedulable_pod,
+            timeout=180,
+            message="admission-mutated pod pending with unschedulable status",
+        )
+
+        pods = k8s_clients.core.list_namespaced_pod(
+            test_namespace,
+            label_selector=f"app={self.DEPLOYMENT}",
+        ).items
+        pod = next(pod for pod in pods if pod.status.phase == "Pending")
+        resources = get_pod_resources(k8s_clients.core, test_namespace, pod.metadata.name)
+        deployment = k8s_clients.apps.read_namespaced_deployment(self.DEPLOYMENT, test_namespace)
+        events = k8s_clients.core.list_namespaced_event(test_namespace).items
+
+        assert resources["app"]["requests"].get("cpu") == self.UNSCHEDULABLE_RESOURCES["requests"]["cpu"]
+        assert resources["app"]["requests"].get("memory") == self.UNSCHEDULABLE_RESOURCES["requests"]["memory"]
+        assert resources["app"]["limits"].get("cpu") == self.UNSCHEDULABLE_RESOURCES["limits"]["cpu"]
+        assert resources["app"]["limits"].get("memory") == self.UNSCHEDULABLE_RESOURCES["limits"]["memory"]
+        assert RIGHTSIZING_ANNOTATION in (pod.metadata.annotations or {})
+        assert STATIC_POLICY_ANNOTATION in (deployment.metadata.annotations or {})
+        assert any(
+            event.reason == "FailedScheduling"
+            and event.involved_object
+            and event.involved_object.kind == "Pod"
+            and event.involved_object.name == pod.metadata.name
+            and "Insufficient" in (event.message or "")
+            for event in events
         )
