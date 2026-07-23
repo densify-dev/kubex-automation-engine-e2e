@@ -193,8 +193,8 @@ class TestCompactionScale:
             dense-b  nodes[1]: 1 filler at 900m CPU → ~49%  (above threshold → valid destination)
             sparse   nodes[2]: 15 candidates at 30m CPU each → ~24% (below threshold → evict)
 
-        HighNodeUtilization threshold: cpu=30%, targetThresholds.cpu=75%.
-        After one descheduler cycle (interval: 2m), all candidate pods should land on dense nodes.
+        HighNodeUtilization threshold: cpu=30%, memory=20%. Nodes above threshold are destinations.
+        After a few descheduler cycles (interval: 2m), all candidate pods should land on dense nodes.
         """
         nodes = self._schedulable_nodes(k8s_clients)
         if len(nodes) < 3:
@@ -291,9 +291,9 @@ class TestCompactionScale:
                         },
                         "highNodeUtilization": {
                             "thresholds": {"cpu": 30, "memory": 20},
-                            "targetThresholds": {"cpu": 75, "memory": 80},
                         },
                         "maxNoOfPodsToEvictPerNode": self.CANDIDATE_COUNT,
+                        "maxNoOfPodsToEvictPerNamespace": self.CANDIDATE_COUNT,
                         "maxNoOfPodsToEvictTotal": self.CANDIDATE_COUNT,
                         "defaultEvictor": {
                             "nodeFit": True,
@@ -321,7 +321,7 @@ class TestCompactionScale:
         print(f"\n=== Descheduler Consolidation Results ===")
         print(f"Candidates:         {self.CANDIDATE_COUNT} Deployments (30m CPU, 64Mi RAM each)")
         print(f"Dense fillers:      2 (900m CPU per node → ~49% utilization)")
-        print(f"Threshold:          cpu=30%, targetThresholds.cpu=75%")
+        print(f"Threshold:          cpu=30%, memory=20% (nodes above threshold are destinations)")
         print(f"Before: sparse={before_on_sparse} candidates, dense-a=filler, dense-b=filler")
         print(f"After:  sparse={after_on_sparse}, dense-a={after_on_dense_a} candidates, dense-b={after_on_dense_b} candidates")
         print(f"Time to fully consolidate: {elapsed:.1f}s")
