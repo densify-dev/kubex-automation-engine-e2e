@@ -33,6 +33,7 @@ from helpers import (
     kubectl,
     wait_for,
     wait_for_crd_condition,
+    wait_for_deployment_ready,
 )
 
 
@@ -219,6 +220,12 @@ class TestCompactionScale:
                 mem_limit="512Mi",
                 node_selector={self.SCALE_TIER_LABEL: "dense"},
             )
+
+        # Wait for fillers to be Running so their 900m CPU requests are visible to the scheduler
+        # before candidates are created. Without this, the scheduler may see all nodes as empty
+        # and place candidates on dense nodes instead of the sparse node.
+        for i in range(2):
+            wait_for_deployment_ready(k8s_clients.apps, test_namespace, f"{self.FILLER_BASE}-{i}", timeout=120)
 
         # Candidate deployments — no nodeSelector so they can migrate after the compaction
         # scheduler takes over. The default LeastAllocated scheduler places all 15 on the
