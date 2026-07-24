@@ -346,7 +346,7 @@ globalConfiguration:
   rescanInterval: "6h"
   # -- Kubex API request timeout
   # Can also use deployment.controllerEnv.apiRequestTimeout for backward compatibility
-  kubexAPIRequestTimeout: "30s"
+  kubexAPIRequestTimeout: "60s"
   # -- How long the pod admission webhook retries owner recommendation resolution
   webhookOwnerResolutionRetryTimeout: "1s"
   # -- Mutation log send interval
@@ -426,14 +426,6 @@ compactionScheduler:
     capabilities:
       drop:
         - "ALL"
-  # -- Optional image pull secrets for the dedicated compaction scheduler pod
-  imagePullSecrets: []
-  # -- Optional override for the Kubernetes version used to auto-default and validate the scheduler image tag.
-  kubernetesVersionOverride: ""
-  # -- Scheduler name advertised to compaction pods
-  schedulerName: kubex-compaction-scheduler
-  # -- Scheduler profile name written into the generated scheduler configuration
-  profileName: compaction-most-allocated
   resources:
     limits:
       cpu: 200m
@@ -446,8 +438,6 @@ compactionScheduler:
 compactionDescheduler:
   # -- Render shared RBAC and service account objects for controller-managed descheduler deployments.
   enabled: false
-  # -- Descheduling interval used by each per-policy descheduler deployment.
-  interval: 30m
   image:
     # -- Descheduler image repository
     repository: registry.k8s.io/descheduler/descheduler
@@ -478,7 +468,7 @@ deployment:
     # Timing configuration → Maps to GlobalConfiguration
     recommendationsFetchInterval: "1h" # → globalConfiguration.recommendationReloadInterval
     podScanInterval: "6h" # → globalConfiguration.rescanInterval
-    apiRequestTimeout: "30s" # → globalConfiguration.kubexAPIRequestTimeout
+    apiRequestTimeout: null
 
     # Resize method configuration → Maps to AutomationStrategy.inPlaceResize
     suppressInPlaceResizing: "false" # → automationStrategy.inPlaceResize.enabled (inverted)

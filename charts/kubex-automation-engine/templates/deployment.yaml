@@ -9,6 +9,7 @@
 {{- $openshiftFsGroupConfigured := and .Values.openshift.enabled (not (empty .Values.openshift.fsGroup)) -}}
 {{- $hasPodFsGroup := hasKey .Values.podSecurityContext "fsGroup" -}}
 {{- $hasEffectiveFsGroup := or $hasPodFsGroup $openshiftFsGroupConfigured -}}
+{{- $kubexAPIRequestTimeout := include "kubex-automation-engine.kubexAPIRequestTimeout" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -98,8 +99,6 @@ spec:
           value: {{ .Values.compactionScheduler.image.repository | quote }}
         - name: COMPACTION_DESCHEDULER_IMAGE
           value: {{ printf "%s:%s" .Values.compactionDescheduler.image.repository .Values.compactionDescheduler.image.tag | quote }}
-        - name: COMPACTION_DESCHEDULER_INTERVAL
-          value: {{ .Values.compactionDescheduler.interval | quote }}
         - name: COMPACTION_DESCHEDULER_PULL_POLICY
           value: {{ .Values.compactionDescheduler.image.pullPolicy | quote }}
         - name: COMPACTION_DESCHEDULER_RESOURCE_PREFIX
@@ -171,6 +170,8 @@ spec:
           value: /densify/config/api
         - name: SPOOL
           value: /densify/data/spool
+        - name: API_REQUEST_TIMEOUT
+          value: {{ $kubexAPIRequestTimeout | quote }}
         - name: DENSIFY_USERNAME
           valueFrom:
             secretKeyRef:

@@ -383,6 +383,7 @@ def create_deployment(
     node_selector: dict[str, str] | None = None,
     tolerations: list[client.V1Toleration] | None = None,
     app_label: str | None = None,
+    topology_spread_constraints: list[client.V1TopologySpreadConstraint] | None = None,
 ) -> client.V1Deployment:
     """Create a minimal Deployment for testing resource mutation."""
     app_label = app_label or name
@@ -399,6 +400,7 @@ def create_deployment(
                 spec=client.V1PodSpec(
                     node_selector=node_selector,
                     tolerations=tolerations,
+                    topology_spread_constraints=topology_spread_constraints,
                     containers=[
                         client.V1Container(
                             name="app",

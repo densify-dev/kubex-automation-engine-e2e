@@ -46,16 +46,34 @@ class TestCompactionScale:
     CANDIDATE_BASE = "e2e-scale-candidate"
     POLICY_NAME = "e2e-compaction-scale"
     SCHEDULER_NAME = "kubex-compaction-scheduler"
+    # e2-standard-2 GKE node allocatable CPU in millicores.
+    ALLOCATABLE_CPU_M = 1930
+    # Target dense-node utilization — well above the 65% HighNodeUtilization threshold.
+    DENSE_TARGET_CPU = 0.70
 
     @pytest.fixture(autouse=True)
     def cleanup(self, k8s_clients, kube_context, test_namespace):
+        # Pre-clean any leftovers from previous aborted runs so tests are restartable.
+        self._do_cleanup(k8s_clients, kube_context, test_namespace)
         yield
+        self._do_cleanup(k8s_clients, kube_context, test_namespace)
+
+    def _do_cleanup(self, k8s_clients, kube_context, test_namespace) -> None:
         self._delete_policy(k8s_clients, self.POLICY_NAME)
         delete_deployments_bulk(k8s_clients.apps, test_namespace, self.TARGET_BASE, self.WORKLOAD_COUNT)
         delete_deployments_bulk(k8s_clients.apps, test_namespace, self.FILLER_BASE, 2)
         delete_deployments_bulk(k8s_clients.apps, test_namespace, self.CANDIDATE_BASE, self.CANDIDATE_COUNT)
         for node in self._schedulable_nodes(k8s_clients):
             kubectl("label", "node", node, f"{self.SCALE_TIER_LABEL}-", context=kube_context, check=False)
+        # Wait for all test pods to fully terminate so their CPU/memory requests are released
+        # from the nodes. Without this wait, pods from a previous test (e.g. 100 target pods at
+        # 10m CPU each, ~333m per node) remain Terminating and counted as "allocated" by the
+        # scheduler, filling dense nodes to ~100% and forcing the next test's candidates onto k8pb.
+        wait_for(
+            lambda: len(k8s_clients.core.list_namespaced_pod(test_namespace).items) == 0,
+            timeout=120,
+            message="all test namespace pods terminated",
+        )
 
     # ── helpers ──────────────────────────────────────────────────────────────
 
@@ -67,6 +85,57 @@ class TestCompactionScale:
             and node.metadata.name
             and not any(t.effect == "NoSchedule" for t in (node.spec.taints or []))
         )
+
+    @staticmethod
+    def _parse_cpu_millis(cpu_str: str) -> int:
+        s = str(cpu_str).strip()
+        if s.endswith("m"):
+            return int(s[:-1])
+        return int(float(s) * 1000)
+
+    def _node_cpu_requests_map(self, k8s_clients) -> dict[str, int]:
+        """Return {node_name: total CPU requests in millicores} across all non-terminated pods."""
+        schedulable = set(self._schedulable_nodes(k8s_clients))
+        cpu_map: dict[str, int] = {n: 0 for n in schedulable}
+        for pod in k8s_clients.core.list_pod_for_all_namespaces().items:
+            if not pod.spec or not pod.spec.node_name:
+                continue
+            if pod.spec.node_name not in cpu_map:
+                continue
+            # Skip terminating pods; their requests are already released.
+            if pod.metadata and pod.metadata.deletion_timestamp:
+                continue
+            for c in pod.spec.containers or []:
+                if c.resources and c.resources.requests:
+                    raw = c.resources.requests.get("cpu") or "0"
+                    cpu_map[pod.spec.node_name] += self._parse_cpu_millis(raw)
+        return cpu_map
+
+    def _select_dense_and_sparse_nodes(self, k8s_clients) -> tuple[str, str, str, int, int]:
+        """Pick dense_a, dense_b, sparse and per-node filler CPUs (millicores).
+
+        Selects the 2 most-loaded nodes as dense and the least-loaded as sparse so
+        the fillers needed to reach the 65% HighNodeUtilization threshold are small
+        enough to fit even on heavily-loaded nodes.  Filler sizes are computed per
+        node to target DENSE_TARGET_CPU (70%) utilization, capped to leave room for
+        rescheduled candidates.
+        """
+        cpu_map = self._node_cpu_requests_map(k8s_clients)
+        nodes = self._schedulable_nodes(k8s_clients)
+        sorted_nodes = sorted(nodes, key=lambda n: cpu_map.get(n, 0), reverse=True)
+        dense_a, dense_b, sparse = sorted_nodes[0], sorted_nodes[1], sorted_nodes[2]
+
+        target_m = int(self.ALLOCATABLE_CPU_M * self.DENSE_TARGET_CPU)
+        # Leave room for rescheduled candidates plus a small margin.
+        slack_m = self.CANDIDATE_COUNT * 30 + 50
+
+        def _filler(node: str) -> int:
+            base = cpu_map.get(node, 0)
+            needed = max(target_m - base, 50)
+            cap = self.ALLOCATABLE_CPU_M - base - slack_m
+            return min(needed, max(cap, 50))
+
+        return dense_a, dense_b, sparse, _filler(dense_a), _filler(dense_b)
 
     def _label_node(self, kube_context: str, node_name: str, node_labels: dict[str, str]) -> None:
         args = ["label", "node", node_name]
@@ -189,71 +258,103 @@ class TestCompactionScale:
     def test_descheduler_consolidates_sparse_workloads(self, k8s_clients, kube_context, test_namespace):
         """Measure descheduler consolidation: time for sparse-node candidate pods to migrate to dense nodes.
 
-        Node layout (e2-standard-2, ~1850m CPU allocatable):
-            dense-a  nodes[0]: 1 filler at 900m CPU → ~49%  (above threshold → valid destination)
-            dense-b  nodes[1]: 1 filler at 900m CPU → ~49%  (above threshold → valid destination)
-            sparse   nodes[2]: 15 candidates at 30m CPU each → ~24% (below threshold → evict)
+        Node layout (e2-standard-2, 1930m CPU allocatable):
+            dense-a  most-loaded node:  filler sized to reach ~70% CPU  (above threshold → destination)
+            dense-b  2nd-most-loaded:   filler sized to reach ~70% CPU  (above threshold → destination)
+            sparse   least-loaded node: 15 candidates at 30m CPU each   (below threshold → evict)
 
-        HighNodeUtilization threshold: cpu=30%, memory=20%. Nodes above threshold are destinations.
-        After a few descheduler cycles (interval: 2m), all candidate pods should land on dense nodes.
+        Nodes are selected dynamically by current CPU requests so that filler pods always fit
+        even when GKE system pods (KEDA, VPA, etc.) are concentrated on certain nodes.
+        Filler sizes are computed per-node to target 70% CPU utilization.
+
+        HighNodeUtilization threshold: cpu=65%, memory=50%, pods=40%. GKE system pods consume
+        varying CPU requests per node; sparse node (typically ≤40% CPU incl. candidates) falls
+        below all thresholds while dense nodes exceed the CPU threshold. After a few descheduler
+        CronJob invocations (interval: 2m), all candidate pods should land on dense nodes.
         """
         nodes = self._schedulable_nodes(k8s_clients)
         if len(nodes) < 3:
             pytest.skip(f"requires ≥3 schedulable nodes, got {len(nodes)}")
 
-        dense_a, dense_b, sparse = nodes[0], nodes[1], nodes[2]
+        dense_a, dense_b, sparse, filler_a_cpu, filler_b_cpu = self._select_dense_and_sparse_nodes(k8s_clients)
 
         self._label_node(kube_context, dense_a, {self.SCALE_TIER_LABEL: "dense"})
         self._label_node(kube_context, dense_b, {self.SCALE_TIER_LABEL: "dense"})
         self._label_node(kube_context, sparse, {self.SCALE_TIER_LABEL: "sparse"})
 
-        # Filler deployments on dense nodes — one per node, pinned via nodeSelector.
-        for i, node_name in enumerate([dense_a, dense_b]):
+        # Filler deployments: each dense node gets exactly one filler, pinned to that node via
+        # the hostname nodeSelector. The filler CPU is computed per-node to push it to ~70% CPU
+        # (above the 65% HighNodeUtilization threshold) regardless of how many system pods the
+        # node already carries. Hostname pinning prevents both fillers from landing on the same
+        # node when one node cannot accommodate both 900m requests.
+        for i, (node_name, filler_cpu) in enumerate([(dense_a, filler_a_cpu), (dense_b, filler_b_cpu)]):
             create_deployment(
                 k8s_clients.apps,
                 test_namespace,
                 f"{self.FILLER_BASE}-{i}",
                 app_label=f"{self.FILLER_BASE}-{i}",
-                cpu_request="900m",
-                mem_request="512Mi",
-                cpu_limit="900m",
-                mem_limit="512Mi",
-                node_selector={self.SCALE_TIER_LABEL: "dense"},
+                cpu_request=f"{filler_cpu}m",
+                mem_request="256Mi",
+                cpu_limit=f"{filler_cpu}m",
+                mem_limit="256Mi",
+                node_selector={"kubernetes.io/hostname": node_name},
             )
 
-        # Wait for fillers to be Running so their 900m CPU requests are visible to the scheduler
+        # Wait for fillers to be Running so their CPU requests are visible to the scheduler
         # before candidates are created. Without this, the scheduler may see all nodes as empty
         # and place candidates on dense nodes instead of the sparse node.
         for i in range(2):
             wait_for_deployment_ready(k8s_clients.apps, test_namespace, f"{self.FILLER_BASE}-{i}")
 
         # Candidate deployments — no nodeSelector so they can migrate after the compaction
-        # scheduler takes over. The default LeastAllocated scheduler places all 15 on the
-        # empty sparse node (0% util beats 49% on dense nodes). Once the policy assigns
-        # kubex-compaction-scheduler (MostAllocated), replacement pods go to dense nodes.
+        # scheduler takes over. LeastAllocated places most candidates on the sparse node
+        # (lowest CPU%). Occasionally 1-2 land on a dense node due to scheduler assumed-cache
+        # lag (a dense node's filler may not yet be counted at scheduling time for early pods).
+        # The descheduler drains whatever ends up on sparse regardless.
+        #
+        # Memory request is kept small (8Mi) so that MostAllocated scoring is CPU-dominated.
+        # k8pb carries high memory requests from VPA pods (~1834Mi, 30%) which would otherwise
+        # nearly equalize the MostAllocated score with the CPU-heavy dense nodes, causing
+        # rolling-update replacement pods to land randomly rather than consistently on dense nodes.
+        #
+        # Zone-level topologySpreadConstraint overrides the kube-scheduler default hostname
+        # constraint (maxSkew:3, weight:2). Since all three nodes are in the same GKE zone,
+        # every node maps to the same topology domain — PodTopologySpread gives equal scores to
+        # all nodes, so NodeResourcesFit (MostAllocated, weight:1) dominates and replacement pods
+        # consistently land on the CPU-heavy dense nodes after descheduler eviction.
         create_deployments_bulk(
             k8s_clients.apps,
             test_namespace,
             self.CANDIDATE_BASE,
             self.CANDIDATE_COUNT,
             cpu_request="30m",
-            mem_request="64Mi",
+            mem_request="8Mi",
             cpu_limit="50m",
             mem_limit="64Mi",
+            topology_spread_constraints=[
+                client.V1TopologySpreadConstraint(
+                    max_skew=100,
+                    topology_key="topology.kubernetes.io/zone",
+                    when_unsatisfiable="ScheduleAnyway",
+                    label_selector=client.V1LabelSelector(match_labels={}),
+                )
+            ],
         )
 
-        # Wait for all candidates to land on sparse before creating the policy; this ensures
-        # before_on_sparse == CANDIDATE_COUNT and prevents a race where the policy's rolling
-        # update starts before pods have even been scheduled.
-        def candidates_on_sparse() -> bool:
-            return (
-                self._pods_on_node(
-                    k8s_clients, test_namespace, self.CANDIDATE_BASE, self.CANDIDATE_COUNT, sparse
-                )
-                == self.CANDIDATE_COUNT
-            )
+        # Wait for all candidate pods to be Running (wherever they landed) before creating
+        # the policy. This prevents the policy's rolling update from racing with initial
+        # pod scheduling.
+        def all_candidates_running() -> bool:
+            for i in range(self.CANDIDATE_COUNT):
+                pods = k8s_clients.core.list_namespaced_pod(
+                    test_namespace,
+                    label_selector=f"app={self.CANDIDATE_BASE}-{i}",
+                ).items
+                if not any(p.status and p.status.phase == "Running" for p in pods):
+                    return False
+            return True
 
-        wait_for(candidates_on_sparse, timeout=120, message="all candidates scheduled on sparse node")
+        wait_for(all_candidates_running, timeout=120, message="all candidates Running")
 
         t_start = time.time()
 
@@ -297,7 +398,7 @@ class TestCompactionScale:
                             ],
                         },
                         "highNodeUtilization": {
-                            "thresholds": {"cpu": 30, "memory": 20},
+                            "thresholds": {"cpu": 65, "memory": 50, "pods": 40},
                         },
                         "maxNoOfPodsToEvictPerNode": self.CANDIDATE_COUNT,
                         "maxNoOfPodsToEvictPerNamespace": self.CANDIDATE_COUNT,
@@ -325,10 +426,14 @@ class TestCompactionScale:
         after_on_dense_a = self._pods_on_node(k8s_clients, test_namespace, self.CANDIDATE_BASE, self.CANDIDATE_COUNT, dense_a)
         after_on_dense_b = self._pods_on_node(k8s_clients, test_namespace, self.CANDIDATE_BASE, self.CANDIDATE_COUNT, dense_b)
 
+        dense_a_pct = int((filler_a_cpu) / self.ALLOCATABLE_CPU_M * 100)
+        dense_b_pct = int((filler_b_cpu) / self.ALLOCATABLE_CPU_M * 100)
+
         print(f"\n=== Descheduler Consolidation Results ===")
-        print(f"Candidates:         {self.CANDIDATE_COUNT} Deployments (30m CPU, 64Mi RAM each)")
-        print(f"Dense fillers:      2 (900m CPU per node → ~49% utilization)")
-        print(f"Threshold:          cpu=30%, memory=20% (nodes above threshold are destinations)")
+        print(f"Candidates:         {self.CANDIDATE_COUNT} Deployments (30m CPU, 8Mi RAM each)")
+        print(f"Dense-a filler:     {filler_a_cpu}m CPU (+{dense_a_pct}% utilization) on {dense_a}")
+        print(f"Dense-b filler:     {filler_b_cpu}m CPU (+{dense_b_pct}% utilization) on {dense_b}")
+        print(f"Threshold:          cpu=65%, memory=50%, pods=40% (nodes above threshold are destinations)")
         print(f"Before: sparse={before_on_sparse} candidates, dense-a=filler, dense-b=filler")
         print(f"After:  sparse={after_on_sparse}, dense-a={after_on_dense_a} candidates, dense-b={after_on_dense_b} candidates")
         print(f"Time to fully consolidate: {elapsed:.1f}s")

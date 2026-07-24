@@ -22,7 +22,6 @@ compactionScheduler:
 
 compactionDescheduler:
   enabled: true          # deploy shared RBAC / service account for per-policy deschedulers
-  interval: 30m          # default descheduling interval (overridable per-policy)
 ```
 
 Helm installs only the ServiceAccount and RBAC for the compaction scheduler. The `kubex-compaction-scheduler` Deployment and its ConfigMap are fully owned by the controller: the Deployment is created on first reconcile and kept in sync thereafter (image tag auto-updated to match the cluster Kubernetes version; ConfigMap regenerated whenever policies change). No GitOps drift-ignore configuration is required.
@@ -131,7 +130,7 @@ Not every workload type receives the same level of compaction support. The table
 | `spec.descheduler.highNodeUtilization.thresholds.cpu` | `25` | CPU utilization threshold for `HighNodeUtilization`. |
 | `spec.descheduler.highNodeUtilization.thresholds.memory` | `25` | Memory utilization threshold for `HighNodeUtilization`. |
 | `spec.descheduler.highNodeUtilization.thresholds.pods` | `25` | Pod utilization threshold for `HighNodeUtilization`. |
-| `spec.descheduler.interval` | operator default (30m) | How often the descheduler runs for this policy. Zero uses the `COMPACTION_DESCHEDULER_INTERVAL` env var default. |
+| `spec.descheduler.interval` | `30m` | How often the descheduler runs for this policy. |
 | `spec.descheduler.loopDetectionWindow` | `15m` | Rolling window for counting repeated same-fingerprint evictions. |
 | `spec.descheduler.loopDetectionThreshold` | `3` | Number of observations within the window before suppression triggers. |
 | `spec.descheduler.suppressionDuration` | `=loopDetectionWindow` | How long the suppressed label stays on the workload. |
