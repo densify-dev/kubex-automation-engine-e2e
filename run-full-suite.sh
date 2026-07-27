@@ -81,10 +81,10 @@ append_flag_if_set() {
 effective_kind_config() {
   if [[ -n "${KIND_CONFIG:-}" ]]; then
     printf '%s\n' "$KIND_CONFIG"
-  elif is_true "$GPU_SUITE" && [[ -n "${GPU_KIND_CONFIG:-}" ]]; then
-    printf '%s\n' "$GPU_KIND_CONFIG"
   elif [[ -f "${REPO_ROOT}/kind-config.yaml" ]]; then
     printf '%s\n' "${REPO_ROOT}/kind-config.yaml"
+  elif is_true "$GPU_SUITE" && [[ -n "${GPU_KIND_CONFIG:-}" ]]; then
+    printf '%s\n' "$GPU_KIND_CONFIG"
   fi
 }
 

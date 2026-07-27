@@ -5,3 +5,10 @@ nodes:
   - role: worker
   - role: worker
   - role: worker
+  - role: worker
+    labels:
+      nvidia.com/gpu.present: "true"
+    extraMounts:
+      - hostPath: /proc
+        containerPath: /physical-host-proc
+        readOnly: true
