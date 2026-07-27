@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: compaction-test
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: compaction-test-web
+  namespace: compaction-test
+  labels:
+    team: compaction-test
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: compaction-test-web
+  template:
+    metadata:
+      labels:
+        app: compaction-test-web
+        team: compaction-test
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: compaction-test-web
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          resources:
+            requests:
+              cpu: 40m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: compaction-test-worker
+  namespace: compaction-test
+  labels:
+    team: compaction-test
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: compaction-test-worker
+  template:
+    metadata:
+      labels:
+        app: compaction-test-worker
+        team: compaction-test
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: compaction-test-worker
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          resources:
+            requests:
+              cpu: 40m
+              memory: 64Mi
+            limits:
+              memory: 128Mi

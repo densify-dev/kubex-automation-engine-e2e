@@ -46,9 +46,9 @@ spec:
     name: gpu-kai-strategy
 ---
 apiVersion: rightsizing.kubex.ai/v1alpha1
-kind: GpuRebalancingPolicy
+kind: GpuReactivePolicy
 metadata:
-  name: gpu-kai-rebalancing-policy
+  name: gpu-kai-reactive-policy
   namespace: gpu-kai
 spec:
   experimental:

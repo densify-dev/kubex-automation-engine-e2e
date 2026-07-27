@@ -18,8 +18,8 @@ All GPU/KAI fields and custom resources are experimental and may change. Every m
    - Demonstrates migration behavior by enabling `spec.enablement.overrideScheduler: "kai"` in strategy.
    - Useful to validate conversion from native GPU resources to KAI GPU scheduling.
 
-4) `gpu-rebalancing-policy.yaml`
-   - Namespaced `GpuRebalancingPolicy` that emits GPU upsize recommendations from Prometheus.
+4) `gpu-reactive-policy.yaml`
+   - Namespaced `GpuReactivePolicy` that emits GPU upsize recommendations from Prometheus.
    - Demonstrates threshold/upsize-metrics-window/max-upsize fields and Prometheus label mapping.
 
 5) `gpu-consolidation-policy.yaml`
@@ -40,6 +40,6 @@ Apply examples:
 kubectl apply -f examples/gpus/simple-static-gpu-vanilla.yaml
 kubectl apply -f examples/gpus/simple-static-gpu-kai.yaml
 kubectl apply -f examples/gpus/simple-static-gpu-vanilla-2kai.yaml
-kubectl apply -f examples/gpus/gpu-rebalancing-policy.yaml
+kubectl apply -f examples/gpus/gpu-reactive-policy.yaml
 kubectl apply -f examples/gpus/gpu-consolidation-policy.yaml
 ```

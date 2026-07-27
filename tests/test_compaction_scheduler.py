@@ -489,7 +489,10 @@ class TestCompactionScheduler:
                     "labelSelector": {"matchLabels": {"role": "candidate"}},
                 },
                 "highNodeUtilization": {
-                    "thresholds": {"cpu": 50, "memory": 30, "pods": 15},
+                    # kind nodes have ~1930m allocatable CPU; busy-a/busy-b nodes sit at
+                    # ~21% (8×50m/1930m). Use cpu=10 so those nodes are valid destinations
+                    # (>10%) while the single-candidate node (~5%) remains a source (<10%).
+                    "thresholds": {"cpu": 10, "memory": 10, "pods": 5},
                     "numberOfNodes": 0,
                 },
             },

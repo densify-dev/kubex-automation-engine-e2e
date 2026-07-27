@@ -156,14 +156,14 @@ cleanup_rightsizing_resources() {
     proactivepolicies
     staticpolicies
     rollbackpolicies
-    gpurebalancingpolicies
+    gpureactivepolicies
   )
   local cluster_resources=(
     clusterautomationstrategies
     clusterproactivepolicies
     clusterstaticpolicies
     clusterrollbackpolicies
-    clustergpurebalancingpolicies
+    clustergpureactivepolicies
     globalconfigurations
     policyevaluations
     gpuconsolidationpolicies
@@ -346,8 +346,8 @@ verify_uninstall() {
     clusterproactivepolicies.rightsizing.kubex.ai
     rollbackpolicies.rightsizing.kubex.ai
     clusterrollbackpolicies.rightsizing.kubex.ai
-    gpurebalancingpolicies.rightsizing.kubex.ai
-    clustergpurebalancingpolicies.rightsizing.kubex.ai
+    gpureactivepolicies.rightsizing.kubex.ai
+    clustergpureactivepolicies.rightsizing.kubex.ai
     gpuconsolidationpolicies.rightsizing.kubex.ai
     podaffinitypolicies.rightsizing.kubex.ai
   )

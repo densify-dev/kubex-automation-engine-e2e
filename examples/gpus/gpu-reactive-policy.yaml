@@ -1,7 +1,7 @@
 apiVersion: rightsizing.kubex.ai/v1alpha1
 kind: AutomationStrategy
 metadata:
-  name: gpu-rebalancing-strategy
+  name: gpu-reactive-strategy
   namespace: default
 spec:
   experimental:
@@ -16,9 +16,9 @@ spec:
 
 ---
 apiVersion: rightsizing.kubex.ai/v1alpha1
-kind: GpuRebalancingPolicy
+kind: GpuReactivePolicy
 metadata:
-  name: gpu-rebalancing-policy
+  name: gpu-reactive-policy
   namespace: default
 spec:
   experimental:
@@ -62,4 +62,4 @@ spec:
         podLabel: pod
         containerLabel: container
   automationStrategyRef:
-    name: gpu-rebalancing-strategy
+    name: gpu-reactive-strategy

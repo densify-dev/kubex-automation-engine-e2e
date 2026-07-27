@@ -147,13 +147,13 @@ Proposal sync supports these `rightsizing.kubex.ai/v1alpha1` kinds:
 - `StaticPolicy`
 - `ProactivePolicy`
 - `RollbackPolicy`
-- `GpuRebalancingPolicy`
+- `GpuReactivePolicy`
 - `ClusterAutomationStrategy`
 - `ClusterStaticPolicy`
 - `ClusterProactivePolicy`
 - `PodAffinityPolicy`
 - `ClusterRollbackPolicy`
-- `ClusterGpuRebalancingPolicy`
+- `ClusterGpuReactivePolicy`
 - `GpuConsolidationPolicy`
 
 Proposal sync does not manage `PolicyEvaluation` or any other unsupported CRs.

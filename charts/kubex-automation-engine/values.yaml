@@ -351,8 +351,8 @@ globalConfiguration:
   webhookOwnerResolutionRetryTimeout: "1s"
   # -- Mutation log send interval
   mutationLogInterval: "5m"
-  # -- GPU rebalancing policy workload check interval
-  gpuRebalancingCheckInterval: "1m"
+  # -- GPU reactive policy workload check interval
+  gpuReactiveCheckInterval: "1m"
   # -- Policy snapshot upload interval
   snapshotInterval: "30m"
   # -- Controller heartbeat report interval
@@ -396,7 +396,7 @@ globalConfiguration:
     # -- Scheduler name set on pods when Kai GPU mutation is applied by the webhook
     schedulerName: "kai-scheduler"
   prometheus:
-    # -- Prometheus base URL used by GPU rebalancing policies
+    # -- Prometheus base URL used by GPU reactive policies
     url: "http://kubex-prometheus-server.kubex.svc"
     # -- Timeout for individual Prometheus query requests
     requestTimeout: "30s"

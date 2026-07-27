@@ -14,7 +14,7 @@ spec:
   rescanInterval: {{ $rescanInterval }}
   mutationLogInterval: {{ .Values.globalConfiguration.mutationLogInterval }}
   snapshotInterval: {{ .Values.globalConfiguration.snapshotInterval }}
-  gpuRebalancingCheckInterval: {{ .Values.globalConfiguration.gpuRebalancingCheckInterval }}
+  gpuReactiveCheckInterval: {{ .Values.globalConfiguration.gpuReactiveCheckInterval }}
   heartbeatInterval: {{ .Values.globalConfiguration.heartbeatInterval }}
   kubexAPIRequestTimeout: {{ $kubexAPIRequestTimeout }}
   webhookOwnerResolutionRetryTimeout: {{ .Values.globalConfiguration.webhookOwnerResolutionRetryTimeout | quote }}

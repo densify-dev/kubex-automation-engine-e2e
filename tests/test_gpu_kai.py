@@ -1,4 +1,4 @@
-"""GPU scheduling and rebalancing e2e smoke tests."""
+"""GPU scheduling and reactive policy e2e smoke tests."""
 
 import json
 from datetime import datetime, timezone
@@ -36,7 +36,7 @@ from helpers import (
 GPU_MANIFEST = EXAMPLES_ROOT / "gpus" / "simple-static-gpu-kai.yaml"
 GPU_MIGRATION_MANIFEST = EXAMPLES_ROOT / "gpus" / "simple-static-gpu-vanilla-2kai.yaml"
 GPU_CONSOLIDATION_MANIFEST = EXAMPLES_ROOT / "gpus" / "gpu-consolidation-policy.yaml"
-GPU_REBALANCING_MANIFEST = EXAMPLES_ROOT / "gpus" / "gpu-rebalancing-policy.yaml"
+GPU_REACTIVE_MANIFEST = EXAMPLES_ROOT / "gpus" / "gpu-reactive-policy.yaml"
 KUBEAI_MODEL_MANIFEST = EXAMPLES_ROOT / "staticpolicy" / "model.yaml"
 
 pytestmark = pytest.mark.gpu_suite
@@ -353,16 +353,16 @@ class TestGpuKai:
                 pass
 
     @pytest.mark.timeout(900)
-    def test_gpu_rebalancing_policy_reaches_status(self, kube_context, k8s_clients):
-        policy_name = "gpu-rebalancing-policy"
+    def test_gpu_reactive_policy_reaches_status(self, kube_context, k8s_clients):
+        policy_name = "gpu-reactive-policy"
         try:
             _wait_for_global_configuration_ready(k8s_clients)
             apply_manifest(GPU_MIGRATION_MANIFEST, kube_context)
-            apply_manifest(GPU_REBALANCING_MANIFEST, kube_context)
+            apply_manifest(GPU_REACTIVE_MANIFEST, kube_context)
 
             wait_for_crd_condition(
                 k8s_clients.custom,
-                "gpurebalancingpolicies",
+                "gpureactivepolicies",
                 policy_name,
                 "AutomationStrategyResolved",
                 namespace="default",
@@ -370,7 +370,7 @@ class TestGpuKai:
                 timeout=600,
             )
         finally:
-            delete_manifest_in_reverse(GPU_REBALANCING_MANIFEST, kube_context)
+            delete_manifest_in_reverse(GPU_REACTIVE_MANIFEST, kube_context)
             delete_manifest_in_reverse(GPU_MIGRATION_MANIFEST, kube_context)
 
 
