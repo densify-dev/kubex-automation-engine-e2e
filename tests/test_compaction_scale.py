@@ -270,7 +270,7 @@ class TestCompactionScale:
         HighNodeUtilization threshold: cpu=65%, memory=50%, pods=40%. GKE system pods consume
         varying CPU requests per node; sparse node (typically ≤40% CPU incl. candidates) falls
         below all thresholds while dense nodes exceed the CPU threshold. After a few descheduler
-        CronJob invocations (interval: 2m), all candidate pods should land on dense nodes.
+        CronJob invocations (interval: */2 * * * *), all candidate pods should land on dense nodes.
         """
         nodes = self._schedulable_nodes(k8s_clients)
         if len(nodes) < 3:
@@ -390,7 +390,7 @@ class TestCompactionScale:
                     "scheduler": {"useKubexScheduler": True},
                     "descheduler": {
                         "enabled": True,
-                        "interval": "2m",
+                        "interval": "*/2 * * * *",
                         "loopDetectionThreshold": 10,
                         "nodeSelector": {
                             "matchExpressions": [

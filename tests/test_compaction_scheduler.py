@@ -18,6 +18,7 @@ from helpers import (
     delete_deployments_bulk,
     delete_stateful_set,
     get_crd,
+    get_cronjob,
     get_deployment,
     get_stateful_set,
     get_stateful_set_pod,
@@ -133,10 +134,11 @@ class TestCompactionScheduler:
         return sorted(configmaps, key=lambda cm: cm.metadata.name)[0]
 
     def _assert_compaction_runtime(self, k8s_clients, policy_name: str, expected_selector: str) -> None:
-        deployment_name, _ = self._runtime_names(policy_name)
-        runtime = get_deployment(k8s_clients.apps, self.RUNTIME_NAMESPACE, deployment_name)
-        assert runtime.spec.template.spec.service_account_name == self.DESCHEDULER_PREFIX
-        assert runtime.spec.template.spec.containers[0].image.startswith("registry.k8s.io/descheduler/descheduler:")
+        cronjob_name, _ = self._runtime_names(policy_name)
+        runtime = get_cronjob(k8s_clients.batch, self.RUNTIME_NAMESPACE, cronjob_name)
+        pod_spec = runtime.spec.job_template.spec.template.spec
+        assert pod_spec.service_account_name == self.DESCHEDULER_PREFIX
+        assert pod_spec.containers[0].image.startswith("registry.k8s.io/descheduler/descheduler:")
 
         configmap = self._find_compaction_descheduler_configmap(k8s_clients, policy_name)
         rendered = configmap.data["policy.yaml"]

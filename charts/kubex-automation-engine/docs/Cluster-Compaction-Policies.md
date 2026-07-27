@@ -130,7 +130,7 @@ Not every workload type receives the same level of compaction support. The table
 | `spec.descheduler.highNodeUtilization.thresholds.cpu` | `25` | CPU utilization threshold for `HighNodeUtilization`. |
 | `spec.descheduler.highNodeUtilization.thresholds.memory` | `25` | Memory utilization threshold for `HighNodeUtilization`. |
 | `spec.descheduler.highNodeUtilization.thresholds.pods` | `25` | Pod utilization threshold for `HighNodeUtilization`. |
-| `spec.descheduler.interval` | `30m` | How often the descheduler runs for this policy. |
+| `spec.descheduler.interval` | `*/30 * * * *` | Cron schedule for how often the descheduler runs (e.g. `*/30 * * * *`, `0 */2 * * *`). |
 | `spec.descheduler.loopDetectionWindow` | `15m` | Rolling window for counting repeated same-fingerprint evictions. |
 | `spec.descheduler.loopDetectionThreshold` | `3` | Number of observations within the window before suppression triggers. |
 | `spec.descheduler.suppressionDuration` | `=loopDetectionWindow` | How long the suppressed label stays on the workload. |

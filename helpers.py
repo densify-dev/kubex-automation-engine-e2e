@@ -716,6 +716,11 @@ def get_deployment(apps: client.AppsV1Api, namespace: str, name: str) -> client.
     return apps.read_namespaced_deployment(name, namespace)
 
 
+def get_cronjob(batch: client.BatchV1Api, namespace: str, name: str) -> client.V1CronJob:
+    """Fetch a CronJob."""
+    return batch.read_namespaced_cron_job(name, namespace)
+
+
 def wait_for_deployment_ready(
     apps: client.AppsV1Api, namespace: str, name: str, min_replicas: int = 1
 ) -> None:

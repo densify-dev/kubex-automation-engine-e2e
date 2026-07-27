@@ -21,7 +21,7 @@ spec:
     externalSchedulerName: ""   # empty = no scheduler assignment
   descheduler:
     enabled: true
-    interval: 10m               # run more frequently than the default 30m
+    interval: "*/10 * * * *"    # run more frequently than the default */30
     maxNoOfPodsToEvictPerNode: 3
     maxNoOfPodsToEvictPerNamespace: 5
     maxNoOfPodsToEvictTotal: 10

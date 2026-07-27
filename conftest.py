@@ -166,6 +166,7 @@ def pytest_addoption(parser):
 class K8sClients:
     core: client.CoreV1Api
     apps: client.AppsV1Api
+    batch: client.BatchV1Api
     custom: client.CustomObjectsApi
     rbac: client.RbacAuthorizationV1Api
 
@@ -326,6 +327,7 @@ def k8s_clients(kind_cluster, kube_context):
     return K8sClients(
         core=client.CoreV1Api(),
         apps=client.AppsV1Api(),
+        batch=client.BatchV1Api(),
         custom=client.CustomObjectsApi(),
         rbac=client.RbacAuthorizationV1Api(),
     )

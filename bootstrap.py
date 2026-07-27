@@ -891,7 +891,7 @@ def _controller_values(config: BootstrapConfig) -> dict:
         "defaultAutomationStrategy": {"enabled": False},
         "globalConfiguration": {"recommendationReloadInterval": "1m"},
         "compactionScheduler": {"enabled": True},
-        "compactionDescheduler": {"enabled": True, "interval": "1m"},
+        "compactionDescheduler": {"enabled": True},
     }
     if config.secondary_cluster_enabled:
         if not config.primary_cluster_name:

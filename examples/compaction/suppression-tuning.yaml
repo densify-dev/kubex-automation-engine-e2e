@@ -24,7 +24,7 @@ spec:
     useKubexScheduler: true
   descheduler:
     enabled: true
-    interval: 15m
+    interval: "*/15 * * * *"
     loopDetectionThreshold: 2
     loopDetectionWindow: 10m
     suppressionDuration: 20m

@@ -199,8 +199,9 @@ spec:
                     type: object
                   interval:
                     description: |-
-                      interval is how often the descheduler runs for this policy.
-                      Zero uses the operator-level default (COMPACTION_DESCHEDULER_INTERVAL env var, default 30m).
+                      interval is the cron schedule for how often the descheduler runs for this policy
+                      (e.g. "*/30 * * * *" for every 30 minutes, "0 */2 * * *" for every 2 hours).
+                      Empty uses the system default ("*/30 * * * *").
                     type: string
                   loopDetectionThreshold:
                     description: |-
