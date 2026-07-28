@@ -15,7 +15,7 @@ spec:
     useKubexScheduler: true
   descheduler:
     enabled: true
-    interval: 1m
+    interval: "* * * * *"
     maxNoOfPodsToEvictPerNode: 2
     maxNoOfPodsToEvictPerNamespace: 2
     maxNoOfPodsToEvictTotal: 2

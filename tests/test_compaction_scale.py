@@ -46,6 +46,7 @@ class TestCompactionScale:
     CANDIDATE_BASE = "e2e-scale-candidate"
     POLICY_NAME = "e2e-compaction-scale"
     SCHEDULER_NAME = "kubex-compaction-scheduler"
+    COMPACTION_INTENT_ANNOTATION = "scheduling.kubex.ai/compaction-intent"
     # e2-standard-2 GKE node allocatable CPU in millicores.
     ALLOCATABLE_CPU_M = 1930
     # Target dense-node utilization — well above the 65% HighNodeUtilization threshold.
@@ -192,8 +193,8 @@ class TestCompactionScale:
 
         100 Deployments are created with minimal resources (10m CPU, 32Mi RAM each).
         The default scheduler distributes them ~33-34 per node across the 3-node cluster.
-        We measure elapsed time from policy creation until all workloads carry the
-        kubex-compaction-scheduler schedulerName.
+        We measure elapsed time from policy creation until all replacement Pods are
+        admitted with the kubex-compaction-scheduler schedulerName.
         """
         create_deployments_bulk(
             k8s_clients.apps,
@@ -232,10 +233,36 @@ class TestCompactionScale:
 
         names = [f"{self.TARGET_BASE}-{i}" for i in range(self.WORKLOAD_COUNT)]
 
+        def all_have_intent() -> bool:
+            return all(
+                self.COMPACTION_INTENT_ANNOTATION
+                in (get_deployment(k8s_clients.apps, test_namespace, name).metadata.annotations or {})
+                for name in names
+            )
+
+        wait_for(all_have_intent, timeout=600, message=f"all {self.WORKLOAD_COUNT} workload intents")
+        old_pod_names = set()
+        for name in names:
+            dep = get_deployment(k8s_clients.apps, test_namespace, name)
+            assert dep.spec.template.spec.scheduler_name is None
+            assert not any(
+                key.startswith("scheduling.kubex.ai/compaction-")
+                for key in (dep.spec.template.metadata.labels or {})
+            )
+            for pod in k8s_clients.core.list_namespaced_pod(test_namespace, label_selector=f"app={name}").items:
+                old_pod_names.add(pod.metadata.name)
+                k8s_clients.core.delete_namespaced_pod(pod.metadata.name, test_namespace)
+
         def all_targeted() -> bool:
             for name in names:
                 dep = get_deployment(k8s_clients.apps, test_namespace, name)
-                if dep.spec.template.spec.scheduler_name != self.SCHEDULER_NAME:
+                if dep.spec.template.spec.scheduler_name is not None:
+                    return False
+                pods = k8s_clients.core.list_namespaced_pod(test_namespace, label_selector=f"app={name}").items
+                if not pods or not all(
+                    pod.metadata.name not in old_pod_names and pod.spec.scheduler_name == self.SCHEDULER_NAME
+                    for pod in pods
+                ):
                     return False
             return True
 

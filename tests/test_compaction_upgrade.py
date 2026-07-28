@@ -46,6 +46,7 @@ class TestCompactionClusterUpgrade:
     WORKLOAD_COUNT = 5
     POLICY_NAME = "e2e-compaction-upgrade"
     SCHEDULER_NAME = "kubex-compaction-scheduler"
+    COMPACTION_INTENT_ANNOTATION = "scheduling.kubex.ai/compaction-intent"
 
     CONTROLLER_NAMESPACE = os.environ.get("CONTROLLER_NAMESPACE", "kubex")
     CONTROLLER_DEPLOYMENT = os.environ.get("CONTROLLER_DEPLOYMENT", "kubex-automation-engine")
@@ -153,7 +154,7 @@ class TestCompactionClusterUpgrade:
 
         Steps:
           1. Create WORKLOAD_COUNT Deployments + a ClusterCompactionPolicy.
-          2. Verify all workloads are targeted (schedulerName set) pre-upgrade.
+          2. Verify all workload Pods were assigned schedulerName at admission pre-upgrade.
           3. Upgrade the control plane to COMPACTION_UPGRADE_K8S_VERSION (blocks ~15 min).
           4. Verify the policy CR still exists and workloads are still targeted.
           5. Upgrade the node pool (blocks ~15 min; controller pod restarts here).
@@ -204,13 +205,41 @@ class TestCompactionClusterUpgrade:
             },
         )
 
+        def all_have_intent() -> bool:
+            return all(
+                self.COMPACTION_INTENT_ANNOTATION
+                in (get_deployment(k8s_clients.apps, test_namespace, name).metadata.annotations or {})
+                for name in names
+            )
+
+        wait_for(all_have_intent, timeout=300, message="pre-upgrade: all workload intents reconciled")
+        old_pod_names = set()
+        for name in names:
+            deployment = get_deployment(k8s_clients.apps, test_namespace, name)
+            assert deployment.spec.template.spec.scheduler_name is None
+            assert not any(
+                key.startswith("scheduling.kubex.ai/compaction-")
+                for key in (deployment.spec.template.metadata.labels or {})
+            )
+            for pod in k8s_clients.core.list_namespaced_pod(test_namespace, label_selector=f"app={name}").items:
+                old_pod_names.add(pod.metadata.name)
+                k8s_clients.core.delete_namespaced_pod(pod.metadata.name, test_namespace)
+
         def all_targeted() -> bool:
             try:
-                return all(
-                    get_deployment(k8s_clients.apps, test_namespace, n).spec.template.spec.scheduler_name
-                    == self.SCHEDULER_NAME
-                    for n in names
-                )
+                for name in names:
+                    deployment = get_deployment(k8s_clients.apps, test_namespace, name)
+                    if deployment.spec.template.spec.scheduler_name is not None:
+                        return False
+                    pods = k8s_clients.core.list_namespaced_pod(
+                        test_namespace, label_selector=f"app={name}"
+                    ).items
+                    if not pods or not all(
+                        pod.metadata.name not in old_pod_names and pod.spec.scheduler_name == self.SCHEDULER_NAME
+                        for pod in pods
+                    ):
+                        return False
+                return True
             except Exception:
                 return False
 

@@ -1,8 +1,12 @@
 # Compaction E2E Feature
 
-This feature currently has two GKE proof-of-movement sub-tests:
+Compaction coverage uses the shared pytest suite and one live-cluster entry point:
 
-- `gke-poc/run-gke-poc.sh`: single-pass movement from the light node to a busy node
-- `gke-poc/run-gke-poc-organic-rebound.sh`: eviction from the light node followed by an organic rebound attempt using staged candidate eligibility and gated non-preempting blockers
+```bash
+./test/e2e/run-gke-suite.sh \
+  tests/test_compaction_scheduler.py \
+  tests/test_compaction_scale.py \
+  tests/test_compaction_eviction_loop.py
+```
 
-Both use the same minimal GKE POC workloads and descheduler policy.
+The destructive GKE upgrade lane remains opt-in through `tests/test_compaction_upgrade.py`.

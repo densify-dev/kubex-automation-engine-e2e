@@ -70,11 +70,14 @@ KEEP_KIND_CLUSTER=1 ./run-full-suite.sh
 # plus v1.32.0 (metrics-server only)
 ./run-full-matrix-local.sh
 
-# Run the full e2e suite on an existing GKE cluster with the release image
+# Run compaction coverage on an existing GKE cluster with the release image
 KUBE_CONTEXT=gke_pm-testing-160714_us-central1-b_compaction-poc \
 CONTROLLER_IMAGE_REPOSITORY=densify/automation-controller \
 CONTROLLER_IMAGE_TAG=1.7.0-beta1 \
-./run-gke-suite.sh
+./run-gke-suite.sh \
+  tests/test_compaction_scheduler.py \
+  tests/test_compaction_scale.py \
+  tests/test_compaction_eviction_loop.py
 
 # The local suite uses an in-cluster mock Kubex upstream by default.
 # Disable it if you want the older local recommendations file flow.
@@ -122,11 +125,6 @@ CONTROLLER_IMAGE_TAG=<your-image-tag> \
 # Run a single test class
 ./run-full-matrix-local.sh tests/test_policies.py::TestStaticPolicy
 
-# Run the full e2e suite on an existing GKE cluster with the release image
-KUBE_CONTEXT=gke_pm-testing-160714_us-central1-b_compaction-poc \
-CONTROLLER_IMAGE_REPOSITORY=densify/automation-controller \
-CONTROLLER_IMAGE_TAG=1.7.0-beta1 \
-./run-gke-suite.sh
 ```
 
 ### CLI Options
@@ -232,6 +230,9 @@ e2e-testing/
     ├── test_webhook.py              # Mutating webhook annotation injection
     ├── test_pod_affinity_policy.py  # StatefulSet PodAffinityPolicy admission mutation
     ├── test_compaction_scheduler.py # Compaction scheduler/runtime and node-group selector coverage
+    ├── test_compaction_scale.py     # GKE workload-scale compaction coverage
+    ├── test_compaction_eviction_loop.py # Webhook-failure eviction-loop suppression
+    ├── test_compaction_upgrade.py   # Opt-in destructive GKE upgrade coverage
     ├── test_strimzipodset.py        # StrimziPodSet opt-in policy coverage with synthetic owned Pods
     └── test_safety.py              # HPA filter, protected namespace
 ```
@@ -259,6 +260,7 @@ e2e-testing/
 | `TestWebhookAnnotations` | `test_webhook.py` | Mutating webhook pod annotation | Checks `automation-webhook.kubex.ai/pod-rightsizing-info`; verifies `PodAdmissionWebhookHealthy` condition |
 | `TestPodAffinityPolicy` | `test_pod_affinity_policy.py` | StatefulSet PodAffinityPolicy behavior | Verifies matching StatefulSets get preferred hostname affinity on replacement pods while non-matching StatefulSets stay unchanged |
 | `TestCompactionScheduler` | `test_compaction_scheduler.py` | Compaction scheduler/runtime behavior | Verifies distinct node-group selectors, workload targeting, and scheduler catch-up |
+| `test_webhook_failure_replacement_loop_is_suppressed` | `test_compaction_eviction_loop.py` | Compaction loop safety | Breaks Pod admission and verifies repeated replacement is suppressed |
 | `TestHPAFilter` | `test_safety.py` | Safety check: HPA protection | Resize must be blocked when an HPA targets the workload |
 | `TestProtectedNamespace` | `test_safety.py` | Safety check: protected namespace patterns | `kube-*` default; custom pattern round-trip |
 

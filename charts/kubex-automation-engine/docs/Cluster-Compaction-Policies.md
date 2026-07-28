@@ -7,8 +7,8 @@ Active bin-packing (compaction) consolidates your cluster's workloads onto fewer
 `ClusterCompactionPolicy` is the Kubex API for declaring compaction intent. Each policy:
 
 1. **Selects workloads** — by namespace, label selector, and workload type.
-2. **Assigns a scheduler** — workloads matching an active policy are re-pointed to the Kubex compaction scheduler (or a nominated external scheduler), which uses a `MostAllocated` priority to pack new pods onto already-busy nodes.
-3. **Creates a descheduler** — the controller provisions a dedicated descheduler Deployment for the policy. The descheduler periodically evicts pods that are on underutilised nodes, triggering re-scheduling onto denser nodes.
+2. **Assigns a scheduler to new Pods** — the admission webhook directs newly created Pods for matching workloads to the Kubex compaction scheduler (or a nominated external scheduler), which uses a `MostAllocated` priority to pack them onto already-busy nodes.
+3. **Creates a descheduler** — the controller provisions a dedicated descheduler CronJob for the policy. Each run evicts pods that are on underutilised nodes, triggering re-scheduling onto denser nodes.
 4. **Suppresses eviction loops** — if a workload keeps being evicted without successfully settling, Kubex detects the loop fingerprint and suppresses it temporarily, preventing thrashing.
 
 ## How to enable
@@ -51,7 +51,7 @@ spec:
     maxNoOfPodsToEvictTotal: 5
 ```
 
-The controller reconciles the policy, labels matched workloads, and creates the per-policy descheduler Deployment automatically. No further action is needed.
+The controller reconciles the policy, labels matched workloads, and creates the per-policy descheduler CronJob automatically. No further action is needed.
 
 ### 3. Verify
 
@@ -62,14 +62,14 @@ kubectl get clustercompactionpolicies -o wide
 # Check the managed workloads have been labelled
 kubectl get deployments -A -l scheduling.kubex.ai/compaction-policy=my-compaction-policy
 
-# Check the per-policy descheduler Deployment
-kubectl get deployment -n kubex kubex-compaction-descheduler-my-compaction-policy
+# Check the per-policy descheduler CronJob
+kubectl get cronjob -n kubex kubex-compaction-descheduler-my-compaction-policy
 ```
 
 ## Model
 
 - Helm installs the shared compaction scheduler support objects only.
-- The controller generates the scheduler config and one descheduler Deployment/ConfigMap pair per active descheduler policy.
+- The controller generates the scheduler config and one descheduler CronJob/ConfigMap pair per active descheduler policy.
 - `ClusterCompactionPolicy` chooses the effective policy per workload.
 - Kubex-managed compaction workloads use scheduler name `kubex-compaction-scheduler`; external scheduler mode uses the configured external scheduler name instead.
 - The scheduler image tag auto-defaults from the target cluster version unless explicitly overridden.
@@ -81,28 +81,40 @@ kubectl get deployment -n kubex kubex-compaction-descheduler-my-compaction-polic
 - If multiple policies overlap, the controller resolves a single effective policy using `weight`, then scope specificity, then age, then name.
 - Each effective policy gets a deterministic workload label: `scheduling.kubex.ai/compaction-policy=<policy-name>`.
 - The shared suppression label is `scheduling.kubex.ai/compaction-suppressed=true`.
-- The controller also writes `spec.template.spec.schedulerName=kubex-compaction-scheduler` for participating workloads.
+- The controller writes a versioned `scheduling.kubex.ai/compaction-intent` annotation to participating workload metadata. The Pod mutating admission webhook resolves the workload owner, reads that annotation, and sets compaction labels and `spec.schedulerName` on each new Pod. It does not modify the workload pod template or existing Pods.
+
+Example workload intent:
+
+```yaml
+metadata:
+  annotations:
+    scheduling.kubex.ai/compaction-intent: '{"apiVersion":"scheduling.kubex.ai/v1alpha1","policyName":"platform-active-binpacking","schedulerName":"kubex-compaction-scheduler","schedulerProfileName":"compaction-most-allocated","deschedulerEnabled":true,"suppressed":false}'
+```
 
 ## Workload type support
 
-Not every workload type receives the same level of compaction support. The table below is authoritative — types not listed as "full" receive only the compaction-policy label on the workload object itself and are not enrolled in scheduler assignment or descheduler eviction.
+Scheduler assignment depends on whether admission can resolve an annotated supported owner. Descheduler support remains narrower because safe eviction and recreation semantics vary by workload controller.
 
 | Workload type | Policy label | Scheduler assignment | Descheduler eviction | Notes |
 |---|---|---|---|---|
-| `Deployment` | ✅ | ✅ | ✅ | Fully supported. |
-| `StatefulSet` | ✅ | ✅ | ✅ | Fully supported. |
-| `DaemonSet` | ✅ | ✅ | — | Pods are not evictable by `HighNodeUtilization` by default (`evictDaemonSetPods: false`). |
-| `CronJob` | ✅ | ✅ | — | Scheduler is assigned to future Job runs via the job template; existing Jobs are not mutated. |
-| `Rollout` (Argo) | ✅ | ✅ | — | Pod template is patched; descheduler eviction depends on your Rollout strategy. |
-| `Job` | ✅ | — | — | Pod templates are immutable after creation; the controller labels the Job object only. |
-| `AnalysisRun` (Argo) | ✅ | — | — | No pod template access; object label only. |
-| `StrimziPodSet` | ✅ | — | — | No pod template access; object label only. |
-| `Model` (KubeAI) | ✅ | — | — | No pod template access; object label only. |
+| `Deployment` | ✅ | ✅ | ✅ | Existing Pods remain untouched; new or naturally replaced Pods are mutated at admission. |
+| `StatefulSet` | ✅ | ✅ | ✅ | Existing Pods remain untouched; new or naturally replaced Pods are mutated at admission. |
+| `DaemonSet` | ✅ | ✅ | — | SchedulerName is assigned at Pod admission; Pods are not evictable by `HighNodeUtilization` by default (`evictDaemonSetPods: false`). |
+| `CronJob` | ✅ | ✅ | — | The webhook follows Pod → Job → CronJob and applies intent from the annotated CronJob. |
+| `Rollout` (Argo) | ✅ | ✅ | — | The webhook resolves the Rollout owner; descheduler eviction depends on your Rollout strategy. |
+| `Job` | ✅ | Limited | — | The initial Pod can race owner annotation; later retry Pods are mutated after intent is present. |
+| `AnalysisRun` (Argo) | ✅ | Limited | — | The initial Pod can race owner annotation; later Pods are mutated after intent is present. |
+| `StrimziPodSet` | ✅ | ✅ | — | Newly created or replacement Pods inherit intent through the owner reference. |
+| `Model` (KubeAI) | ✅ | ✅ | — | Newly created or replacement model Pods inherit intent through the owner reference. |
 
 **Known limitations**
 
-- `Job` pod templates cannot be patched after the Job is created. If you include `Job` in `workloadTypes`, the controller labels the Job object for visibility but does not assign a scheduler.
-- `AnalysisRun`, `StrimziPodSet`, and `Model` carry the `scheduling.kubex.ai/compaction-policy` label for identification, but pods spawned by these workloads are not directed to the compaction scheduler and are not considered by the descheduler's label filter. Use `Deployment` and `StatefulSet` for end-to-end compaction.
+- Scheduler assignment requires the Pod mutating admission webhook. Its failure policy is `Ignore`, so a Pod is admitted with its existing schedulerName when the webhook is unavailable.
+- KAI GPU scheduling takes precedence when the same Pod receives both KAI resize actions and compaction intent. The webhook records this override in the controller log.
+- Existing Pods are never rewritten or deleted when compaction intent changes. They retain their current scheduler and labels until naturally replaced.
+- The compaction controller never modifies pod-template metadata or spec. Top-level workload metadata changes do not trigger a rollout.
+- Admission uses the nearest annotated supported owner and falls back up the owner chain, such as from an unannotated Job to its annotated CronJob.
+- `Job` and `AnalysisRun` scheduler assignment is best-effort because their controllers may create the initial Pod before compaction intent is reconciled onto the owner.
 
 ## Field Reference
 
@@ -130,7 +142,7 @@ Not every workload type receives the same level of compaction support. The table
 | `spec.descheduler.highNodeUtilization.thresholds.cpu` | `25` | CPU utilization threshold for `HighNodeUtilization`. |
 | `spec.descheduler.highNodeUtilization.thresholds.memory` | `25` | Memory utilization threshold for `HighNodeUtilization`. |
 | `spec.descheduler.highNodeUtilization.thresholds.pods` | `25` | Pod utilization threshold for `HighNodeUtilization`. |
-| `spec.descheduler.interval` | `*/30 * * * *` | Cron schedule for how often the descheduler runs (e.g. `*/30 * * * *`, `0 */2 * * *`). |
+| `spec.descheduler.interval` | `*/30 * * * *` | Five-field CronJob schedule for each one-shot run (e.g. `*/30 * * * *`, `0 */2 * * *`). Duration values such as `1m` and `30s` are invalid. |
 | `spec.descheduler.loopDetectionWindow` | `15m` | Rolling window for counting repeated same-fingerprint evictions. |
 | `spec.descheduler.loopDetectionThreshold` | `3` | Number of observations within the window before suppression triggers. |
 | `spec.descheduler.suppressionDuration` | `=loopDetectionWindow` | How long the suppressed label stays on the workload. |
@@ -215,6 +227,6 @@ status:
 - The controller now also reads `COMPACTION_SCHEDULER_IMAGE_REPOSITORY` from its Deployment, then reconciles the scheduler ConfigMap and image tag at runtime when active policies use the Kubex-managed scheduler.
 - External scheduler mode is workload targeting only; Kubex does not manage scheduler runtime/config for those policies.
 - The compaction scheduler ConfigMap is a fixed name: `kubex-compaction-scheduler-config`.
-- The controller also reads `COMPACTION_DESCHEDULER_*` settings from its Deployment and creates one descheduler Deployment/ConfigMap per active descheduler policy using the fixed `kubex-compaction-descheduler` prefix.
-- A policy with `spec.descheduler.enabled: true` but no managed workloads does not get a descheduler Deployment.
+- The controller also reads `COMPACTION_DESCHEDULER_*` settings from its Deployment and creates one descheduler CronJob/ConfigMap per active descheduler policy using the fixed `kubex-compaction-descheduler` prefix.
+- A policy with `spec.descheduler.enabled: true` but no managed workloads gets a suspended descheduler CronJob.
 - OpenShift compatibility settings apply to the Kubex-managed scheduler Deployment; external scheduler mode does not create a Kubex scheduler workload.
