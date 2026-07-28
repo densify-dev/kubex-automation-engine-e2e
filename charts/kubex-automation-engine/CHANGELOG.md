@@ -2,23 +2,6 @@
 
 All notable changes to the Kubex Automation Engine Helm chart will be documented in this file.
 
-## [1.9.0] - 2026-07-28
-
-### Breaking
-- **[GPU reactive policy rename](./BREAKING.md#2026-07-21-gpu-reactive-policy-rename)**: `GpuRebalancingPolicy` and `ClusterGpuRebalancingPolicy` are renamed to `GpuReactivePolicy` and `ClusterGpuReactivePolicy` (CRDs `gpurebalancingpolicies`/`clustergpurebalancingpolicies` → `gpureactivepolicies`/`clustergpureactivepolicies`), and `globalConfiguration.gpuRebalancingCheckInterval` is renamed to `gpuReactiveCheckInterval`. Kubernetes does not allow renaming a CRD's kind in place, so no compatibility CRDs or automatic migration are provided.
-  - Convert saved manifests to the new kinds/resource names, then delete the old GPU policy objects while the previous controller version is still running so finalizers and workload annotation cleanup complete.
-  - Delete the old `gpurebalancingpolicies.rightsizing.kubex.ai` and `clustergpurebalancingpolicies.rightsizing.kubex.ai` CRDs, then install the regenerated CRDs.
-  - Upgrade the controller using the renamed `globalConfiguration.gpuReactiveCheckInterval` value, and reapply policies using the new `GpuReactivePolicy`/`ClusterGpuReactivePolicy` kinds. Update any external `PolicyEvaluation` or proposal manifests that reference the old kinds too.
-
-### Added
-- The pod-mutation webhook can now optionally register a second, earlier admission pass via `webhook.podMutation.additionalWebhook.enabled`, so other mutating webhooks can see Kubex-updated resource requests/limits before making their own admission decisions. Disabled by default; webhook ordering is best-effort and enabling it roughly doubles pod admission traffic.
-
-### Changed
-- Gateway sidecar image bumped to `1.6`.
-- Default Kubex API request timeout (`globalConfiguration.kubexAPIRequestTimeout`) increased from `30s` to `60s`, and the value is now validated as a proper duration string.
-
----
-
 ## [1.8.0] - 2026-07-22
 
 ### Breaking

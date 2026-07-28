@@ -276,7 +276,7 @@ kubectl logs -n kubex -l control-plane=controller-manager -c manager --tail=100 
 ## OpenShift Notes
 
 - Installing this chart still requires cluster-scoped permissions because it creates `ClusterRole`, `ClusterRoleBinding`, and admission webhook resources
-- If you deploy on OpenShift, enable `openshift.enabled=true` to apply restricted-friendly defaults for the cleanup job and optional supplemental groups; set `openshift.fsGroup` only when your storage class or SCC policy requires a fixed group
+- If you deploy on OpenShift, enable `openshift.enabled=true` to apply restricted-friendly defaults for the cleanup job, controller pod, and compaction scheduler pod; set `openshift.fsGroup` only when your storage class or SCC policy requires a fixed group
 - The OpenShift compatibility switch is opt-in so standard Kubernetes installs keep the existing defaults
 
 ## Global Configuration Values

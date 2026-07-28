@@ -169,6 +169,8 @@ spec:
         app: kai-scheduler-shim
     spec:
       serviceAccountName: kai-scheduler-shim
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
       containers:
         - name: shim
           image: python:3.12-alpine
