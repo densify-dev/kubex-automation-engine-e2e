@@ -95,29 +95,12 @@ spec:
         {{- end }}
         - name: IMAGE_TAG
           value: {{ .Values.image.tag | quote }}
-        - name: COMPACTION_SCHEDULER_IMAGE_REPOSITORY
-          value: {{ .Values.compactionScheduler.image.repository | quote }}
-        - name: COMPACTION_DESCHEDULER_IMAGE
-          value: {{ printf "%s:%s" .Values.compactionDescheduler.image.repository .Values.compactionDescheduler.image.tag | quote }}
-        - name: COMPACTION_DESCHEDULER_PULL_POLICY
-          value: {{ .Values.compactionDescheduler.image.pullPolicy | quote }}
-        - name: COMPACTION_DESCHEDULER_RESOURCE_PREFIX
-          value: "kubex-compaction-descheduler"
-        - name: COMPACTION_DESCHEDULER_SERVICE_ACCOUNT_NAME
-          value: "kubex-compaction-descheduler"
-        - name: COMPACTION_DESCHEDULER_RESOURCES_JSON
-          value: {{ toJson .Values.compactionDescheduler.resources | quote }}
         - name: POD_NAMESPACE
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
-        {{- if .Values.gateway.enabled }}
         - name: GATEWAY_URL
           value: "http://localhost:8181"
-        {{- else }}
-        - name: GATEWAY_URL
-          value: "http://kubex-stub.kubex.svc.cluster.local:8080"
-        {{- end }}
         {{- if $localRecommendationsEnabled }}
         - name: RECOMMENDATIONS_PATH
           value: {{ $localRecommendationsPath | quote }}
