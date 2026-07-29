@@ -28,7 +28,6 @@ HELM_CRDS_CHART="${HELM_CRDS_CHART:-}"
 HELM_CONTROLLER_CHART="${HELM_CONTROLLER_CHART:-}"
 HELM_CRDS_CHART_VERSION="${HELM_CRDS_CHART_VERSION:-}"
 HELM_CONTROLLER_CHART_VERSION="${HELM_CONTROLLER_CHART_VERSION:-}"
-KIND_CONFIG="${KIND_CONFIG:-}"
 KUBEX_URL_HOST="${KUBEX_URL_HOST:-}"
 KUBEX_URL_SCHEME="${KUBEX_URL_SCHEME:-}"
 KUBEAI_CHART_VERSION="${KUBEAI_CHART_VERSION:-}"
@@ -75,16 +74,6 @@ append_flag_if_set() {
   if [[ -n "$value" ]]; then
     local -n target="$array_name"
     target+=("$flag" "$value")
-  fi
-}
-
-effective_kind_config() {
-  if [[ -n "${KIND_CONFIG:-}" ]]; then
-    printf '%s\n' "$KIND_CONFIG"
-  elif [[ -f "${REPO_ROOT}/kind-config.yaml" ]]; then
-    printf '%s\n' "${REPO_ROOT}/kind-config.yaml"
-  elif is_true "$GPU_SUITE" && [[ -n "${GPU_KIND_CONFIG:-}" ]]; then
-    printf '%s\n' "$GPU_KIND_CONFIG"
   fi
 }
 
@@ -233,7 +222,6 @@ bootstrap_cluster() {
   append_flag_if_set "$HELM_CONTROLLER_CHART" --helm-controller-chart bootstrap_args
   append_flag_if_set "$HELM_CRDS_CHART_VERSION" --helm-crds-chart-version bootstrap_args
   append_flag_if_set "$HELM_CONTROLLER_CHART_VERSION" --helm-controller-chart-version bootstrap_args
-  append_flag_if_set "$(effective_kind_config)" --kind-config bootstrap_args
   append_flag_if_set "$KUBEX_URL_HOST" --kubex-url-host bootstrap_args
   append_flag_if_set "$KUBEX_URL_SCHEME" --kubex-url-scheme bootstrap_args
   append_flag_if_set "$KUBEAI_CHART_VERSION" --kubeai-chart-version bootstrap_args
@@ -298,7 +286,6 @@ run_functional_suite() {
   append_flag_if_set "$HELM_CONTROLLER_CHART" --helm-controller-chart args
   append_flag_if_set "$HELM_CRDS_CHART_VERSION" --helm-crds-chart-version args
   append_flag_if_set "$HELM_CONTROLLER_CHART_VERSION" --helm-controller-chart-version args
-  append_flag_if_set "$(effective_kind_config)" --kind-config args
   append_flag_if_set "$KUBEX_URL_HOST" --kubex-url-host args
   append_flag_if_set "$KUBEX_URL_SCHEME" --kubex-url-scheme args
   append_flag_if_set "$KUBEAI_CHART_VERSION" --kubeai-chart-version args

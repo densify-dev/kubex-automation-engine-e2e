@@ -1,6 +1,8 @@
 """Tests: in-cluster Kubex mock receives recommendations and gateway uploads."""
 
 import json
+import time
+import uuid
 
 import pytest
 from kubernetes.client.rest import ApiException
@@ -12,13 +14,14 @@ from helpers import (
     automation_strategy_manifest,
     create_multi_container_deployment,
     delete_deployment,
-    get_deployment_pod,
     get_crd,
+    get_deployment_pod,
     get_mock_kubex_state,
     get_pod_resources,
     proactive_policy_manifest,
     reset_mock_kubex_state,
     set_mock_kubex_container_id_remap,
+    static_policy_manifest,
     wait_for,
 )
 
@@ -30,6 +33,24 @@ class TestKubexMock:
     DEPLOYMENT = "rightsizing-demo"
     GPU_DEPLOYMENT = "gpu-kubex-demo"
     MULTI_CONTAINER_DEPLOYMENT = "multi-container-demo"
+
+    @staticmethod
+    def _wait_for_rollout(apps, namespace, deployment):
+        def rolled_out():
+            current = apps.read_namespaced_deployment(deployment, namespace)
+            desired = current.spec.replicas or 0
+            status = current.status
+            return (
+                status is not None
+                and status.observed_generation is not None
+                and current.metadata.generation is not None
+                and status.observed_generation >= current.metadata.generation
+                and status.updated_replicas == desired
+                and status.available_replicas == desired
+                and status.unavailable_replicas in (None, 0)
+            )
+
+        wait_for(rolled_out, timeout=180, message=f"controller deployment {deployment} rollout")
 
     @pytest.fixture(autouse=True)
     def setup_teardown(self, request, k8s_clients, kube_context, controller_namespace):
@@ -392,3 +413,169 @@ class TestKubexMock:
             reason.get("reasonCode") == "kubex-automation-disabled"
             for reason in api_state["reasons"]
         )
+
+    @pytest.mark.timeout(300)
+    def test_automation_blockers_annotation_persists_when_upload_disabled(
+        self, k8s_clients, kube_context, controller_namespace, test_namespace
+    ):
+        suffix = uuid.uuid4().hex[:10]
+        strategy_name = f"e2e-state-disabled-strategy-{suffix}"
+        policy_name = f"e2e-state-disabled-policy-{suffix}"
+        workload_name = f"e2e-state-disabled-workload-{suffix}"
+        controller = next(
+            deployment
+            for deployment in k8s_clients.apps.list_namespaced_deployment(
+                controller_namespace, label_selector="control-plane=controller-manager"
+            ).items
+            if any(
+                container.name == "manager"
+                for container in deployment.spec.template.spec.containers
+            )
+        )
+        manager = next(
+            container
+            for container in controller.spec.template.spec.containers
+            if container.name == "manager"
+        )
+        original_env = list(manager.env or [])
+        disabled = False
+
+        def patch_controller_env(env):
+            k8s_clients.apps.patch_namespaced_deployment(
+                controller.metadata.name,
+                controller_namespace,
+                body={
+                    "spec": {
+                        "template": {
+                            "spec": {
+                                "containers": [{"name": manager.name, "env": env}]
+                            }
+                        }
+                    }
+                },
+            )
+
+        def env_with_values(env, values):
+            result = [item.to_dict() for item in env if item.name not in values]
+            result.extend({"name": name, "value": value} for name, value in values.items())
+            return result
+
+        try:
+            patch_controller_env(
+                env_with_values(
+                    original_env,
+                    {
+                        "ENABLE_AUTOMATION_STATE": "false",
+                        "AUTOMATION_STATE_INTERVAL": "1s",
+                    },
+                )
+            )
+            disabled = True
+            self._wait_for_rollout(k8s_clients.apps, controller_namespace, controller.metadata.name)
+            reset_mock_kubex_state(kube_context, controller_namespace)
+
+            strategy = automation_strategy_manifest(
+                strategy_name,
+                test_namespace,
+                cpu_downsize=False,
+                cpu_upsize=False,
+            )
+            k8s_clients.custom.create_namespaced_custom_object(
+                GROUP, VERSION, test_namespace, "automationstrategies", strategy
+            )
+            policy = static_policy_manifest(
+                policy_name,
+                test_namespace,
+                strategy_name,
+                label_selector_app=workload_name,
+                cpu_request="800m",
+            )
+            policy["spec"]["resources"]["containers"] = {
+                "app": {"requests": {"cpu": "800m"}}
+            }
+            k8s_clients.custom.create_namespaced_custom_object(
+                GROUP, VERSION, test_namespace, "staticpolicies", policy
+            )
+            create_multi_container_deployment(
+                k8s_clients.apps,
+                test_namespace,
+                workload_name,
+                containers=[
+                    {
+                        "name": "app",
+                        "requests": {"cpu": "100m", "memory": "128Mi"},
+                        "limits": {"cpu": "200m", "memory": "200Mi"},
+                    }
+                ],
+            )
+
+            annotation_key = "rightsizing.kubex.ai/automation-constraints"
+
+            def annotation_observed():
+                pod = get_deployment_pod(k8s_clients.core, test_namespace, workload_name)
+                raw = (pod.metadata.annotations or {}).get(annotation_key)
+                if not raw:
+                    return False
+                blockers = json.loads(raw)
+                assert isinstance(blockers, list), "automation blockers must be a JSON array"
+                for blocker in blockers:
+                    assert isinstance(blocker, dict), "automation blocker must be a JSON object"
+                    if blocker.get("reason") != "automation-strategy-disabled":
+                        continue
+                    assert "metadata" not in blocker
+                    assert "name" not in blocker
+                    targets = blocker.get("targets")
+                    assert isinstance(targets, list), "automation blocker targets must be an array"
+                    for target in targets:
+                        assert isinstance(target, dict), "automation blocker target must be an object"
+                        assert "metadata" not in target
+                        if target == {
+                            "container": "app",
+                            "usage": "requests",
+                            "resource": "cpu",
+                        }:
+                            return True
+                return False
+
+            wait_for(
+                annotation_observed,
+                timeout=180,
+                message="persistent disabled-strategy automation blockers annotation",
+            )
+
+            def no_state_upload_for_settle_window():
+                # 1s interval makes 5s span multiple potential sender cycles.
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    state = get_mock_kubex_state(kube_context, controller_namespace)
+                    if state.get("states") or any(
+                        request.get("method") == "POST"
+                        and request.get("path", "").endswith("/state")
+                        for request in state.get("requests", [])
+                    ):
+                        return False
+                    time.sleep(1)
+                return True
+
+            assert no_state_upload_for_settle_window(), (
+                "automation state upload occurred while disabled"
+            )
+        finally:
+            try:
+                delete_deployment(k8s_clients.apps, test_namespace, workload_name)
+                for plural, name in [
+                    ("staticpolicies", policy_name),
+                    ("automationstrategies", strategy_name),
+                ]:
+                    try:
+                        k8s_clients.custom.delete_namespaced_custom_object(
+                            GROUP, VERSION, test_namespace, plural, name
+                        )
+                    except ApiException:
+                        pass
+            finally:
+                if disabled:
+                    patch_controller_env([item.to_dict() for item in original_env])
+                    self._wait_for_rollout(
+                        k8s_clients.apps, controller_namespace, controller.metadata.name
+                    )

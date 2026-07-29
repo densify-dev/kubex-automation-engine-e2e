@@ -27,7 +27,7 @@ The framework assumes it can create and manage its own Kind cluster for a test r
 
 GPU coverage can be folded into the standard suite by enabling `GPU_SUITE=true` and pointing `GPU_KIND_CONFIG` at `test/e2e/features/gpu/kind-config.yaml`.
 
-The CI matrix runs three variants, all including GPU coverage: **v1.36.0** with the full stack, **v1.35.0** with the full stack, and **v1.32.0** with metrics-server only (`WITH_KEDA=false WITH_VPA=false`).
+The CI matrix runs two variants, and both include GPU coverage: **v1.35.0** with the full stack and **v1.32.0** with metrics-server only (`WITH_KEDA=false WITH_VPA=false`).
 
 GPU coverage runs through the standard suite when `GPU_SUITE=true`; there is no separate GPU-only lane.
 
@@ -66,26 +66,13 @@ WITH_VPA=true \
 # Keep the cluster for inspection
 KEEP_KIND_CLUSTER=1 ./run-full-suite.sh
 
-# Run the full suite against Kubernetes v1.36.0 and v1.35.0 (full stack)
-# plus v1.32.0 (metrics-server only)
+# Run the full suite against Kubernetes v1.35.0 (full stack) and
+# v1.32.0 (metrics-server only)
 ./run-full-matrix-local.sh
-
-# Run compaction coverage on an existing GKE cluster with the release image
-KUBE_CONTEXT=gke_pm-testing-160714_us-central1-b_compaction-poc \
-CONTROLLER_IMAGE_REPOSITORY=densify/automation-controller \
-CONTROLLER_IMAGE_TAG=1.7.0-beta1 \
-./run-gke-suite.sh \
-  tests/test_compaction_scheduler.py \
-  tests/test_compaction_scale.py \
-  tests/test_compaction_eviction_loop.py
 
 # The local suite uses an in-cluster mock Kubex upstream by default.
 # Disable it if you want the older local recommendations file flow.
 DEPLOY_KUBEX_STUB=false ./run-full-matrix-local.sh
-
-# Run compaction tests on a multi-node Kind cluster
-KIND_CONFIG=test/e2e/features/compaction/kind-config.yaml \
-  ./run-full-suite.sh tests/test_compaction_scheduler.py
 
 # Run a subset of tests through the matrix bootstrap
 ./run-full-matrix-local.sh tests/test_automation_strategy.py
@@ -97,14 +84,6 @@ KEEP_KIND_CLUSTER=1 ./run-full-matrix-local.sh tests/test_policies.py::TestProac
 
 
 # Pin a single run to a specific Kind node image
-NODE_IMAGE=kindest/node:v1.36.0 \
-./run-full-suite.sh
-
-# Use an existing cluster without bootstrapping a new Kind environment
-pytest tests/ -v \
-  --skip-kind-bootstrap \
-  --kube-context kind-e2e
-
 NODE_IMAGE=kindest/node:v1.35.0 \
 ./run-full-suite.sh
 
@@ -124,7 +103,6 @@ CONTROLLER_IMAGE_TAG=<your-image-tag> \
 
 # Run a single test class
 ./run-full-matrix-local.sh tests/test_policies.py::TestStaticPolicy
-
 ```
 
 ### CLI Options
@@ -145,7 +123,6 @@ CONTROLLER_IMAGE_TAG=<your-image-tag> \
 | `--primary-cluster-name` | unset | Primary cluster name used when secondary/DR mode is enabled |
 | `--keep-kind-cluster` | `false` | Keep the cluster after the test session |
 | `--skip-kind-bootstrap` | `false` | Use the current kube context without creating a cluster |
-| `--skip-kind-cluster-create` | `false` | Use an existing GKE cluster without creating a Kind cluster |
 | `--without-vpa` | `false` | Skip VPA installation |
 | `PYTEST_WORKERS` | unset | Optional `pytest-xdist` worker count; leave unset for the default serial run |
 | `--without-keda` | `false` | Skip KEDA installation |
@@ -168,10 +145,6 @@ CONTROLLER_IMAGE_TAG=<your-image-tag> \
 | `HELM_REPO_URL` | chart default | Override the Helm chart repository URL |
 | `CONTROLLER_IMAGE_REPOSITORY` | chart default | Controller image repository override |
 | `CONTROLLER_IMAGE_TAG` | chart default | Controller image tag override |
-| `CLEANUP_IMAGE_REPOSITORY` | chart default | Cleanup image repository override |
-| `CLEANUP_IMAGE_TAG` | chart default | Cleanup image tag override |
-| `KUBE_CONTEXT` | `kind-e2e` | Existing cluster context to target |
-| `KIND_CONFIG` | unset | Optional Kind config file used when creating the cluster |
 | `PYTEST_WORKERS` | unset | Optional `pytest-xdist` worker count |
 | `DEPLOY_KUBEX_STUB` | `true` | Deploy an in-cluster Kubex upstream server and point the gateway sidecar at it |
 | `KUBEX_URL_HOST` | unset | Override the upstream host used by the gateway sidecar when not using the in-cluster stub |
@@ -209,9 +182,8 @@ pytest tests/test_gpu_kai.py -k 'gpu_resize_is_logged_by_the_controller' -v \
 e2e-testing/
 ├── bootstrap.py                     # Kind bootstrap and Helm installation helpers
 ├── conftest.py                      # CLI options, fixtures, K8sClients dataclass
-├── run-full-suite.sh                # Main local entry point
-├── run-full-matrix-local.sh         # Main Kind version matrix entry point
-├── run-gke-suite.sh                 # Main live-cluster GKE entry point
+├── run-full-suite.sh                # Root wrapper for the main local entry point
+├── run-full-matrix-local.sh         # Root wrapper for the matrix runner
 ├── examples/                        # Vendored example manifests used by test_examples.py
 │   └── invalid/                     # Intentionally invalid examples that should be rejected
 ├── helpers.py                       # Constants, k8s utilities, manifest builders
@@ -229,10 +201,6 @@ e2e-testing/
     ├── test_rollback_behavior.py    # Rollback seed/reseed/cleanup lifecycle on live workloads
     ├── test_webhook.py              # Mutating webhook annotation injection
     ├── test_pod_affinity_policy.py  # StatefulSet PodAffinityPolicy admission mutation
-    ├── test_compaction_scheduler.py # Compaction scheduler/runtime and node-group selector coverage
-    ├── test_compaction_scale.py     # GKE workload-scale compaction coverage
-    ├── test_compaction_eviction_loop.py # Webhook-failure eviction-loop suppression
-    ├── test_compaction_upgrade.py   # Opt-in destructive GKE upgrade coverage
     ├── test_strimzipodset.py        # StrimziPodSet opt-in policy coverage with synthetic owned Pods
     └── test_safety.py              # HPA filter, protected namespace
 ```
@@ -259,8 +227,6 @@ e2e-testing/
 | `TestRollbackBehavior` | `test_rollback_behavior.py` | Rollback monitoring lifecycle | Verifies monitoring seeds, reseeds on new recommendations, and clears rollback annotations after the monitoring window |
 | `TestWebhookAnnotations` | `test_webhook.py` | Mutating webhook pod annotation | Checks `automation-webhook.kubex.ai/pod-rightsizing-info`; verifies `PodAdmissionWebhookHealthy` condition |
 | `TestPodAffinityPolicy` | `test_pod_affinity_policy.py` | StatefulSet PodAffinityPolicy behavior | Verifies matching StatefulSets get preferred hostname affinity on replacement pods while non-matching StatefulSets stay unchanged |
-| `TestCompactionScheduler` | `test_compaction_scheduler.py` | Compaction scheduler/runtime behavior | Verifies distinct node-group selectors, workload targeting, and scheduler catch-up |
-| `test_webhook_failure_replacement_loop_is_suppressed` | `test_compaction_eviction_loop.py` | Compaction loop safety | Breaks Pod admission and verifies repeated replacement is suppressed |
 | `TestHPAFilter` | `test_safety.py` | Safety check: HPA protection | Resize must be blocked when an HPA targets the workload |
 | `TestProtectedNamespace` | `test_safety.py` | Safety check: protected namespace patterns | `kube-*` default; custom pattern round-trip |
 
@@ -269,14 +235,12 @@ e2e-testing/
 - Kind bootstrap is handled by [bootstrap.py](bootstrap.py).
 - The main local entry point is [run-full-suite.sh](run-full-suite.sh).
 - [run-full-matrix-local.sh](run-full-matrix-local.sh) builds the local controller images, then runs the full-suite flow twice with GPU enabled in both lanes: once for `v1.35.0` with the full stack (metrics-server, KEDA, VPA) and once for `v1.32.0` with metrics-server only (KEDA and VPA skipped). Pass one or more pytest nodeids/paths to run only that subset through the matrix bootstrap.
-- Set `KIND_CONFIG` to a custom Kind config when you need a multi-node local cluster, such as the compaction selector tests.
 - `test_example_behavior.py` now waits for both `Deployment` and `StatefulSet` workloads declared in vendored examples to become ready.
 - `test_strimzipodset.py` exercises both `core.strimzi.io/v1` and `core.strimzi.io/v1beta2` using a minimal CRD fixture plus synthetic owned Pods so the controller follows the real owned-pod path.
 - The local suite can deploy an in-cluster Python mock Kubex service, point the controller directly at it for stub-backed runs, feed recommendations from `examples/recommendations.json`, enable automation-state uploads for the test release, and assert heartbeat/policy/mutation/automation-state uploads end to end.
 - When `--secondary-cluster-enabled` is set, the mock rewrites recommendation container IDs per cluster so the secondary-mode test can prove the controller remaps primary recommendations onto the passive cluster IDs.
 - The full-suite runner verifies install through the functional tests, then uninstalls the controller Helm release and `kubex-crds` and verifies their removal.
-- The bootstrap flow installs `metrics-server`, `KEDA`, and VPA by default. Set `WITH_KEDA=false`, `WITH_VPA=false`, or `WITH_METRICS_SERVER=false` to skip individual addons. The CI matrix uses the full stack plus GPU coverage on v1.36.0 and v1.35.0 and metrics-server plus GPU coverage on v1.32.0 (`WITH_KEDA=false WITH_VPA=false`).
-- The Helm-managed compaction scheduler defaults its image tag from the cluster version unless `compactionScheduler.image.tag` or `compactionScheduler.kubernetesVersionOverride` is set explicitly.
+- The bootstrap flow installs `metrics-server`, `KEDA`, and VPA by default. Set `WITH_KEDA=false`, `WITH_VPA=false`, or `WITH_METRICS_SERVER=false` to skip individual addons. The CI matrix uses the full stack plus GPU coverage on v1.35.0 and metrics-server plus GPU coverage on v1.32.0 (`WITH_KEDA=false WITH_VPA=false`).
 - The default full-suite runner is serial because many tests mutate shared cluster state and vendored example resources; set `PYTEST_WORKERS` only after isolating those tests.
 - Tests can use `supports_in_place_resize` as a coarse version check, but behavior-sensitive tests should gate on the live `actual_in_place_resize_support` probe fixture.
 - Test workloads are created in `--test-namespace` and cleaned up after each test class via `autouse` fixtures.
