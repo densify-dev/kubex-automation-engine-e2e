@@ -5,6 +5,8 @@ import time
 
 import pytest
 
+from helpers import wait_for
+
 
 class TestMetrics:
     """Verify controller_runtime reconcile metrics are being emitted."""
@@ -90,23 +92,44 @@ class TestMetrics:
             proc.terminate()
 
     def test_reconcile_metrics_present(self, request, kube_context, controller_namespace):
-        metrics = self._get_metrics(
-            kube_context,
-            controller_namespace,
-            allow_missing=request.config.getoption("--without-metrics-server"),
-        )
-        assert "controller_runtime_reconcile_total" in metrics, (
-            "Expected controller_runtime_reconcile_total metric"
+        allow_missing = request.config.getoption("--without-metrics-server")
+        # First call establishes whether the metrics service exists at all;
+        # skips via pytest.skip() inside _get_metrics when allow_missing and absent.
+        metrics = self._get_metrics(kube_context, controller_namespace, allow_missing=allow_missing)
+        if "controller_runtime_reconcile_total" in metrics:
+            return
+
+        # controller_runtime_reconcile_total is a CounterVec that only appears
+        # once at least one reconcile has run for some controller. A preceding
+        # test may have just restarted the controller deployment (e.g. to
+        # restore env vars), leaving a freshly-started pod with zero reconciles
+        # yet - poll rather than assert on a single sample.
+        def reconcile_metric_present():
+            return "controller_runtime_reconcile_total" in self._get_metrics(
+                kube_context, controller_namespace, allow_missing=False
+            )
+
+        wait_for(
+            reconcile_metric_present,
+            timeout=60,
+            message="controller_runtime_reconcile_total metric to appear",
         )
 
     def test_globalconfiguration_reconcile_counted(
         self, request, kube_context, controller_namespace
     ):
-        metrics = self._get_metrics(
-            kube_context,
-            controller_namespace,
-            allow_missing=request.config.getoption("--without-metrics-server"),
-        )
-        assert "globalconfiguration" in metrics.lower(), (
-            "Expected globalconfiguration reconcile metric"
+        allow_missing = request.config.getoption("--without-metrics-server")
+        metrics = self._get_metrics(kube_context, controller_namespace, allow_missing=allow_missing)
+        if "globalconfiguration" in metrics.lower():
+            return
+
+        def globalconfiguration_metric_present():
+            return "globalconfiguration" in self._get_metrics(
+                kube_context, controller_namespace, allow_missing=False
+            ).lower()
+
+        wait_for(
+            globalconfiguration_metric_present,
+            timeout=60,
+            message="globalconfiguration reconcile metric to appear",
         )
