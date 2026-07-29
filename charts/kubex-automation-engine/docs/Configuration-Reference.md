@@ -276,7 +276,7 @@ kubectl logs -n kubex -l control-plane=controller-manager -c manager --tail=100 
 ## OpenShift Notes
 
 - Installing this chart still requires cluster-scoped permissions because it creates `ClusterRole`, `ClusterRoleBinding`, and admission webhook resources
-- If you deploy on OpenShift, enable `openshift.enabled=true` to apply restricted-friendly defaults for the cleanup job and optional supplemental groups; set `openshift.fsGroup` only when your storage class or SCC policy requires a fixed group
+- If you deploy on OpenShift, enable `openshift.enabled=true` to apply restricted-friendly defaults for the cleanup job, controller pod, and compaction scheduler pod; set `openshift.fsGroup` only when your storage class or SCC policy requires a fixed group
 - The OpenShift compatibility switch is opt-in so standard Kubernetes installs keep the existing defaults
 
 ## Global Configuration Values
@@ -298,7 +298,7 @@ Use [Global Configuration Reference](./Global-Configuration.md) for the CR field
 | `globalConfiguration.automationEnabled` | `true` | Global enable/disable switch |
 | `globalConfiguration.suppressFetchRecommendations` | `false` | Testing-only fetch suppression |
 | `globalConfiguration.respectKubexAutomation` | `true` | Respect recommendation-level disablement |
-| `globalConfiguration.protectedNamespacePatterns` | `["kube-*","openshift-*"]` plus chart defaults | Namespace patterns excluded from automation |
+| `globalConfiguration.protectedNamespacePatterns` | `["kube-*","openshift-*","gmp-*"]` | Namespace patterns protected from automation |
 | `globalConfiguration.webhookHealth.failureThreshold` | `2` | Failures before webhook is marked unhealthy |
 | `globalConfiguration.webhookHealth.successThreshold` | `3` | Successes before webhook is marked healthy |
 | `globalConfiguration.webhookHealth.transitionCheckInterval` | `10s` | Probe interval during state transitions |

@@ -1,0 +1,36 @@
+---
+# Compaction policy with custom eviction-loop suppression settings.
+# loopDetectionThreshold: 2 — suppress after 2 same-fingerprint observations
+# loopDetectionWindow: 10m  — within a 10-minute rolling window
+# suppressionDuration: 20m  — suppress for 20 minutes before retrying
+#
+# Lower thresholds catch loops faster; longer suppressionDuration gives
+# the cluster more time to stabilise before re-attempting eviction.
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: ClusterCompactionPolicy
+metadata:
+  name: tuned-suppression-compaction
+spec:
+  scope:
+    namespaceSelector:
+      operator: In
+      values:
+        - production
+    workloadTypes:
+      - Deployment
+      - StatefulSet
+  enabled: true
+  scheduler:
+    useKubexScheduler: true
+  descheduler:
+    enabled: true
+    interval: "*/15 * * * *"
+    loopDetectionThreshold: 2
+    loopDetectionWindow: 10m
+    suppressionDuration: 20m
+    maxNoOfPodsToEvictPerNode: 1
+    maxNoOfPodsToEvictPerNamespace: 1
+    maxNoOfPodsToEvictTotal: 3
+    defaultEvictor:
+      nodeFit: true
+      ignorePvcPods: true

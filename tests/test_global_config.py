@@ -41,6 +41,9 @@ class TestGlobalConfiguration:
         assert any("kube-*" in p or "kube" in p for p in patterns), (
             "Expected kube-* in default protected namespace patterns"
         )
+        assert "gmp-*" in patterns, (
+            "Expected gmp-* in default protected namespace patterns"
+        )
 
     def test_recommendation_reload_interval_readable(self, k8s_clients):
         gc = get_crd(k8s_clients.custom, "globalconfigurations", "global-config")
