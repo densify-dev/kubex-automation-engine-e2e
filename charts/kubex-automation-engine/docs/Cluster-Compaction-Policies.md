@@ -112,12 +112,12 @@ Scheduler assignment depends on whether admission can resolve an annotated suppo
 
 - Scheduler assignment requires the Pod mutating admission webhook. Its failure policy is `Ignore`, so a Pod is admitted with its existing schedulerName when the webhook is unavailable.
 - KAI GPU scheduling takes precedence when the same Pod receives both KAI resize actions and compaction intent. The webhook records this override in the controller log.
-- Existing Pods are never rewritten to change scheduler assignment. When descheduling is enabled, admission-noncompliant Pods may be evicted and recreated; otherwise they retain their current scheduler and labels until naturally replaced.
+- Existing Pods are never rewritten to change scheduler assignment. When the runtime hook is enabled, admission-noncompliant Pods may be evicted and recreated; otherwise they retain their current scheduler and labels until naturally replaced.
 - The compaction controller never modifies pod-template metadata or spec. Top-level workload metadata changes do not trigger a rollout.
 - Admission uses the nearest annotated supported owner and falls back up the owner chain, such as from an unannotated Job to its annotated CronJob.
 - `Job` and `AnalysisRun` scheduler assignment is best-effort because their controllers may create the initial Pod before compaction intent is reconciled onto the owner.
 
-The runtime hook honors `descheduler.nodeSelector`, `defaultEvictor.evictSystemCriticalPods`, `defaultEvictor.evictLocalStoragePods`, `defaultEvictor.ignorePvcPods`, and `defaultEvictor.evictDaemonSetPods`. It deliberately ignores `defaultEvictor.nodeFit`, `defaultEvictor.labelSelector`, the `maxNoOfPodsToEvict*` limits, `interval`, and `highNodeUtilization`; those settings govern descheduler balancing runs rather than admission convergence. Unscheduled, terminal, deleting, protected-namespace, and suppressed Pods are not replaced.
+The runtime hook is controlled independently by `spec.setLabelsByEviction`. It honors `descheduler.nodeSelector`, `defaultEvictor.evictSystemCriticalPods`, `defaultEvictor.evictLocalStoragePods`, `defaultEvictor.ignorePvcPods`, and `defaultEvictor.evictDaemonSetPods`. It deliberately ignores `defaultEvictor.nodeFit`, `defaultEvictor.labelSelector`, the `maxNoOfPodsToEvict*` limits, `interval`, and `highNodeUtilization`; those settings govern descheduler balancing runs rather than admission convergence. Unscheduled, terminal, deleting, protected-namespace, and suppressed Pods are not replaced.
 
 ## Field Reference
 
@@ -130,6 +130,7 @@ The runtime hook honors `descheduler.nodeSelector`, `defaultEvictor.evictSystemC
 | `spec.enabled` | `true` | Controls whether this policy participates in selection and enforcement. |
 | `spec.scheduler.useKubexScheduler` | `true` | Controls whether matching workloads use the Kubex-managed compaction scheduler. |
 | `spec.scheduler.externalSchedulerName` | none | External scheduler name used when `useKubexScheduler` is false. |
+| `spec.setLabelsByEviction` | `true` | Controls whether existing Pods are replaced to converge with compaction scheduling intent. This does not control descheduler runs. |
 | `spec.descheduler.enabled` | `true` | Controls whether matching workloads participate in descheduler-driven compaction. |
 | `spec.descheduler.nodeSelector` | none | Narrows the descheduler policy to nodes with matching labels. |
 | `spec.descheduler.maxNoOfPodsToEvictPerNode` | `1` | Max descheduler evictions per node for this policy. |
