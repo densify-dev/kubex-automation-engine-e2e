@@ -9,7 +9,7 @@ Active bin-packing (compaction) consolidates your cluster's workloads onto fewer
 1. **Selects workloads** — by namespace, label selector, and workload type.
 2. **Assigns a scheduler to new Pods** — the admission webhook directs newly created Pods for matching workloads to the Kubex compaction scheduler (or a nominated external scheduler), which uses a `MostAllocated` priority to pack them onto already-busy nodes.
 3. **Creates a descheduler** — the controller provisions a dedicated descheduler CronJob for the policy. Each run evicts pods that are on underutilised nodes, triggering re-scheduling onto denser nodes.
-4. **Suppresses eviction loops** — if a workload keeps being evicted without successfully settling, Kubex detects the loop fingerprint and suppresses it temporarily, preventing thrashing.
+4. **Suppresses admission-convergence loops** — if runtime replacement repeatedly fails to apply the intended scheduler or labels, Kubex detects the loop fingerprint and temporarily excludes the workload from further compaction eviction.
 
 ## How to enable
 
@@ -35,6 +35,9 @@ metadata:
   name: my-compaction-policy
 spec:
   scope:
+    labelSelector:
+      matchLabels:
+        compaction.kubex.ai/enabled: "true"
     namespaceSelector:
       operator: In
       values:
@@ -43,12 +46,20 @@ spec:
       - Deployment
       - StatefulSet
   enabled: true
+  setLabelsByEviction: false  # start conservatively; new Pods still use compaction admission
   scheduler:
     useKubexScheduler: true
   descheduler:
     enabled: true
     maxNoOfPodsToEvictPerNode: 1
-    maxNoOfPodsToEvictTotal: 5
+    maxNoOfPodsToEvictPerNamespace: 1
+    maxNoOfPodsToEvictTotal: 1
+    highNodeUtilization:
+      numberOfNodes: 1
+      thresholds:
+        cpu: 25
+        memory: 25
+        pods: 25
 ```
 
 The controller reconciles the policy, labels matched workloads, and creates the per-policy descheduler CronJob automatically. No further action is needed.
@@ -82,7 +93,7 @@ kubectl get cronjob -n kubex kubex-compaction-descheduler-my-compaction-policy
 - Each effective policy gets a deterministic workload label: `scheduling.kubex.ai/compaction-policy=<policy-name>`.
 - The shared suppression label is `scheduling.kubex.ai/compaction-suppressed=true`.
 - The controller writes a versioned `scheduling.kubex.ai/compaction-intent` annotation to participating workload metadata. The Pod mutating admission webhook resolves the workload owner, reads that annotation, and sets compaction labels and `spec.schedulerName` on each new Pod. It does not modify the workload pod template or existing Pods.
-- When descheduling is enabled, the controller also writes a Pod runtime-hook recommendation. Existing Running Pods that missed the required admission state are replaced through the Kubernetes Eviction API one at a time per workload owner; their replacements receive compaction state during admission. PodDisruptionBudgets remain enforced.
+- When `setLabelsByEviction` is enabled, the controller also writes a Pod runtime-hook recommendation. Existing Running Pods that missed the required admission state are replaced through the Kubernetes Eviction API one at a time per workload owner; their replacements receive compaction state during admission. PodDisruptionBudgets remain enforced.
 
 Example workload intent:
 
@@ -98,8 +109,8 @@ Scheduler assignment depends on whether admission can resolve an annotated suppo
 
 | Workload type | Policy label | Scheduler assignment | Descheduler eviction | Notes |
 |---|---|---|---|---|
-| `Deployment` | ✅ | ✅ | ✅ | Existing Pods remain untouched; new or naturally replaced Pods are mutated at admission. |
-| `StatefulSet` | ✅ | ✅ | ✅ | Existing Pods remain untouched; new or naturally replaced Pods are mutated at admission. |
+| `Deployment` | ✅ | ✅ | ✅ | Existing Pods are not patched in place. With `setLabelsByEviction: true`, noncompliant Pods may be replaced through eviction. |
+| `StatefulSet` | ✅ | ✅ | ✅ | Existing Pods are not patched in place. With `setLabelsByEviction: true`, noncompliant Pods may be replaced through eviction. |
 | `DaemonSet` | ✅ | ✅ | — | SchedulerName is assigned at Pod admission; Pods are not evictable by `HighNodeUtilization` by default (`evictDaemonSetPods: false`). |
 | `CronJob` | ✅ | ✅ | — | The webhook follows Pod → Job → CronJob and applies intent from the annotated CronJob. |
 | `Rollout` (Argo) | ✅ | ✅ | — | The webhook resolves the Rollout owner; descheduler eviction depends on your Rollout strategy. |
@@ -119,6 +130,32 @@ Scheduler assignment depends on whether admission can resolve an annotated suppo
 
 The runtime hook is controlled independently by `spec.setLabelsByEviction`. It honors `descheduler.nodeSelector`, `defaultEvictor.evictSystemCriticalPods`, `defaultEvictor.evictLocalStoragePods`, `defaultEvictor.ignorePvcPods`, and `defaultEvictor.evictDaemonSetPods`. It deliberately ignores `defaultEvictor.nodeFit`, `defaultEvictor.labelSelector`, the `maxNoOfPodsToEvict*` limits, `interval`, and `highNodeUtilization`; those settings govern descheduler balancing runs rather than admission convergence. Unscheduled, terminal, deleting, protected-namespace, and suppressed Pods are not replaced.
 
+## Understanding utilization thresholds
+
+`HighNodeUtilization` uses scheduled resource commitments, not live metrics:
+
+- `cpu` is the sum of Pod CPU requests divided by node allocatable CPU.
+- `memory` is the sum of Pod memory requests divided by node allocatable memory.
+- `pods` is the number of scheduled Pods divided by the node's allocatable Pod capacity.
+
+These values can differ substantially from `kubectl top nodes`, which reports recent measured consumption. For example, a node can consume 15% CPU while carrying requests equal to 70% of allocatable CPU; the descheduler uses 70%.
+
+A node is an underutilized eviction source only when all three percentages are at or below their thresholds. With CPU `40`, memory `50`, and Pods `30`, a node at CPU `35`, memory `45`, and Pods `20` qualifies, while a node at CPU `41`, memory `20`, and Pods `10` does not.
+
+Raising a threshold generally makes compaction more aggressive because nodes with more committed resources can qualify as sources. Lowering a threshold is more conservative. The relationship is not unlimited: if every selected node qualifies as underutilized, there is no denser destination and the strategy does nothing.
+
+`numberOfNodes` is an activation gate. The strategy acts only when the count of underutilized nodes is greater than this value:
+
+- `0` allows a run to act when at least one underutilized source exists.
+- `1` requires at least two underutilized sources.
+- Higher values are more conservative and are useful when avoiding disruption for a single temporarily sparse node.
+
+The three eviction limits are cumulative safety caps. Every eviction must remain below the per-node, per-namespace, and total limits, so the smallest applicable cap controls the run. Raising a cap permits more disruption but does not create candidates when thresholds, PodDisruptionBudgets, placement constraints, or other safety filters reject them.
+
+`nodeFit: true` conservatively checks whether a Pod appears able to fit on another ready node before eviction. This is an approximation, not a reservation or placement guarantee. Hard node affinity, anti-affinity, and `DoNotSchedule` topology-spread constraints can prevent consolidation or cause a replacement to return to its source node. Validate these constraints before enabling frequent descheduler runs.
+
+`descheduler.nodeSelector` limits which nodes participate as sources and destinations in descheduler classification. It does not add node affinity to replacement Pods; use workload scheduling constraints when Pods must remain in a particular pool.
+
 ## Field Reference
 
 | Field | Default | Description |
@@ -132,81 +169,131 @@ The runtime hook is controlled independently by `spec.setLabelsByEviction`. It h
 | `spec.scheduler.externalSchedulerName` | none | External scheduler name used when `useKubexScheduler` is false. |
 | `spec.setLabelsByEviction` | `true` | Controls whether existing Pods are replaced to converge with compaction scheduling intent. This does not control descheduler runs. |
 | `spec.descheduler.enabled` | `true` | Controls whether matching workloads participate in descheduler-driven compaction. |
-| `spec.descheduler.nodeSelector` | none | Narrows the descheduler policy to nodes with matching labels. |
-| `spec.descheduler.maxNoOfPodsToEvictPerNode` | `1` | Max descheduler evictions per node for this policy. |
-| `spec.descheduler.maxNoOfPodsToEvictPerNamespace` | `1` | Max descheduler evictions per namespace for this policy. |
-| `spec.descheduler.maxNoOfPodsToEvictTotal` | `1` | Max total descheduler evictions per run for this policy. |
-| `spec.descheduler.defaultEvictor.nodeFit` | `true` | Require evicted pods to appear to fit elsewhere. |
+| `spec.descheduler.nodeSelector` | none | Limits source and destination classification to matching nodes. `In` and `NotIn` values support `*` wildcards. It does not constrain replacement Pod placement. |
+| `spec.descheduler.maxNoOfPodsToEvictPerNode` | `1` | Maximum successful evictions from one source node per run. Higher values are more aggressive. |
+| `spec.descheduler.maxNoOfPodsToEvictPerNamespace` | `1` | Maximum successful evictions from one namespace per run. Higher values are more aggressive. |
+| `spec.descheduler.maxNoOfPodsToEvictTotal` | `1` | Maximum successful evictions across the whole run. Higher values are more aggressive. |
+| `spec.descheduler.defaultEvictor.nodeFit` | `true` | Conservatively require the Pod to appear to fit on another ready node. This is not a placement guarantee. |
 | `spec.descheduler.defaultEvictor.evictSystemCriticalPods` | `false` | Keep system-critical pods out of compaction by default. |
 | `spec.descheduler.defaultEvictor.evictLocalStoragePods` | `false` | Avoid evicting local-storage pods by default. |
 | `spec.descheduler.defaultEvictor.ignorePvcPods` | `true` | Ignore PVC-backed pods by default. |
 | `spec.descheduler.defaultEvictor.evictDaemonSetPods` | `false` | Avoid evicting DaemonSet pods by default. |
-| `spec.descheduler.defaultEvictor.labelSelector` | none | Overrides the implicit policy-label selector when set. |
-| `spec.descheduler.highNodeUtilization.numberOfNodes` | `1` | Minimum underutilized nodes required before acting. |
-| `spec.descheduler.highNodeUtilization.thresholds.cpu` | `25` | CPU utilization threshold for `HighNodeUtilization`. |
-| `spec.descheduler.highNodeUtilization.thresholds.memory` | `25` | Memory utilization threshold for `HighNodeUtilization`. |
-| `spec.descheduler.highNodeUtilization.thresholds.pods` | `25` | Pod utilization threshold for `HighNodeUtilization`. |
+| `spec.descheduler.defaultEvictor.labelSelector` | none | Adds Pod-label requirements to the implicit effective-policy selector. Pods must match both selectors. |
+| `spec.descheduler.highNodeUtilization.numberOfNodes` | `0` | Strategy acts only when underutilized-node count is greater than this value. Higher values are more conservative. |
+| `spec.descheduler.highNodeUtilization.thresholds.cpu` | `25` | Maximum requested CPU percentage for a source node. Higher values are generally more aggressive. |
+| `spec.descheduler.highNodeUtilization.thresholds.memory` | `25` | Maximum requested memory percentage for a source node. Higher values are generally more aggressive. |
+| `spec.descheduler.highNodeUtilization.thresholds.pods` | `25` | Maximum allocated Pod-capacity percentage for a source node. Higher values are generally more aggressive. |
 | `spec.descheduler.interval` | `*/30 * * * *` | Five-field CronJob schedule for each one-shot run (e.g. `*/30 * * * *`, `0 */2 * * *`). Duration values such as `1m` and `30s` are invalid. |
-| `spec.descheduler.loopDetectionWindow` | `15m` | Rolling window for counting repeated same-fingerprint evictions. |
-| `spec.descheduler.loopDetectionThreshold` | `3` | Number of observations within the window before suppression triggers. |
+| `spec.descheduler.loopDetectionWindow` | `15m` | Rolling window for counting repeated same-fingerprint admission-convergence replacements. |
+| `spec.descheduler.loopDetectionThreshold` | `3` | Number of changed Pod observations within the window before suppression triggers. |
 | `spec.descheduler.suppressionDuration` | `=loopDetectionWindow` | How long the suppressed label stays on the workload. |
 | `spec.weight` | `0` | Higher weight wins when multiple compaction policies match. |
 
-## Example
+## Customer configuration examples
+
+### Target selected production workloads conservatively
+
+This policy targets only opted-in web workloads. Existing Pods are not replaced solely to add compaction admission state, and a run requires at least two underutilized nodes before evicting one Pod.
 
 ```yaml
 apiVersion: rightsizing.kubex.ai/v1alpha1
 kind: ClusterCompactionPolicy
 metadata:
-  name: platform-active-binpacking
+  name: production-web-conservative
 spec:
   scope:
+    namespaceSelector:
+      operator: In
+      values: [production]
     labelSelector:
       matchLabels:
-        team: platform
-    workloadTypes:
-      - Deployment
-      - StatefulSet
-    namespaceSelector:
-      operator: NotIn
-      values:
-        - kube-system
-        - kubex
-  enabled: true
+        app.kubernetes.io/tier: web
+        compaction.kubex.ai/enabled: "true"
+    workloadTypes: [Deployment, StatefulSet]
+  setLabelsByEviction: false
   scheduler:
     useKubexScheduler: true
-    externalSchedulerName: ""
   descheduler:
     enabled: true
-    nodeSelector:
-      matchLabels:
-        node-role.kubernetes.io/busy: "true"
+    interval: "0 * * * *"
     maxNoOfPodsToEvictPerNode: 1
     maxNoOfPodsToEvictPerNamespace: 1
     maxNoOfPodsToEvictTotal: 1
-    defaultEvictor:
-      nodeFit: true
-      evictSystemCriticalPods: false
-      evictLocalStoragePods: false
-      ignorePvcPods: true
-      evictDaemonSetPods: false
-      labelSelector:
-        matchLabels:
-          scheduling.kubex.ai/binpack: "true"
     highNodeUtilization:
       numberOfNodes: 1
       thresholds:
         cpu: 25
         memory: 25
         pods: 25
-  weight: 50
-status:
-  summary:
+```
+
+### Limit descheduler activity to a node pool
+
+Wildcard values are expanded against node labels observed in the cluster. This example considers node pools whose label begins with `batch-`. The selector scopes descheduler analysis; add equivalent node affinity to the workloads if replacement Pods must stay in these pools.
+
+```yaml
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: ClusterCompactionPolicy
+metadata:
+  name: batch-pool-compaction
+spec:
+  scope:
+    namespaceSelector:
+      operator: In
+      values: [batch]
+    labelSelector:
+      matchLabels:
+        compaction.kubex.ai/enabled: "true"
+    workloadTypes: [Deployment, StatefulSet]
+  scheduler:
+    useKubexScheduler: true
+  descheduler:
     enabled: true
-    effectivePolicyLabel: scheduling.kubex.ai/compaction-policy=platform-active-binpacking
-    schedulerName: kubex-compaction-scheduler
-    schedulerProfileName: compaction-most-allocated
-    deschedulerProfileName: compaction
+    nodeSelector:
+      matchExpressions:
+        - key: cloud.google.com/gke-nodepool
+          operator: In
+          values: ["batch-*"]
+    highNodeUtilization:
+      thresholds:
+        cpu: 40
+        memory: 40
+        pods: 30
+```
+
+### Use more aggressive consolidation
+
+This example permits nodes carrying up to 60% requested CPU and memory to become sources, runs every 15 minutes, and allows more evictions per run. Use values like these only after validating PodDisruptionBudgets and scheduling constraints.
+
+```yaml
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: ClusterCompactionPolicy
+metadata:
+  name: production-workers-aggressive
+spec:
+  scope:
+    namespaceSelector:
+      operator: In
+      values: [production]
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/tier: worker
+        compaction.kubex.ai/enabled: "true"
+    workloadTypes: [Deployment]
+  scheduler:
+    useKubexScheduler: true
+  descheduler:
+    enabled: true
+    interval: "*/15 * * * *"
+    maxNoOfPodsToEvictPerNode: 2
+    maxNoOfPodsToEvictPerNamespace: 4
+    maxNoOfPodsToEvictTotal: 6
+    highNodeUtilization:
+      numberOfNodes: 0
+      thresholds:
+        cpu: 60
+        memory: 60
+        pods: 50
 ```
 
 ## Notes
@@ -222,15 +309,12 @@ status:
 - Starting image versions in this implementation:
   - scheduler: `registry.k8s.io/kube-scheduler:<cluster-version>` by default
   - descheduler: `registry.k8s.io/descheduler/descheduler:v0.36.0`
-- Scheduler image skew policy:
-  - exact cluster-version match is the steady state
-  - one minor older is allowed temporarily for upgrades
-  - newer-than-cluster and more-than-one-minor-older are rejected during Helm render
-- Use `compactionScheduler.kubernetesVersionOverride` only when the cluster version cannot be discovered reliably during template rendering.
-- Suppression only blocks descheduler disruption; it does not disable workload participation in the scheduler.
-- The controller now also reads `COMPACTION_SCHEDULER_IMAGE_REPOSITORY` from its Deployment, then reconciles the scheduler ConfigMap and image tag at runtime when active policies use the Kubex-managed scheduler.
+- Set `compactionScheduler.image.tag` or `.digest` to use an explicitly mirrored scheduler image; otherwise the controller derives the scheduler tag from the cluster Kubernetes version.
+- Scheduler/descheduler pull policies, resources, security contexts, and chart-level `imagePullSecrets` are propagated to controller-created runtime Pods.
+- Suppression blocks runtime replacement and scheduled descheduler eviction; it does not disable workload participation in the scheduler for future Pods.
+- The controller reconciles the scheduler ConfigMap and full Pod runtime settings when active policies use the Kubex-managed scheduler.
 - External scheduler mode is workload targeting only; Kubex does not manage scheduler runtime/config for those policies.
 - The compaction scheduler ConfigMap is a fixed name: `kubex-compaction-scheduler-config`.
 - The controller also reads `COMPACTION_DESCHEDULER_*` settings from its Deployment and creates one descheduler CronJob/ConfigMap per active descheduler policy using the fixed `kubex-compaction-descheduler` prefix.
 - A policy with `spec.descheduler.enabled: true` but no managed workloads gets a suspended descheduler CronJob.
-- OpenShift compatibility settings apply to the Kubex-managed scheduler Deployment; external scheduler mode does not create a Kubex scheduler workload.
+- With `openshift.enabled=true`, controller-created scheduler and descheduler Pods use arbitrary-UID-compatible restricted security contexts. Standard Kubernetes defaults remain unchanged when the switch is false or omitted.

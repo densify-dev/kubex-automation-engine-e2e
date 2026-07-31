@@ -4,17 +4,20 @@ metadata:
   name: compaction-test
 spec:
   scope:
+    labelSelector:
+      matchLabels:
+        team: compaction-test
     namespaceSelector:
-      operator: NotIn
+      operator: In
       values:
-        - "kube-system"
-        - "kubex"
+        - compaction-test
     workloadTypes:
       - Deployment
   scheduler:
     useKubexScheduler: true
   descheduler:
     enabled: true
+    # Demo-only: run every minute and use aggressive request-based thresholds.
     interval: "* * * * *"
     maxNoOfPodsToEvictPerNode: 2
     maxNoOfPodsToEvictPerNamespace: 2

@@ -1,21 +1,25 @@
 ---
-# Descheduler-only compaction policy: evict underutilised pods without
-# assigning a custom scheduler. Pods are rescheduled by the default scheduler.
-# Useful when you want bin-packing via eviction only, not at scheduling time.
+# Descheduler-only policy for labelled long-running workloads. Evicted Pods use
+# the default scheduler, which does not provide Kubex's MostAllocated bin-packing;
+# eviction can free nodes, but replacement placement is not guaranteed to compact.
 apiVersion: rightsizing.kubex.ai/v1alpha1
 kind: ClusterCompactionPolicy
 metadata:
   name: descheduler-only-compaction
 spec:
   scope:
+    labelSelector:
+      matchLabels:
+        compaction.kubex.ai/enabled: "true"
     namespaceSelector:
       operator: In
       values:
         - batch
     workloadTypes:
-      - Job
-      - CronJob
+      - Deployment
+      - StatefulSet
   enabled: true
+  setLabelsByEviction: false
   scheduler:
     useKubexScheduler: false
     externalSchedulerName: ""   # empty = no scheduler assignment

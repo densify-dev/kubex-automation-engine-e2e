@@ -7,6 +7,9 @@ metadata:
   name: simple-compaction
 spec:
   scope:
+    labelSelector:
+      matchLabels:
+        compaction.kubex.ai/enabled: "true"
     namespaceSelector:
       operator: In
       values:

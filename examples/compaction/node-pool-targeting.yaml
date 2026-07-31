@@ -1,6 +1,7 @@
 ---
 # Compaction policy targeting a specific node pool using wildcards.
-# Only nodes labelled kubex.ai/pool=green-* are eligible for descheduler activity.
+# Only nodes whose kubex.ai/pool value starts with green- are eligible.
+# Add equivalent node affinity to workloads when replacements must stay in this pool.
 # Higher weight (100) ensures this policy wins over any lower-priority overlapping policy.
 apiVersion: rightsizing.kubex.ai/v1alpha1
 kind: ClusterCompactionPolicy
@@ -8,11 +9,13 @@ metadata:
   name: green-pool-compaction
 spec:
   scope:
+    labelSelector:
+      matchLabels:
+        compaction.kubex.ai/node-pool: green
     namespaceSelector:
-      operator: NotIn
+      operator: In
       values:
-        - kube-system
-        - kubex
+        - production
     workloadTypes:
       - Deployment
       - StatefulSet
@@ -27,9 +30,7 @@ spec:
         - key: kubex.ai/pool
           operator: In
           values:
-            - green-a
-            - green-b
-            - green-c
+            - "green-*"
     maxNoOfPodsToEvictPerNode: 1
     maxNoOfPodsToEvictPerNamespace: 2
     maxNoOfPodsToEvictTotal: 5

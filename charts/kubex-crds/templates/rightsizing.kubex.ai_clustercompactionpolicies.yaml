@@ -132,42 +132,12 @@ spec:
                     properties:
                       numberOfNodes:
                         default: 0
-                        description: numberOfNodes is the minimum number of underutilized
-                          nodes required before acting.
+                        description: |-
+                          numberOfNodes is the number of underutilized nodes that may exist without acting.
+                          The strategy acts only when the underutilized node count is greater than this value.
                         format: int32
                         minimum: 0
                         type: integer
-                      targetThresholds:
-                        description: |-
-                          targetThresholds defines the upper-bound thresholds for destination nodes. Evicted pods are
-                          only rescheduled on nodes whose utilization does not exceed any of these values. Must be
-                          greater than thresholds for at least one resource. The descheduler requires this field.
-                        properties:
-                          cpu:
-                            default: 80
-                            description: cpu is the CPU utilization upper-bound percentage
-                              for destination nodes.
-                            format: int32
-                            maximum: 100
-                            minimum: 0
-                            type: integer
-                          memory:
-                            default: 80
-                            description: memory is the memory utilization upper-bound
-                              percentage for destination nodes.
-                            format: int32
-                            maximum: 100
-                            minimum: 0
-                            type: integer
-                          pods:
-                            default: 80
-                            description: pods is the pod utilization upper-bound percentage
-                              for destination nodes.
-                            format: int32
-                            maximum: 100
-                            minimum: 0
-                            type: integer
-                        type: object
                       thresholds:
                         description: |-
                           thresholds defines the underutilization thresholds. Nodes whose request-based utilization

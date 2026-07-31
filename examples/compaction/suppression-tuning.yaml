@@ -1,17 +1,19 @@
 ---
-# Compaction policy with custom eviction-loop suppression settings.
-# loopDetectionThreshold: 2 — suppress after 2 same-fingerprint observations
-# loopDetectionWindow: 10m  — within a 10-minute rolling window
-# suppressionDuration: 20m  — suppress for 20 minutes before retrying
+# Runtime-convergence suppression tuning for setLabelsByEviction. Suppress a
+# workload after two same-fingerprint replacement observations within 10 minutes,
+# then wait 20 minutes before runtime convergence may replace its Pods again.
 #
-# Lower thresholds catch loops faster; longer suppressionDuration gives
-# the cluster more time to stabilise before re-attempting eviction.
+# These settings govern replacement used to converge existing Pods with
+# scheduling intent; they do not tune scheduled descheduler balancing runs.
 apiVersion: rightsizing.kubex.ai/v1alpha1
 kind: ClusterCompactionPolicy
 metadata:
   name: tuned-suppression-compaction
 spec:
   scope:
+    labelSelector:
+      matchLabels:
+        compaction.kubex.ai/enabled: "true"
     namespaceSelector:
       operator: In
       values:
@@ -20,6 +22,7 @@ spec:
       - Deployment
       - StatefulSet
   enabled: true
+  setLabelsByEviction: true
   scheduler:
     useKubexScheduler: true
   descheduler:
