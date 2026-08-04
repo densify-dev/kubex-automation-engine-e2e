@@ -8,7 +8,7 @@ import pytest
 from kubernetes import client
 
 from helpers import create_deployment, delete_deployment, get_deployment, wait_for
-from test_compaction_scheduler import TestCompactionScheduler as _CompactionHelpers
+from .test_compaction_scheduler import TestCompactionScheduler as _CompactionHelpers
 
 
 @pytest.mark.timeout(420)
