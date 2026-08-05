@@ -75,21 +75,31 @@ def test_webhook_failure_replacement_loop_is_suppressed(
             current = k8s_clients.core.list_namespaced_pod(
                 test_namespace, label_selector=f"app={policy_name}"
             ).items
-            return bool(
-                current
-                and current[0].metadata.name != pods[0].metadata.name
-                and current[0].spec.scheduler_name != helper.SCHEDULER_NAME
+            return any(
+                pod.metadata.name != pods[0].metadata.name
+                and pod.metadata.deletion_timestamp is None
+                and pod.spec.scheduler_name != helper.SCHEDULER_NAME
+                for pod in current
             )
 
         wait_for(replacement_bypassed_webhook, timeout=180, message="unmutated replacement Pod")
 
-        first_replacement = k8s_clients.core.list_namespaced_pod(
-            test_namespace, label_selector=f"app={policy_name}"
-        ).items[0]
+        # The compaction controller may have already evicted the first replacement via
+        # setLabelsByEviction; pick the first live (non-terminating) pod that bypassed
+        # the webhook so that the subsequent delete call does not 404.
+        first_replacement = next(
+            pod
+            for pod in k8s_clients.core.list_namespaced_pod(
+                test_namespace, label_selector=f"app={policy_name}"
+            ).items
+            if pod.metadata.name != pods[0].metadata.name
+            and pod.metadata.deletion_timestamp is None
+        )
         k8s_clients.core.delete_namespaced_pod(first_replacement.metadata.name, test_namespace)
         wait_for(
             lambda: any(
                 pod.metadata.name != first_replacement.metadata.name
+                and pod.metadata.deletion_timestamp is None
                 and pod.spec.scheduler_name != helper.SCHEDULER_NAME
                 for pod in k8s_clients.core.list_namespaced_pod(
                     test_namespace, label_selector=f"app={policy_name}"
@@ -107,9 +117,13 @@ def test_webhook_failure_replacement_loop_is_suppressed(
 
         wait_for(workload_suppressed, timeout=180, message="eviction-loop suppression")
 
-        replacement = k8s_clients.core.list_namespaced_pod(
-            test_namespace, label_selector=f"app={policy_name}"
-        ).items[0]
+        replacement = next(
+            pod
+            for pod in k8s_clients.core.list_namespaced_pod(
+                test_namespace, label_selector=f"app={policy_name}"
+            ).items
+            if pod.metadata.deletion_timestamp is None
+        )
         wait_for(
             lambda: (
                 k8s_clients.core.read_namespaced_pod(
