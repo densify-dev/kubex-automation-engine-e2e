@@ -1,0 +1,29 @@
+---
+# Compaction policy using an externally-managed scheduler.
+# Kubex labels workloads and creates the descheduler CronJob, but does NOT
+# manage the scheduler Deployment or ConfigMap — those are owned by another tool.
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: ClusterCompactionPolicy
+metadata:
+  name: external-scheduler-compaction
+spec:
+  scope:
+    labelSelector:
+      matchLabels:
+        scheduler.kubex.ai/profile: custom-binpacking
+    namespaceSelector:
+      operator: In
+      values:
+        - staging
+    workloadTypes:
+      - Deployment
+      - StatefulSet
+  enabled: true
+  scheduler:
+    useKubexScheduler: false
+    externalSchedulerName: my-custom-binpacking-scheduler
+  descheduler:
+    enabled: true
+    maxNoOfPodsToEvictPerNode: 2
+    maxNoOfPodsToEvictPerNamespace: 2
+    maxNoOfPodsToEvictTotal: 5

@@ -369,6 +369,7 @@ globalConfiguration:
   protectedNamespacePatterns:
     - "kube-*"
     - "openshift-*"
+    - "gmp-*"
   # -- Webhook probe health transition settings
   webhookHealth:
     # -- Consecutive failed probes required before webhook is considered unhealthy
@@ -405,6 +406,61 @@ globalConfiguration:
 kaiQueues:
   # -- Create built-in Run:ai Queue resources (`kubex-parent-queue` and `kubex-unlimited-gpu-queue`)
   enabled: false
+
+# Compaction scheduler configuration for the dedicated compaction scheduler
+compactionScheduler:
+  # -- Render a MostAllocated scheduler configuration for the dedicated compaction scheduler
+  enabled: false
+  image:
+    # -- Scheduler image repository
+    repository: registry.k8s.io/kube-scheduler
+    # -- Scheduler image tag
+    tag: ""
+    # -- Optional scheduler image digest (for example sha256:...); takes precedence over tag
+    digest: ""
+    # -- Scheduler image pull policy
+    pullPolicy: IfNotPresent
+  # -- Optional pod security context for the dedicated compaction scheduler pod
+  podSecurityContext: {}
+  # -- Container security context for the dedicated compaction scheduler container
+  securityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - "ALL"
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 25m
+      memory: 64Mi
+
+# Compaction descheduler configuration installed through Helm
+compactionDescheduler:
+  # -- Render shared RBAC and service account objects for controller-managed descheduler deployments.
+  enabled: false
+  image:
+    # -- Descheduler image repository
+    repository: registry.k8s.io/descheduler/descheduler
+    # -- Descheduler image tag
+    tag: v0.36.0
+    # -- Optional descheduler image digest (for example sha256:...); takes precedence over tag
+    digest: ""
+    # -- Descheduler image pull policy
+    pullPolicy: IfNotPresent
+  # -- Optional pod security context for controller-created descheduler pods
+  podSecurityContext: {}
+  # -- Optional container security context for controller-created descheduler containers
+  securityContext: {}
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 25m
+      memory: 64Mi
 
 # ================================================================
 # BACKWARD COMPATIBILITY: Legacy environment variable configuration

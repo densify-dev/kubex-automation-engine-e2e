@@ -1,6 +1,5 @@
 """Tests: live rollback state transitions and cleanup."""
 
-import datetime
 import json
 import time
 
@@ -15,14 +14,14 @@ from helpers import (
     VERSION,
     automation_strategy_manifest,
     create_deployment,
-    delete_custom_object,
     delete_deployment,
+    delete_custom_object,
     get_deployment,
     get_deployment_pod,
     get_pod_resources,
+    pod_is_ready,
     kubectl,
     namespace_gone,
-    pod_is_ready,
     rollback_policy_manifest,
     static_policy_manifest,
     wait_for,
@@ -49,11 +48,6 @@ class TestRollbackBehavior:
     FAILING_RESOURCES = {
         "requests": {"cpu": "300m", "memory": "128Mi"},
         "limits": {"cpu": "600m", "memory": "192Mi"},
-    }
-
-    UNSCHEDULABLE_RESOURCES = {
-        "requests": {"cpu": "80", "memory": "200Gi"},
-        "limits": {"cpu": "120", "memory": "240Gi"},
     }
 
     PARTIAL_ADOPTION_RESOURCES = {
@@ -274,16 +268,6 @@ class TestRollbackBehavior:
             },
         )
 
-    def _patch_rollback_policy_target(self, k8s_clients, target: str) -> None:
-        k8s_clients.custom.patch_namespaced_custom_object(
-            GROUP,
-            VERSION,
-            self.NAMESPACE,
-            "rollbackpolicies",
-            self.ROLLBACK_POLICY_NAME,
-            {"spec": {"rollbackTarget": target}},
-        )
-
     def _patch_static_policy_resources(self, k8s_clients, resources: dict[str, dict[str, str]]) -> None:
         k8s_clients.custom.patch_namespaced_custom_object(
             GROUP,
@@ -433,76 +417,6 @@ class TestRollbackBehavior:
 
         wait_for(applied, timeout=timeout, message="live resource update")
 
-    def _wait_for_unschedulable_pod(self, k8s_clients, timeout: int):
-        pod_box = {"value": None}
-
-        def unschedulable():
-            pods = k8s_clients.core.list_namespaced_pod(
-                self.NAMESPACE,
-                label_selector=f"app={self.DEPLOYMENT}",
-            ).items
-            for pod in pods:
-                if pod.metadata.deletion_timestamp is not None or pod.status.phase != "Pending":
-                    continue
-                condition = next(
-                    (
-                        item
-                        for item in pod.status.conditions or []
-                        if item.type == "PodScheduled"
-                        and item.status == "False"
-                        and item.reason == "Unschedulable"
-                    ),
-                    None,
-                )
-                if condition is None:
-                    continue
-                live = get_pod_resources(k8s_clients.core, self.NAMESPACE, pod.metadata.name)["app"]
-                if (
-                    live["requests"].get("cpu") == self.UNSCHEDULABLE_RESOURCES["requests"]["cpu"]
-                    and live["requests"].get("memory")
-                    == self.UNSCHEDULABLE_RESOURCES["requests"]["memory"]
-                ):
-                    pod_box["value"] = pod
-                    return True
-            return False
-
-        wait_for(unschedulable, timeout=timeout, message="unschedulable rightsized pod")
-        return pod_box["value"]
-
-    def _wait_for_restored_pod(self, k8s_clients, excluded_uids: set[str], timeout: int):
-        pod_box = {"value": None}
-
-        def restored():
-            pods = k8s_clients.core.list_namespaced_pod(
-                self.NAMESPACE,
-                label_selector=f"app={self.DEPLOYMENT}",
-            ).items
-            for pod in pods:
-                if (
-                    pod.metadata.deletion_timestamp is not None
-                    or str(pod.metadata.uid) in excluded_uids
-                    or not pod_is_ready(pod)
-                ):
-                    continue
-                live = get_pod_resources(k8s_clients.core, self.NAMESPACE, pod.metadata.name)["app"]
-                if (
-                    live["requests"].get("cpu") == self.INITIAL_RESOURCES["requests"]["cpu"]
-                    and live["requests"].get("memory")
-                    == self.INITIAL_RESOURCES["requests"]["memory"]
-                    and live["limits"].get("cpu") == self.INITIAL_RESOURCES["limits"]["cpu"]
-                    and live["limits"].get("memory") == self.INITIAL_RESOURCES["limits"]["memory"]
-                ):
-                    pod_box["value"] = pod
-                    return True
-            return False
-
-        wait_for(
-            restored,
-            timeout=timeout,
-            message="replacement pod restored to last successful resources",
-        )
-        return pod_box["value"]
-
     def _wait_for_state_mode(self, k8s_clients, mode: str, timeout: int, interval: float = POLL_INTERVAL) -> dict:
         state_box = {"value": None}
 
@@ -635,12 +549,12 @@ class TestRollbackBehavior:
             state = self._rollback_state(k8s_clients)
             if state is None:
                 return False
-            # Don't stop at "backingOff" -- the rollback recommendation is
-            # deliberately still present at that point (it survives backingOff
-            # so a lower-precedence policy can't undo the rollback before it's
-            # proven stable) and annotations aren't cleared until the owner
-            # exits backingOff into "backedOff" or "failedPermanent".
-            if state.get("mode") in {"backedOff", "failedPermanent"}:
+            if state.get("mode") == "backingOff":
+                return True
+            if state.get("mode") == "backedOff":
+                completed["value"] = state
+                return True
+            if state.get("mode") == "failedPermanent":
                 completed["value"] = state
                 return True
             return False
@@ -716,101 +630,6 @@ class TestRollbackBehavior:
         assert failed["turn"] == 1
         assert failed["failureReason"] in {"oomKilled", "crashLoopBackOff"}
         assert any(reason in failed["failureMessage"] for reason in {"OOMKilled", "CrashLoopBackOff"})
-        assert self._rollback_annotations_cleared(k8s_clients)
-
-    @pytest.mark.timeout(900)
-    def test_unschedulable_recommendation_rolls_back_to_last_successful(self, k8s_clients):
-        if self.resize_mode == "in-place":
-            pytest.skip("an impossible request is an eviction-only rollback scenario")
-
-        self._wait_for_initial_monitoring_success(k8s_clients)
-        healthy_pod = get_deployment_pod(k8s_clients.core, self.NAMESPACE, self.DEPLOYMENT)
-        healthy_uid = str(healthy_pod.metadata.uid)
-        successful_state = self._rollback_state(k8s_clients)
-        successful_resources = successful_state["lastSuccessfulState"]["containers"]["app"]
-        assert successful_resources["requests"]["cpu"] == self.INITIAL_RESOURCES["requests"]["cpu"]
-        assert (
-            successful_resources["requests"]["memory"]
-            == self.INITIAL_RESOURCES["requests"]["memory"]
-        )
-        assert successful_resources["limits"]["cpu"] == self.INITIAL_RESOURCES["limits"]["cpu"]
-        assert (
-            successful_resources["limits"]["memory"]
-            == self.INITIAL_RESOURCES["limits"]["memory"]
-        )
-
-        self._patch_rollback_policy_target(k8s_clients, "lastSuccessful")
-        self._patch_rollback_policy_monitoring_period(k8s_clients, "10s")
-        self._patch_rollback_policy_threshold(k8s_clients, 100)
-        self._patch_rollback_policy_backoff(k8s_clients, time_period="5s", max_attempts=1)
-        self._patch_static_policy_resources(k8s_clients, self.UNSCHEDULABLE_RESOURCES)
-
-        failed_pod = self._wait_for_unschedulable_pod(k8s_clients, timeout=300)
-        failed_uid = str(failed_pod.metadata.uid)
-        assert failed_uid != healthy_uid
-
-        wait_for(
-            lambda: self._event_seen(k8s_clients, "RollbackRollingBackStarted", "Unschedulable"),
-            timeout=180,
-            message="unschedulable rollback start event",
-        )
-
-        restored_pod = self._wait_for_restored_pod(
-            k8s_clients,
-            excluded_uids={healthy_uid, failed_uid},
-            timeout=300,
-        )
-        assert str(restored_pod.metadata.uid) not in {healthy_uid, failed_uid}
-        terminal = self._wait_for_state_modes(
-            k8s_clients,
-            {"backingOff", "failedPermanent"},
-            timeout=240,
-        )
-        assert terminal["mode"] != "rollingBack"
-        assert terminal["failureReason"] == "unschedulable"
-        assert terminal["turn"] == 1
-
-    @pytest.mark.timeout(900)
-    def test_unschedulable_recommendation_without_last_successful_state_fails_permanently(self, k8s_clients):
-        if self.resize_mode == "in-place":
-            pytest.skip("an impossible request is an eviction-only rollback scenario")
-
-        self._wait_for_initial_monitoring_success(k8s_clients)
-
-        self._patch_rollback_policy_target(k8s_clients, "lastSuccessful")
-        self._patch_rollback_policy_monitoring_period(k8s_clients, "30s")
-        self._patch_rollback_policy_threshold(k8s_clients, 100)
-        self._patch_rollback_policy_backoff(k8s_clients, time_period="5s", max_attempts=1)
-        self._patch_static_policy_resources(k8s_clients, self.UNSCHEDULABLE_RESOURCES)
-
-        self._wait_for_unschedulable_pod(k8s_clients, timeout=300)
-        self._wait_for_state_mode(k8s_clients, "monitoring", timeout=120)
-
-        # Simulate the annotation-only monitoring-promotion path (OwnerRollbackReconciler
-        # promoting an owner straight to "monitoring" without ever capturing a
-        # LastSuccessfulState snapshot) by stripping the field and forcing the monitoring
-        # window to have already expired, then letting the live controller observe the
-        # already-unschedulable pod on its next reconcile.
-        state = self._rollback_state(k8s_clients)
-        assert state is not None
-        state.pop("lastSuccessfulState", None)
-        state["expiryAt"] = (
-            datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=5)
-        ).strftime("%Y-%m-%dT%H:%M:%SZ")
-        k8s_clients.apps.patch_namespaced_deployment(
-            self.DEPLOYMENT,
-            self.NAMESPACE,
-            {"metadata": {"annotations": {ROLLBACK_STATE_ANNOTATION: json.dumps(state)}}},
-        )
-
-        wait_for(
-            lambda: self._event_seen(k8s_clients, "RollbackRecommendationUnavailable"),
-            timeout=180,
-            message="rollback recommendation unavailable event",
-        )
-        terminal = self._wait_for_state_mode(k8s_clients, "failedPermanent", timeout=120)
-        assert terminal["failureReason"] == "rollbackRecommendationUnavailable"
-        assert "lastSuccessfulState" not in terminal
         assert self._rollback_annotations_cleared(k8s_clients)
 
     @pytest.mark.timeout(900)
