@@ -159,7 +159,7 @@ spec:
                             minimum: 0
                             type: integer
                           pods:
-                            default: 25
+                            default: 100
                             description: pods is the pod utilization threshold percentage.
                             format: int32
                             maximum: 100
