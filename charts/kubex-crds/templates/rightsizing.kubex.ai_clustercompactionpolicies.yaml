@@ -384,7 +384,7 @@ spec:
                 - namespaceSelector
                 type: object
               setLabelsByEviction:
-                default: true
+                default: false
                 description: setLabelsByEviction controls whether existing Pods are
                   replaced to converge with compaction scheduling intent.
                 type: boolean
