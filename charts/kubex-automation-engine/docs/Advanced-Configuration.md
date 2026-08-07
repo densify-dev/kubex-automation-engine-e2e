@@ -44,7 +44,6 @@ spec:
   protectedNamespacePatterns:
     - "kube-*"
     - "openshift-*"
-    - "gmp-*"
     - "kubex-*"
   webhookHealth:
     failureThreshold: 2

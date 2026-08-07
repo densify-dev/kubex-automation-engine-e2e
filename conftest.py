@@ -28,11 +28,6 @@ def pytest_addoption(parser):
         help="Kind node image to use when creating the cluster, for example kindest/node:v1.35.0",
     )
     parser.addoption(
-        "--kind-config",
-        default=None,
-        help="Optional Kind cluster config file used when creating the test cluster",
-    )
-    parser.addoption(
         "--namespace", default="kubex", help="Namespace where the controller is deployed"
     )
     parser.addoption(
@@ -166,7 +161,6 @@ def pytest_addoption(parser):
 class K8sClients:
     core: client.CoreV1Api
     apps: client.AppsV1Api
-    batch: client.BatchV1Api
     custom: client.CustomObjectsApi
     rbac: client.RbacAuthorizationV1Api
 
@@ -291,7 +285,6 @@ def kind_cluster(
             recommendations_file=request.config.getoption("--recommendations-file"),
             kubeai_chart_version=request.config.getoption("--kubeai-chart-version"),
             kind_node_image=request.config.getoption("--kind-node-image"),
-            kind_config=request.config.getoption("--kind-config"),
             cluster_name_value=request.config.getoption("--kubex-cluster-name"),
             secondary_cluster_enabled=request.config.getoption("--secondary-cluster-enabled"),
             primary_cluster_name=request.config.getoption("--primary-cluster-name"),
@@ -327,7 +320,6 @@ def k8s_clients(kind_cluster, kube_context):
     return K8sClients(
         core=client.CoreV1Api(),
         apps=client.AppsV1Api(),
-        batch=client.BatchV1Api(),
         custom=client.CustomObjectsApi(),
         rbac=client.RbacAuthorizationV1Api(),
     )
@@ -341,9 +333,13 @@ def kube_server_version(k8s_clients):
 
 @pytest.fixture(scope="session")
 def supports_in_place_resize(kube_server_version):
+    # Keep in sync with DefaultInPlaceMinKubeVersion in
+    # internal/policy/resize_executor.go - that's the controller's actual
+    # in-place-resize gate, not any particular upstream Kubernetes feature
+    # graduation milestone.
     major = int(kube_server_version.major)
     minor = int(kube_server_version.minor.rstrip("+"))
-    return (major, minor) >= (1, 35)
+    return (major, minor) >= (1, 33)
 
 
 @pytest.fixture(scope="session")
