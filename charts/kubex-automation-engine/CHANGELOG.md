@@ -2,15 +2,6 @@
 
 All notable changes to the Kubex Automation Engine Helm chart will be documented in this file.
 
-## [1.9.1] - 2026-08-06
-
-### Fixed
-- Rollback monitoring no longer stalls indefinitely when it can't build an actionable recommendation (for example, before any successful state has been captured); it now fails permanently with a clear reason instead of looping forever.
-- Fixed several related bugs that could prevent rollback from actually recovering a workload: rolling back to the last known-good configuration now restores it instead of being overwritten by the broken recommendation that triggered the rollback, a safety check no longer double-counts an already-unhealthy pod (which could deadlock recovery for single-replica workloads), and the recommendation that triggered a rollback is preserved through the backoff period so a lower-priority policy can't immediately reapply it.
-- Hardened handling of deleted or stale workload owners during rollback, keeping permission-denied errors visible and retryable instead of silently swallowing them.
-
----
-
 ## [1.9.0] - 2026-07-28
 
 ### Breaking

@@ -69,7 +69,7 @@ class TestRollbackBehavior:
     @pytest.fixture(params=["eviction", "in-place"], ids=["eviction", "in-place"])
     def rollback_resize_mode(self, request, supports_in_place_resize):
         if request.param == "in-place" and not supports_in_place_resize:
-            pytest.skip("rollback in-place tests require Kubernetes v1.33+ in-place resize support")
+            pytest.skip("rollback in-place tests require Kubernetes v1.35+ in-place resize support")
         return request.param
 
     @pytest.fixture(autouse=True)

@@ -40,6 +40,7 @@ class BootstrapConfig:
     cleanup_image_tag: str | None = None
     cleanup_image_pull_policy: str = "IfNotPresent"
     kind_node_image: str | None = None
+    kind_config: str | None = None
     install_controller: bool = True
     install_metrics_server: bool = True
     install_keda: bool = True
@@ -50,6 +51,7 @@ class BootstrapConfig:
     gpu_kind_config: str | None = None
     install_gpu_process_exporter: bool = False
     install_prometheus: bool = False
+    skip_kind_cluster_create: bool = False
     cluster_name_value: str | None = None
     secondary_cluster_enabled: bool = False
     primary_cluster_name: str | None = None
@@ -100,6 +102,14 @@ def _discover_repo_root(start: Path) -> Path:
     raise RuntimeError("unable to locate repo root for recommendations fixture")
 
 
+def _resolve_repo_path(path_value: str) -> Path:
+    path = Path(path_value)
+    if path.is_absolute():
+        return path
+    repo_root = _discover_repo_root(Path(__file__).resolve().parent)
+    return (repo_root / path).resolve()
+
+
 def ensure_kind_cluster(config: BootstrapConfig) -> None:
     clusters = run("kind", "get", "clusters", capture_output=True).stdout.splitlines()
     if config.kind_cluster_name in clusters:
@@ -108,7 +118,9 @@ def ensure_kind_cluster(config: BootstrapConfig) -> None:
     args = ["kind", "create", "cluster", "--name", config.kind_cluster_name]
     if config.kind_node_image:
         args += ["--image", config.kind_node_image]
-    if config.install_gpu_suite and config.gpu_kind_config:
+    if config.kind_config:
+        args += ["--config", str(_resolve_repo_path(config.kind_config))]
+    elif config.install_gpu_suite and config.gpu_kind_config:
         config.gpu_kind_config = prepare_gpu_kind_config(config)
         args += ["--config", config.gpu_kind_config]
     run(*args)
@@ -296,7 +308,15 @@ def ensure_strimzipodset_crd(config: BootstrapConfig) -> None:
     if not manifest_path.is_file():
         raise RuntimeError(f"strimzipodset CRD manifest not found: {manifest_path}")
 
-    run("kubectl", "--context", config.kube_context, "apply", "-f", str(manifest_path))
+    result = subprocess.run(
+        ["kubectl", "--context", config.kube_context, "get", "crd", "strimzipodsets.core.strimzi.io"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    crd_missing = result.returncode != 0 and "NotFound" in result.stderr
+    if crd_missing:
+        run("kubectl", "--context", config.kube_context, "apply", "--validate=false", "-f", str(manifest_path))
     wait_for_crd_established(config, "strimzipodsets.core.strimzi.io")
 
 
@@ -878,6 +898,8 @@ def _controller_values(config: BootstrapConfig) -> dict:
         "controllerManager": {},
         "defaultAutomationStrategy": {"enabled": False},
         "globalConfiguration": {"recommendationReloadInterval": "1m"},
+        "compactionScheduler": {"enabled": True},
+        "compactionDescheduler": {"enabled": True},
     }
     if config.secondary_cluster_enabled:
         if not config.primary_cluster_name:
@@ -889,7 +911,6 @@ def _controller_values(config: BootstrapConfig) -> dict:
     if config.deploy_kubex_stub:
         values["gateway"] = {"enabled": False}
         values["controllerManager"]["extraEnv"] = [
-            {"name": "GATEWAY_URL", "value": f"http://{kubex_url_host}"},
             {"name": "ENABLE_AUTOMATION_STATE", "value": "true"},
             {"name": "AUTOMATION_STATE_INTERVAL", "value": "1m"},
         ]
@@ -1020,9 +1041,10 @@ def install_controller(config: BootstrapConfig) -> None:
 
 
 def bootstrap(config: BootstrapConfig) -> None:
-    ensure_kind_cluster(config)
-    ensure_fake_gpu_capacity(config)
-    if config.load_kind_images:
+    if not config.skip_kind_cluster_create:
+        ensure_kind_cluster(config)
+        ensure_fake_gpu_capacity(config)
+    if config.load_kind_images and not config.skip_kind_cluster_create:
         load_kind_images(config)
     if config.install_metrics_server:
         install_metrics_server(config)
@@ -1062,6 +1084,7 @@ def parse_args() -> BootstrapConfig:
     parser.add_argument("--cleanup-image-pull-policy", default="IfNotPresent")
     parser.add_argument("--kubex-url-host")
     parser.add_argument("--kubex-url-scheme")
+    parser.add_argument("--kubex-username", default="dummy")
     parser.add_argument("--recommendations-file")
     parser.add_argument("--kubeai-chart-version", default=DEFAULT_KUBEAI_CHART_VERSION)
     parser.add_argument("--deploy-kubex-stub", action="store_true")
@@ -1069,6 +1092,7 @@ def parse_args() -> BootstrapConfig:
     parser.add_argument("--secondary-cluster-enabled", action="store_true")
     parser.add_argument("--primary-cluster-name")
     parser.add_argument("--kind-node-image", default="kindest/node:v1.35.0")
+    parser.add_argument("--kind-config")
     parser.add_argument("--load-kind-images", action="store_true")
     parser.add_argument("--no-controller", action="store_true")
     parser.add_argument("--without-metrics-server", action="store_true")
@@ -1077,6 +1101,7 @@ def parse_args() -> BootstrapConfig:
     parser.add_argument("--gpu-suite", action="store_true")
     parser.add_argument("--install-kubeai", action="store_true")
     parser.add_argument("--gpu-kind-config")
+    parser.add_argument("--skip-kind-cluster-create", action="store_true")
     args = parser.parse_args()
     return BootstrapConfig(
         kube_context=args.kube_context,
@@ -1096,11 +1121,13 @@ def parse_args() -> BootstrapConfig:
         cleanup_image_tag=args.cleanup_image_tag,
         cleanup_image_pull_policy=args.cleanup_image_pull_policy,
         kubex_epassword=os.environ.get("KUBEX_E2E_EPASSWORD"),
+        kubex_username=args.kubex_username,
         kubex_url_host=args.kubex_url_host,
         kubex_url_scheme=args.kubex_url_scheme,
         recommendations_file=args.recommendations_file,
         kubeai_chart_version=args.kubeai_chart_version,
         kind_node_image=args.kind_node_image,
+        kind_config=args.kind_config,
         load_kind_images=args.load_kind_images,
         cluster_name_value=args.kubex_cluster_name,
         secondary_cluster_enabled=args.secondary_cluster_enabled,
@@ -1110,6 +1137,7 @@ def parse_args() -> BootstrapConfig:
         gpu_kind_config=args.gpu_kind_config,
         install_gpu_process_exporter=args.gpu_suite,
         install_prometheus=args.gpu_suite,
+        skip_kind_cluster_create=args.skip_kind_cluster_create,
         deploy_kubex_stub=args.deploy_kubex_stub,
         install_controller=not args.no_controller,
         install_metrics_server=not args.without_metrics_server,

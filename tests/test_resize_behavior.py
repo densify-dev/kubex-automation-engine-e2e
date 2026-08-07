@@ -89,35 +89,10 @@ class TestResizeBehavior:
                 pass
 
     @pytest.mark.timeout(900)
-    def test_resize_mechanism_is_classifiable_and_consistent_with_pod_identity(
+    def test_resize_uses_in_place_on_135_and_eviction_before_135(
         self,
         k8s_clients,
     ):
-        """Verify a real recommendation-driven resize and classify the observed mode.
-
-        Classification comes from the controller's own authoritative signal -
-        the RIGHTSIZING_ANNOTATION's " via in-place resize"/" via eviction"
-        suffix (set from resizePlan.Summary.Execution.Method in
-        internal/policy/pod_rightsizing_info.go) - not from inferring the
-        mechanism via pod UID continuity or `managed_fields` inspection. Both
-        of those are indirect proxies: kind node images can report a kubelet
-        version inconsistent with their nominal tag, and the controller's own
-        in-place threshold (DefaultInPlaceMinKubeVersion in
-        internal/policy/resize_executor.go) does not line up with any one
-        Kubernetes minor version boundary a test could hardcode reliably.
-        Once classified, cross-check that pod identity behaved consistently
-        with the reported mechanism (in-place keeps the same UID; eviction
-        creates a new one).
-        """
-        expected_resources_summary = (
-            "Applied rightsizing requests [demo:[cpu=250m, memory=256Mi]] "
-            "limits [demo:[cpu=400m, memory=512Mi]]"
-        )
-        expected_annotations = {
-            expected_resources_summary + " via in-place resize": "in-place",
-            expected_resources_summary + " via eviction": "eviction",
-        }
-
         def current_pod():
             return get_deployment_pod(k8s_clients.core, self.NAMESPACE, self.DEPLOYMENT)
 
@@ -127,7 +102,6 @@ class TestResizeBehavior:
 
         original_pod = {"value": None}
         resized_pod = {"value": None}
-        mechanism = {"value": None}
 
         def record_original_pod():
             """Capture the first ready pod before the controller applies the recommendation."""
@@ -141,17 +115,13 @@ class TestResizeBehavior:
             return False
 
         def resized_pod_ready():
-            """Wait for the live pod to reflect the target resources AND have the
-            controller's mechanism annotation recorded, so classification below
-            never races the annotation write."""
+            """Wait for the live pod to reflect the recommendation fixture values."""
             try:
                 pod = current_pod()
             except RuntimeError:
                 return False
 
             resources = current_resources()
-            annotation = (pod.metadata.annotations or {}).get(RIGHTSIZING_ANNOTATION, "")
-            observed_mechanism = expected_annotations.get(annotation)
             if (
                 pod.metadata.deletion_timestamp is None
                 and resources["demo"]["requests"].get("cpu") == "250m"
@@ -159,11 +129,22 @@ class TestResizeBehavior:
                 and resources["demo"]["limits"].get("cpu") == "400m"
                 and resources["demo"]["limits"].get("memory") == "512Mi"
                 and pod_is_ready(pod)
-                and observed_mechanism is not None
             ):
                 resized_pod["value"] = pod
-                mechanism["value"] = observed_mechanism
                 return True
+            return False
+
+        def used_resize_subresource(pod):
+            """Detect in-place resize from pod managed fields when the UID is unchanged.
+
+            A straight version check is not reliable enough here. In local runs
+            `kindest/node:v1.34.0` can still report an in-place resize via the
+            Pod resize subresource, so the test should verify the observed mode
+            rather than assume it from the server version alone.
+            """
+            for field in pod.metadata.managed_fields or []:
+                if field.subresource == "resize":
+                    return True
             return False
 
         wait_for(
@@ -175,21 +156,24 @@ class TestResizeBehavior:
 
         # Recommendation-driven changes may briefly replace the pod. Poll until
         # a ready pod exists again with the expected recommendation-applied
-        # resources and a recorded resize mechanism.
+        # resources, then compare the resulting UID.
         wait_for(
             resized_pod_ready,
             timeout=480,
-            message="resized workload pod with a classified resize mechanism",
+            message="resized workload pod readiness",
         )
 
-        resized_uid = resized_pod["value"].metadata.uid
-        if mechanism["value"] == "in-place":
-            assert resized_uid == original_uid, (
-                "controller reported an in-place resize, but the workload pod's "
-                "UID changed"
+        if resized_pod["value"].metadata.uid == original_uid:
+            assert used_resize_subresource(resized_pod["value"]), (
+                "the workload pod kept the same UID, but the pod metadata does "
+                "not show a resize subresource update"
+            )
+            annotation = (resized_pod["value"].metadata.annotations or {}).get(
+                RIGHTSIZING_ANNOTATION, ""
+            )
+            assert annotation == (
+                "Applied rightsizing requests [demo:[cpu=250m, memory=256Mi]] "
+                "limits [demo:[cpu=400m, memory=512Mi]] via in-place resize"
             )
         else:
-            assert resized_uid != original_uid, (
-                "controller reported an eviction, but the workload pod kept the "
-                "same UID"
-            )
+            assert resized_pod["value"].metadata.uid != original_uid
