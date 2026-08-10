@@ -110,10 +110,27 @@ def _resolve_repo_path(path_value: str) -> Path:
     return (repo_root / path).resolve()
 
 
+def _kind_cluster_healthy(kube_context: str) -> bool:
+    """Return True if the kube-apiserver TLS cert chain is internally consistent."""
+    result = run(
+        "kubectl", "--context", kube_context,
+        "get", "--raw", "/healthz",
+        check=False, capture_output=True,
+    )
+    return result.returncode == 0 and result.stdout.strip() == "ok"
+
+
 def ensure_kind_cluster(config: BootstrapConfig) -> None:
     clusters = run("kind", "get", "clusters", capture_output=True).stdout.splitlines()
     if config.kind_cluster_name in clusters:
-        return
+        if _kind_cluster_healthy(config.kube_context):
+            return
+        print(
+            f"kind cluster {config.kind_cluster_name!r} exists but is unhealthy "
+            "(cert mismatch or apiserver unreachable); deleting and recreating",
+            flush=True,
+        )
+        run("kind", "delete", "cluster", "--name", config.kind_cluster_name)
 
     args = ["kind", "create", "cluster", "--name", config.kind_cluster_name]
     if config.kind_node_image:

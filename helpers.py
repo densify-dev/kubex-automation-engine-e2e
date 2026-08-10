@@ -76,14 +76,56 @@ def wait_for(condition_fn, timeout=DEFAULT_TIMEOUT, interval=POLL_INTERVAL, mess
     """Poll condition_fn until it returns True or timeout expires."""
     deadline = time.time() + timeout
     last_exc = None
+    infrastructure_failures = 0
     while time.time() < deadline:
         try:
             if condition_fn():
                 return
         except Exception as exc:
             last_exc = exc
+            api_unavailable = isinstance(exc, ApiException) and exc.status == 503
+            connection_unavailable = isinstance(exc, (ConnectionError, OSError))
+            if api_unavailable or connection_unavailable:
+                infrastructure_failures += 1
+                if infrastructure_failures >= 3:
+                    raise RuntimeError(f"Kubernetes API unavailable while waiting for {message}: {exc}") from exc
+            else:
+                infrastructure_failures = 0
         time.sleep(interval)
     raise TimeoutError(f"Timed out waiting for {message}. Last exception: {last_exc}")
+
+
+def wait_for_owned_pods_terminated(
+    core: client.CoreV1Api,
+    namespace: str,
+    label_selector: str | None = None,
+    app_prefix: str | None = None,
+    timeout: int = 120,
+) -> None:
+    """Wait for test-owned Pods to disappear, force-deleting stuck Pods on timeout."""
+    def remaining():
+        pods = core.list_namespaced_pod(namespace, label_selector=label_selector).items
+        if app_prefix is not None:
+            pods = [pod for pod in pods if (pod.metadata.labels or {}).get("app", "").startswith(app_prefix)]
+        return pods
+
+    try:
+        description = label_selector or f"app prefix {app_prefix!r}"
+        wait_for(lambda: not remaining(), timeout=timeout, message=f"Pods matching {description} terminated")
+        return
+    except TimeoutError:
+        for pod in remaining():
+            try:
+                core.delete_namespaced_pod(
+                    pod.metadata.name,
+                    namespace,
+                    grace_period_seconds=0,
+                    body=client.V1DeleteOptions(grace_period_seconds=0, propagation_policy="Background"),
+                )
+            except ApiException as exc:
+                if exc.status != 404:
+                    raise
+        wait_for(lambda: not remaining(), timeout=30, message=f"force-deleted Pods matching {description}")
 
 
 def namespace_gone(k8s_clients, namespace: str) -> bool:

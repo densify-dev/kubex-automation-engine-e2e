@@ -34,6 +34,7 @@ from helpers import (
     wait_for,
     wait_for_crd_condition,
     wait_for_deployment_ready,
+    wait_for_owned_pods_terminated,
 )
 
 
@@ -66,20 +67,8 @@ class TestCompactionScale:
         delete_deployments_bulk(k8s_clients.apps, test_namespace, self.CANDIDATE_BASE, self.CANDIDATE_COUNT)
         for node in self._schedulable_nodes(k8s_clients):
             kubectl("label", "node", node, f"{self.SCALE_TIER_LABEL}-", context=kube_context, check=False)
-        # Wait for all test pods to fully terminate so their CPU/memory requests are released
-        # from the nodes. Without this wait, pods from a previous test (e.g. 100 target pods at
-        # 10m CPU each, ~333m per node) remain Terminating and counted as "allocated" by the
-        # scheduler, filling dense nodes to ~100% and forcing the next test's candidates onto k8pb.
-        # Wait only for pods owned by this test to terminate, not all pods in the namespace.
-        # Waiting for an empty namespace races with other tests' pods that may still be
-        # terminating, causing the scale fixture to time out unnecessarily.
-        wait_for(
-            lambda: not any(
-                (pod.metadata.labels or {}).get("app", "").startswith("e2e-scale-")
-                for pod in k8s_clients.core.list_namespaced_pod(test_namespace).items
-            ),
-            timeout=120,
-            message="scale test pods terminated",
+        wait_for_owned_pods_terminated(
+            k8s_clients.core, test_namespace, app_prefix="e2e-scale-"
         )
 
     # ── helpers ──────────────────────────────────────────────────────────────
@@ -118,31 +107,51 @@ class TestCompactionScale:
                     cpu_map[pod.spec.node_name] += self._parse_cpu_millis(raw)
         return cpu_map
 
-    def _select_dense_and_sparse_nodes(self, k8s_clients) -> tuple[str, str, str, int, int]:
-        """Pick dense_a, dense_b, sparse and per-node filler CPUs (millicores).
+    def _node_allocatable_cpu_map(self, k8s_clients) -> dict[str, int]:
+        """Return {node_name: allocatable CPU in millicores} for all schedulable nodes."""
+        schedulable = set(self._schedulable_nodes(k8s_clients))
+        return {
+            node.metadata.name: self._parse_cpu_millis(
+                (node.status.allocatable or {}).get("cpu") or "0"
+            )
+            for node in k8s_clients.core.list_node().items
+            if node.metadata and node.metadata.name in schedulable
+        }
+
+    def _select_dense_and_sparse_nodes(self, k8s_clients) -> tuple[str, str, str, int, int, int, int]:
+        """Pick dense_a, dense_b, sparse, per-node filler CPUs, and per-node allocatable CPUs.
 
         Selects the 2 most-loaded nodes as dense and the least-loaded as sparse so
         the fillers needed to reach the 65% HighNodeUtilization threshold are small
         enough to fit even on heavily-loaded nodes.  Filler sizes are computed per
         node to target DENSE_TARGET_CPU (70%) utilization, capped to leave room for
         rescheduled candidates.
+
+        Returns (dense_a, dense_b, sparse, filler_a_cpu, filler_b_cpu, alloc_a, alloc_b).
+        Allocatable values are used by callers to display accurate utilization percentages.
         """
         cpu_map = self._node_cpu_requests_map(k8s_clients)
+        allocatable_map = self._node_allocatable_cpu_map(k8s_clients)
         nodes = self._schedulable_nodes(k8s_clients)
         sorted_nodes = sorted(nodes, key=lambda n: cpu_map.get(n, 0), reverse=True)
         dense_a, dense_b, sparse = sorted_nodes[0], sorted_nodes[1], sorted_nodes[2]
 
-        target_m = int(self.ALLOCATABLE_CPU_M * self.DENSE_TARGET_CPU)
         # Leave room for rescheduled candidates plus a small margin.
         slack_m = self.CANDIDATE_COUNT * 30 + 50
 
         def _filler(node: str) -> int:
+            # Use the actual node allocatable so the threshold computation is correct
+            # on both GKE (e2-standard-2 ≈ 1930m) and Kind (typically ≥ 3800m).
+            allocatable = allocatable_map.get(node, self.ALLOCATABLE_CPU_M)
+            target_m = int(allocatable * self.DENSE_TARGET_CPU)
             base = cpu_map.get(node, 0)
             needed = max(target_m - base, 50)
-            cap = self.ALLOCATABLE_CPU_M - base - slack_m
+            cap = allocatable - base - slack_m
             return min(needed, max(cap, 50))
 
-        return dense_a, dense_b, sparse, _filler(dense_a), _filler(dense_b)
+        alloc_a = allocatable_map.get(dense_a, self.ALLOCATABLE_CPU_M)
+        alloc_b = allocatable_map.get(dense_b, self.ALLOCATABLE_CPU_M)
+        return dense_a, dense_b, sparse, _filler(dense_a), _filler(dense_b), alloc_a, alloc_b
 
     def _label_node(self, kube_context: str, node_name: str, node_labels: dict[str, str]) -> None:
         args = ["label", "node", node_name]
@@ -211,6 +220,7 @@ class TestCompactionScale:
             mem_request="32Mi",
             cpu_limit="50m",
             mem_limit="64Mi",
+            pod_labels={"app.kubernetes.io/part-of": "e2e-compaction-scale"},
         )
 
         t_start = time.time()
@@ -287,6 +297,10 @@ class TestCompactionScale:
                     p.spec.scheduler_name == self.SCHEDULER_NAME
                     and p.status
                     and p.status.phase == "Running"
+                    and any(
+                        condition.type == "Ready" and condition.status == "True"
+                        for condition in (p.status.conditions or [])
+                    )
                     for p in replacements
                 ):
                     return False
@@ -311,10 +325,25 @@ class TestCompactionScale:
                 for p in replacements:
                     phase = p.status.phase if p.status else "N/A"
                     sched = p.spec.scheduler_name
-                    if sched != self.SCHEDULER_NAME or phase != "Running":
-                        mismatches.append(
-                            f"{name}: pod={p.metadata.name} scheduler={sched} phase={phase}"
-                        )
+                    ready = next(
+                        (condition.status for condition in (p.status.conditions or []) if condition.type == "Ready"),
+                        "Unknown",
+                    ) if p.status else "Unknown"
+                    scheduling = next(
+                        (condition.message for condition in (p.status.conditions or []) if condition.type == "PodScheduled"),
+                        "",
+                    ) if p.status else ""
+                    events = k8s_clients.core.list_namespaced_event(
+                        test_namespace, field_selector=f"involvedObject.uid={p.metadata.uid}"
+                    ).items
+                    event_text = "; ".join(f"{event.reason}: {event.message}" for event in events[-5:])
+                    mismatches.append(
+                        f"{name}: pod={p.metadata.name} uid={p.metadata.uid} "
+                        f"node={p.spec.node_name or '<unassigned>'} scheduler={sched} phase={phase} ready={ready} "
+                        f"deletion={p.metadata.deletion_timestamp} labels={p.metadata.labels or {}} "
+                        f"annotations={p.metadata.annotations or {}} scheduling={scheduling or '<none>'} "
+                        f"events={event_text or '<none>'}"
+                    )
             if mismatches:
                 print(f"\nTargeting mismatches ({len(mismatches)}):\n" + "\n".join(mismatches[:30]))
             raise
@@ -354,7 +383,7 @@ class TestCompactionScale:
         if len(nodes) < 3:
             pytest.skip(f"requires ≥3 schedulable nodes, got {len(nodes)}")
 
-        dense_a, dense_b, sparse, filler_a_cpu, filler_b_cpu = self._select_dense_and_sparse_nodes(k8s_clients)
+        dense_a, dense_b, sparse, filler_a_cpu, filler_b_cpu, alloc_a, alloc_b = self._select_dense_and_sparse_nodes(k8s_clients)
 
         self._label_node(kube_context, dense_a, {self.SCALE_TIER_LABEL: "dense"})
         self._label_node(kube_context, dense_b, {self.SCALE_TIER_LABEL: "dense"})
@@ -376,6 +405,7 @@ class TestCompactionScale:
                 cpu_limit=f"{filler_cpu}m",
                 mem_limit="256Mi",
                 node_selector={"kubernetes.io/hostname": node_name},
+                pod_labels={"app.kubernetes.io/part-of": "e2e-compaction-scale"},
             )
 
         # Wait for fillers to be Running so their CPU requests are visible to the scheduler
@@ -409,6 +439,7 @@ class TestCompactionScale:
             mem_request="8Mi",
             cpu_limit="50m",
             mem_limit="64Mi",
+            pod_labels={"app.kubernetes.io/part-of": "e2e-compaction-scale"},
             topology_spread_constraints=[
                 client.V1TopologySpreadConstraint(
                     max_skew=100,
@@ -504,8 +535,8 @@ class TestCompactionScale:
         after_on_dense_a = self._pods_on_node(k8s_clients, test_namespace, self.CANDIDATE_BASE, self.CANDIDATE_COUNT, dense_a)
         after_on_dense_b = self._pods_on_node(k8s_clients, test_namespace, self.CANDIDATE_BASE, self.CANDIDATE_COUNT, dense_b)
 
-        dense_a_pct = int((filler_a_cpu) / self.ALLOCATABLE_CPU_M * 100)
-        dense_b_pct = int((filler_b_cpu) / self.ALLOCATABLE_CPU_M * 100)
+        dense_a_pct = int(filler_a_cpu / alloc_a * 100) if alloc_a else 0
+        dense_b_pct = int(filler_b_cpu / alloc_b * 100) if alloc_b else 0
 
         print(f"\n=== Descheduler Consolidation Results ===")
         print(f"Candidates:         {self.CANDIDATE_COUNT} Deployments (30m CPU, 8Mi RAM each)")

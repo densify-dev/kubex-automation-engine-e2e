@@ -28,6 +28,7 @@ from helpers import (
     wait_for_crd_condition,
     wait_for_deployment_ready,
     wait_for_stateful_set_ready,
+    wait_for_owned_pods_terminated,
 )
 
 
@@ -76,6 +77,8 @@ class TestCompactionScheduler:
             delete_stateful_set(k8s_clients.apps, k8s_clients.core, test_namespace, name)
 
         delete_deployments_bulk(k8s_clients.apps, test_namespace, self.MULTI_WORKLOAD_BASE, self.MULTI_WORKLOAD_COUNT)
+
+        wait_for_owned_pods_terminated(k8s_clients.core, test_namespace, app_prefix="e2e-compaction")
 
         self._clear_node_labels(kube_context, k8s_clients)
 
@@ -465,8 +468,8 @@ class TestCompactionScheduler:
                 {
                     "name": "pause",
                     "image": "registry.k8s.io/pause:3.10",
-                    "requests": {"cpu": "50m", "memory": "64Mi"},
-                    "limits": {"cpu": "100m", "memory": "128Mi"},
+                    "requests": {"cpu": "100m", "memory": "64Mi"},
+                    "limits": {"cpu": "200m", "memory": "128Mi"},
                 }
             ],
         )
@@ -483,8 +486,8 @@ class TestCompactionScheduler:
                 {
                     "name": "pause",
                     "image": "registry.k8s.io/pause:3.10",
-                    "requests": {"cpu": "50m", "memory": "64Mi"},
-                    "limits": {"cpu": "100m", "memory": "128Mi"},
+                    "requests": {"cpu": "100m", "memory": "64Mi"},
+                    "limits": {"cpu": "200m", "memory": "128Mi"},
                 }
             ],
         )
@@ -505,10 +508,10 @@ class TestCompactionScheduler:
                     "labelSelector": {"matchLabels": {"role": "candidate"}},
                 },
                 "highNodeUtilization": {
-                    # kind nodes have ~1930m allocatable CPU; busy-a/busy-b nodes sit at
-                    # ~21% (8×50m/1930m). Use cpu=10 so those nodes are valid destinations
-                    # (>10%) while the single-candidate node (~5%) remains a source (<10%).
-                    "thresholds": {"cpu": 10, "memory": 10, "pods": 5},
+                    # Use cpu=15 so busy-a/busy-b nodes (8×100m=800m) are valid destinations
+                    # on both GKE (800/1930≈41%) and Kind (800/4000≈20%), while the single-
+                    # candidate node (~100m) stays below 15% on any node size.
+                    "thresholds": {"cpu": 15, "memory": 10, "pods": 5},
                     "numberOfNodes": 0,
                 },
             },
