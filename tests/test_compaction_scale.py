@@ -70,10 +70,16 @@ class TestCompactionScale:
         # from the nodes. Without this wait, pods from a previous test (e.g. 100 target pods at
         # 10m CPU each, ~333m per node) remain Terminating and counted as "allocated" by the
         # scheduler, filling dense nodes to ~100% and forcing the next test's candidates onto k8pb.
+        # Wait only for pods owned by this test to terminate, not all pods in the namespace.
+        # Waiting for an empty namespace races with other tests' pods that may still be
+        # terminating, causing the scale fixture to time out unnecessarily.
         wait_for(
-            lambda: len(k8s_clients.core.list_namespaced_pod(test_namespace).items) == 0,
+            lambda: not any(
+                (pod.metadata.labels or {}).get("app", "").startswith("e2e-scale-")
+                for pod in k8s_clients.core.list_namespaced_pod(test_namespace).items
+            ),
             timeout=120,
-            message="all test namespace pods terminated",
+            message="scale test pods terminated",
         )
 
     # ── helpers ──────────────────────────────────────────────────────────────
@@ -242,8 +248,11 @@ class TestCompactionScale:
 
         wait_for(all_have_intent, timeout=600, message=f"all {self.WORKLOAD_COUNT} workload intents")
         old_pod_names = set()
+        pods_to_delete = []
         for name in names:
             dep = get_deployment(k8s_clients.apps, test_namespace, name)
+            # Compaction mutates replacement Pods, not the Deployment template.
+            # Kubernetes defaults template.spec.schedulerName to "default-scheduler".
             assert dep.spec.template.spec.scheduler_name in (None, "default-scheduler")
             assert not any(
                 key.startswith("scheduling.kubex.ai/compaction-")
@@ -251,22 +260,64 @@ class TestCompactionScale:
             )
             for pod in k8s_clients.core.list_namespaced_pod(test_namespace, label_selector=f"app={name}").items:
                 old_pod_names.add(pod.metadata.name)
-                k8s_clients.core.delete_namespaced_pod(pod.metadata.name, test_namespace)
+                pods_to_delete.append(pod.metadata.name)
+
+        # Delete in bounded batches to avoid saturating the webhook endpoint.
+        _BATCH = 10
+        for i in range(0, len(pods_to_delete), _BATCH):
+            for pod_name in pods_to_delete[i : i + _BATCH]:
+                k8s_clients.core.delete_namespaced_pod(pod_name, test_namespace)
+            if i + _BATCH < len(pods_to_delete):
+                time.sleep(0.5)
 
         def all_targeted() -> bool:
             for name in names:
-                dep = get_deployment(k8s_clients.apps, test_namespace, name)
-                if dep.spec.template.spec.scheduler_name is not None:
+                pods = k8s_clients.core.list_namespaced_pod(
+                    test_namespace, label_selector=f"app={name}"
+                ).items
+                # Only live replacement pods count; skip terminating or pre-deletion pods.
+                replacements = [
+                    p for p in pods
+                    if p.metadata.name not in old_pod_names
+                    and p.metadata.deletion_timestamp is None
+                ]
+                if not replacements:
                     return False
-                pods = k8s_clients.core.list_namespaced_pod(test_namespace, label_selector=f"app={name}").items
-                if not pods or not all(
-                    pod.metadata.name not in old_pod_names and pod.spec.scheduler_name == self.SCHEDULER_NAME
-                    for pod in pods
+                if not all(
+                    p.spec.scheduler_name == self.SCHEDULER_NAME
+                    and p.status
+                    and p.status.phase == "Running"
+                    for p in replacements
                 ):
                     return False
             return True
 
-        wait_for(all_targeted, timeout=600, message=f"all {self.WORKLOAD_COUNT} workloads targeted with compaction scheduler")
+        try:
+            wait_for(all_targeted, timeout=600, message=f"all {self.WORKLOAD_COUNT} workloads targeted with compaction scheduler")
+        except TimeoutError:
+            mismatches = []
+            for name in names:
+                pods = k8s_clients.core.list_namespaced_pod(
+                    test_namespace, label_selector=f"app={name}"
+                ).items
+                replacements = [
+                    p for p in pods
+                    if p.metadata.name not in old_pod_names
+                    and p.metadata.deletion_timestamp is None
+                ]
+                if not replacements:
+                    mismatches.append(f"{name}: no live replacement pod")
+                    continue
+                for p in replacements:
+                    phase = p.status.phase if p.status else "N/A"
+                    sched = p.spec.scheduler_name
+                    if sched != self.SCHEDULER_NAME or phase != "Running":
+                        mismatches.append(
+                            f"{name}: pod={p.metadata.name} scheduler={sched} phase={phase}"
+                        )
+            if mismatches:
+                print(f"\nTargeting mismatches ({len(mismatches)}):\n" + "\n".join(mismatches[:30]))
+            raise
 
         elapsed = time.time() - t_start
         throughput = self.WORKLOAD_COUNT / elapsed if elapsed > 0 else float("inf")
