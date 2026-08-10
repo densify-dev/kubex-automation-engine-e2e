@@ -341,9 +341,13 @@ def kube_server_version(k8s_clients):
 
 @pytest.fixture(scope="session")
 def supports_in_place_resize(kube_server_version):
+    # Keep in sync with DefaultInPlaceMinKubeVersion in
+    # internal/policy/resize_executor.go - that's the controller's actual
+    # in-place-resize gate, not any particular upstream Kubernetes feature
+    # graduation milestone.
     major = int(kube_server_version.major)
     minor = int(kube_server_version.minor.rstrip("+"))
-    return (major, minor) >= (1, 35)
+    return (major, minor) >= (1, 33)
 
 
 @pytest.fixture(scope="session")
