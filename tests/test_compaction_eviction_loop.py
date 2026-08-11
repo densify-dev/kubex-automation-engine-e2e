@@ -85,15 +85,32 @@ def test_node_affinity_replacement_loop_is_suppressed(
                 if pod.metadata.deletion_timestamp is None
             ]
 
-        # Wait for the loop-detection baseline (podNodes map) to be stored.
-        def baseline_captured() -> bool:
+        # Wait for the loop-detection baseline (podNodes map) to be stored AND stable.
+        # The compaction hook may evict the initial pod before the controller writes
+        # the baseline, causing the ReplicaSet to surge-create multiple replacements.
+        # If two replacements land simultaneously, both enter the baseline as
+        # "pre-existing" pods. When the test then manually evicts one, the other is
+        # already in previousNodes and is not treated as a replacement — so loop
+        # detection never fires.  We guard by waiting until the baseline exactly
+        # mirrors the current live pods (one entry per non-terminating pod), which
+        # means the surge has fully resolved before we start manual evictions.
+        def stable_baseline_captured() -> bool:
             deployment = get_deployment(k8s_clients.apps, test_namespace, policy_name)
             raw = (deployment.metadata.annotations or {}).get(_LOOP_STATE_ANNOTATION, "")
             if not raw:
                 return False
-            return bool(json.loads(raw).get("podNodes"))
+            pod_nodes = json.loads(raw).get("podNodes") or {}
+            if not pod_nodes:
+                return False
+            current_uids = {
+                str(pod.metadata.uid)
+                for pod in live_pods()
+                if pod.spec.node_name  # only scheduled pods
+            }
+            # Baseline must match the live scheduled pods exactly — no extra surge entries.
+            return set(pod_nodes.keys()) == current_uids and len(current_uids) > 0
 
-        wait_for(baseline_captured, timeout=120, message="compaction loop baseline snapshot")
+        wait_for(stable_baseline_captured, timeout=120, message="stable compaction loop baseline")
 
         def workload_suppressed() -> bool:
             deployment = get_deployment(k8s_clients.apps, test_namespace, policy_name)
