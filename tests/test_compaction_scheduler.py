@@ -175,6 +175,7 @@ class TestCompactionScheduler:
         node_selector: dict[str, object],
         workload_types: list[str] | None = None,
         descheduler: dict[str, object] | None = None,
+        set_labels_by_eviction: bool = True,
     ) -> dict:
         descheduler_spec = {
             "enabled": True,
@@ -192,7 +193,7 @@ class TestCompactionScheduler:
             "metadata": {"name": name},
             "spec": {
                 "enabled": True,
-                "setLabelsByEviction": True,
+                "setLabelsByEviction": set_labels_by_eviction,
                 "scope": {
                     "workloadTypes": workload_types or ["Deployment"],
                     "namespaceSelector": {"operator": "In", "values": [namespace]},
@@ -419,6 +420,7 @@ class TestCompactionScheduler:
 
         policy_name = "e2e-compaction-move"
         workload_labels = {"app": policy_name}
+        pool_nodes = dict(zip(["green-a", "green-b", "green-c"], nodes[:3], strict=True))
         candidate_affinity = client.V1Affinity(
             node_affinity=client.V1NodeAffinity(
                 required_during_scheduling_ignored_during_execution=client.V1NodeSelector(
@@ -456,6 +458,8 @@ class TestCompactionScheduler:
         seeded_pod = get_stateful_set_pod(k8s_clients.core, test_namespace, policy_name)
         seeded_uid = seeded_pod.metadata.uid
         seeded_node = seeded_pod.spec.node_name
+        busy_pools = [pool for pool, node_name in pool_nodes.items() if node_name != seeded_node]
+        assert len(busy_pools) == 2
         create_stateful_set(
             k8s_clients.apps,
             test_namespace,
@@ -463,7 +467,7 @@ class TestCompactionScheduler:
             service_name="busy-a",
             labels={**workload_labels, "role": "busy-a"},
             replicas=8,
-            node_selector={self.NODE_POOL_LABEL: "green-b"},
+            node_selector={self.NODE_POOL_LABEL: busy_pools[0]},
             containers=[
                 {
                     "name": "pause",
@@ -481,7 +485,7 @@ class TestCompactionScheduler:
             service_name="busy-b",
             labels={**workload_labels, "role": "busy-b"},
             replicas=8,
-            node_selector={self.NODE_POOL_LABEL: "green-c"},
+            node_selector={self.NODE_POOL_LABEL: busy_pools[1]},
             containers=[
                 {
                     "name": "pause",
@@ -514,7 +518,9 @@ class TestCompactionScheduler:
                     "thresholds": {"cpu": 15, "memory": 10, "pods": 5},
                     "numberOfNodes": 0,
                 },
+                "interval": "* * * * *",
             },
+            set_labels_by_eviction=False,
         )
 
         self._wait_for_policy_ready(k8s_clients, policy_name)
@@ -536,12 +542,21 @@ class TestCompactionScheduler:
 
         def candidate_relocated() -> bool:
             pod = get_stateful_set_pod(k8s_clients.core, test_namespace, policy_name)
-            return (
+            moved = (
                 pod.metadata.uid != seeded_uid
                 and pod.spec is not None
                 and pod.spec.node_name is not None
                 and pod.spec.node_name != seeded_node
                 and pod.spec.node_name in set(nodes[:3])
+            )
+            if not moved:
+                return False
+            return any(
+                event.reason == "HighNodeUtilization"
+                and event.involved_object
+                and event.involved_object.kind == "Pod"
+                and event.involved_object.name == pod.metadata.name
+                for event in k8s_clients.core.list_namespaced_event(test_namespace).items
             )
 
         wait_for(candidate_relocated, timeout=900, message="candidate relocation within the wildcard pool")

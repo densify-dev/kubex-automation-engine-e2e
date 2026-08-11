@@ -112,7 +112,10 @@ class TestRollbackBehavior:
             delete_custom_object(k8s_clients.custom, GROUP, VERSION, self.NAMESPACE, plural, name)
 
         strategy = automation_strategy_manifest(self.STRATEGY_NAME, self.NAMESPACE)
-        strategy["spec"]["inPlaceResize"] = {"enabled": self.resize_mode == "in-place"}
+        strategy["spec"]["inPlaceResize"] = {
+            "enabled": self.resize_mode == "in-place",
+            "containerRestart": self.resize_mode == "in-place",
+        }
         strategy["spec"]["podEviction"] = {"enabled": True}
         strategy["spec"]["safetyChecks"] = {
             "minReadyDuration": "0s",

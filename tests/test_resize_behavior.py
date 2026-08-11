@@ -5,7 +5,6 @@ from kubernetes.client.rest import ApiException
 
 from helpers import (
     GROUP,
-    RIGHTSIZING_ANNOTATION,
     VERSION,
     automation_strategy_manifest,
     create_multi_container_deployment,
@@ -51,18 +50,6 @@ class TestResizeBehavior:
             "automationstrategies",
             strategy,
         )
-        k8s_clients.custom.create_namespaced_custom_object(
-            GROUP,
-            VERSION,
-            self.NAMESPACE,
-            "proactivepolicies",
-            proactive_policy_manifest(
-                self.POLICY_NAME,
-                self.NAMESPACE,
-                self.STRATEGY_NAME,
-                365,
-            ),
-        )
         create_multi_container_deployment(
             k8s_clients.apps,
             self.NAMESPACE,
@@ -95,34 +82,18 @@ class TestResizeBehavior:
     ):
         """Verify a real recommendation-driven resize and classify the observed mode.
 
-        Classification comes from the controller's own authoritative signal -
-        the RIGHTSIZING_ANNOTATION's " via in-place resize"/" via eviction"
-        suffix (set from resizePlan.Summary.Execution.Method in
-        internal/policy/pod_rightsizing_info.go) - not from inferring the
-        mechanism via pod UID continuity or `managed_fields` inspection. Both
-        of those are indirect proxies: kind node images can report a kubelet
-        version inconsistent with their nominal tag, and the controller's own
-        in-place threshold (DefaultInPlaceMinKubeVersion in
-        internal/policy/resize_executor.go) does not line up with any one
-        Kubernetes minor version boundary a test could hardcode reliably.
+        Classification comes from the controller's authoritative mechanism event
+        on the original Pod, not from the replacement Pod's admission annotation.
+        Eviction execution is recorded on the Pod that was evicted; its successor
+        receives an execution-neutral admission summary.
         Once classified, cross-check that pod identity behaved consistently
         with the reported mechanism (in-place keeps the same UID; eviction
         creates a new one).
         """
-        expected_resources_summary = (
-            "Applied rightsizing requests [demo:[cpu=250m, memory=256Mi]] "
-            "limits [demo:[cpu=400m, memory=512Mi]]"
-        )
-        expected_annotations = {
-            expected_resources_summary + " via in-place resize": "in-place",
-            expected_resources_summary + " via eviction": "eviction",
-        }
-
         def current_pod():
             return get_deployment_pod(k8s_clients.core, self.NAMESPACE, self.DEPLOYMENT)
 
-        def current_resources():
-            pod = current_pod()
+        def pod_resources(pod):
             return get_pod_resources(k8s_clients.core, self.NAMESPACE, pod.metadata.name)
 
         original_pod = {"value": None}
@@ -140,18 +111,26 @@ class TestResizeBehavior:
                 return True
             return False
 
+        def resize_mechanism_from_event():
+            events = k8s_clients.core.list_namespaced_event(self.NAMESPACE).items
+            for event in events:
+                involved = event.involved_object
+                if involved is None or involved.uid != original_uid:
+                    continue
+                if event.reason == "PolicyEvaluationInPlaceResize":
+                    return "in-place"
+                if event.reason == "PolicyEvaluationEvictResize":
+                    return "eviction"
+            return None
+
         def resized_pod_ready():
-            """Wait for the live pod to reflect the target resources AND have the
-            controller's mechanism annotation recorded, so classification below
-            never races the annotation write."""
+            """Wait for target resources, then classify execution on the original Pod."""
             try:
                 pod = current_pod()
             except RuntimeError:
                 return False
 
-            resources = current_resources()
-            annotation = (pod.metadata.annotations or {}).get(RIGHTSIZING_ANNOTATION, "")
-            observed_mechanism = expected_annotations.get(annotation)
+            resources = pod_resources(pod)
             if (
                 pod.metadata.deletion_timestamp is None
                 and resources["demo"]["requests"].get("cpu") == "250m"
@@ -159,8 +138,10 @@ class TestResizeBehavior:
                 and resources["demo"]["limits"].get("cpu") == "400m"
                 and resources["demo"]["limits"].get("memory") == "512Mi"
                 and pod_is_ready(pod)
-                and observed_mechanism is not None
             ):
+                observed_mechanism = resize_mechanism_from_event()
+                if observed_mechanism is None:
+                    return False
                 resized_pod["value"] = pod
                 mechanism["value"] = observed_mechanism
                 return True
@@ -172,6 +153,19 @@ class TestResizeBehavior:
             message="initial workload pod readiness",
         )
         original_uid = original_pod["value"].metadata.uid
+
+        k8s_clients.custom.create_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            self.NAMESPACE,
+            "proactivepolicies",
+            proactive_policy_manifest(
+                self.POLICY_NAME,
+                self.NAMESPACE,
+                self.STRATEGY_NAME,
+                365,
+            ),
+        )
 
         # Recommendation-driven changes may briefly replace the pod. Poll until
         # a ready pod exists again with the expected recommendation-applied
