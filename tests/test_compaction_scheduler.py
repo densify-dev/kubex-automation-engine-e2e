@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 
 import pytest
@@ -263,7 +264,9 @@ class TestCompactionScheduler:
         assert 'schedulerName: "kubex-compaction-scheduler"' in rendered
         assert "kind: KubeSchedulerConfiguration" in rendered
 
-    def _wait_for_workload_targeting(self, k8s_clients, test_namespace: str, name: str) -> None:
+    def _wait_for_workload_targeting(
+        self, k8s_clients, test_namespace: str, name: str, require_pods: bool = True
+    ) -> None:
         def deployment_has_intent() -> bool:
             deployment = get_deployment(k8s_clients.apps, test_namespace, name)
             raw = (deployment.metadata.annotations or {}).get(self.COMPACTION_INTENT_ANNOTATION)
@@ -278,6 +281,9 @@ class TestCompactionScheduler:
             key.startswith("scheduling.kubex.ai/compaction-")
             for key in (deployment.spec.template.metadata.labels or {})
         )
+
+        if not require_pods:
+            return
 
         def pods_targeted() -> bool:
             pods = k8s_clients.core.list_namespaced_pod(
@@ -547,13 +553,27 @@ class TestCompactionScheduler:
         seeded_node = seeded_pod.spec.node_name
         busy_pools = [pool for pool, node_name in pool_nodes.items() if node_name != seeded_node]
         assert len(busy_pools) == 2
+
+        def cpu_millis(value: str) -> int:
+            value = str(value).strip()
+            return int(value[:-1]) if value.endswith("m") else int(float(value) * 1000)
+
+        allocatable_cpu = {
+            node.metadata.name: cpu_millis((node.status.allocatable or {}).get("cpu", "0"))
+            for node in k8s_clients.core.list_node().items
+            if node.metadata and node.metadata.name in set(nodes[:3])
+        }
+        busy_replicas = {
+            pool: max(1, math.ceil(allocatable_cpu[pool_nodes[pool]] * 0.30 / 100))
+            for pool in busy_pools
+        }
         create_stateful_set(
             k8s_clients.apps,
             test_namespace,
             "busy-a",
             service_name="busy-a",
             labels={**workload_labels, "role": "busy-a"},
-            replicas=8,
+            replicas=busy_replicas[busy_pools[0]],
             node_selector={self.NODE_POOL_LABEL: busy_pools[0]},
             containers=[
                 {
@@ -564,14 +584,19 @@ class TestCompactionScheduler:
                 }
             ],
         )
-        wait_for_stateful_set_ready(k8s_clients.apps, test_namespace, "busy-a", min_replicas=8)
+        wait_for_stateful_set_ready(
+            k8s_clients.apps,
+            test_namespace,
+            "busy-a",
+            min_replicas=busy_replicas[busy_pools[0]],
+        )
         create_stateful_set(
             k8s_clients.apps,
             test_namespace,
             "busy-b",
             service_name="busy-b",
             labels={**workload_labels, "role": "busy-b"},
-            replicas=8,
+            replicas=busy_replicas[busy_pools[1]],
             node_selector={self.NODE_POOL_LABEL: busy_pools[1]},
             containers=[
                 {
@@ -582,7 +607,12 @@ class TestCompactionScheduler:
                 }
             ],
         )
-        wait_for_stateful_set_ready(k8s_clients.apps, test_namespace, "busy-b", min_replicas=8)
+        wait_for_stateful_set_ready(
+            k8s_clients.apps,
+            test_namespace,
+            "busy-b",
+            min_replicas=busy_replicas[busy_pools[1]],
+        )
 
         self._create_policy(
             k8s_clients,
@@ -593,7 +623,7 @@ class TestCompactionScheduler:
                     {
                         "key": self.NODE_POOL_LABEL,
                         "operator": "In",
-                        "values": ["green-a", "green-b", "green-c"],
+                        "values": ["green-*"],
                     },
                 ]
             },
@@ -603,10 +633,9 @@ class TestCompactionScheduler:
                     "labelSelector": {"matchLabels": {"role": "candidate"}},
                 },
                 "highNodeUtilization": {
-                    # Use cpu=15 so busy-a/busy-b nodes (8×100m=800m) are valid destinations
-                    # on both GKE (800/1930≈41%) and Kind (800/4000≈20%), while the single-
-                    # candidate node (~100m) stays below 15% on any node size.
-                    "thresholds": {"cpu": 15, "memory": 10, "pods": 5},
+                    # CPU is sized from each node's allocatable capacity above. Keep the
+                    # other dimensions out of this focused placement test.
+                    "thresholds": {"cpu": 15, "memory": 100, "pods": 100},
                     "numberOfNodes": 0,
                 },
                 "interval": "* * * * *",
@@ -634,6 +663,21 @@ class TestCompactionScheduler:
             message=f"candidate {policy_name} initial scheduling",
         )
 
+        def eviction_event_recorded() -> bool:
+            return any(
+                event.reason == "HighNodeUtilization"
+                and event.involved_object
+                and event.involved_object.kind == "Pod"
+                and event.involved_object.uid == seeded_uid
+                for event in k8s_clients.core.list_namespaced_event(test_namespace).items
+            )
+
+        wait_for(
+            eviction_event_recorded,
+            timeout=300,
+            message="HighNodeUtilization eviction event for seeded candidate",
+        )
+
         def candidate_relocated() -> bool:
             pod = get_stateful_set_pod(k8s_clients.core, test_namespace, policy_name)
             moved = (
@@ -643,15 +687,7 @@ class TestCompactionScheduler:
                 and pod.spec.node_name != seeded_node
                 and pod.spec.node_name in set(nodes[:3])
             )
-            if not moved:
-                return False
-            return any(
-                event.reason == "HighNodeUtilization"
-                and event.involved_object
-                and event.involved_object.kind == "Pod"
-                and event.involved_object.name == pod.metadata.name
-                for event in k8s_clients.core.list_namespaced_event(test_namespace).items
-            )
+            return moved
 
         wait_for(
             candidate_relocated,

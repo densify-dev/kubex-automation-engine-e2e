@@ -40,6 +40,9 @@ def test_node_affinity_replacement_loop_is_suppressed(
             policy_name,
             {helper.NODE_GROUP_LABEL: "eviction-loop-test"},
             descheduler={
+                # This test drives replacements directly; leave the periodic
+                # descheduler disabled so it cannot add an untracked eviction.
+                "enabled": False,
                 "loopDetectionThreshold": 2,
                 "loopDetectionWindow": "5m",
                 "suppressionDuration": "2m",
@@ -71,10 +74,18 @@ def test_node_affinity_replacement_loop_is_suppressed(
             k8s_clients.apps,
             test_namespace,
             policy_name,
+            replicas=0,
             affinity=node_affinity,
         )
         helper._wait_for_policy_ready(k8s_clients, policy_name)
-        helper._wait_for_workload_targeting(k8s_clients, test_namespace, policy_name)
+        helper._wait_for_workload_targeting(
+            k8s_clients, test_namespace, policy_name, require_pods=False
+        )
+        k8s_clients.apps.patch_namespaced_deployment(
+            policy_name,
+            test_namespace,
+            {"spec": {"replicas": 1}},
+        )
 
         def live_pods():
             return [
@@ -105,6 +116,7 @@ def test_node_affinity_replacement_loop_is_suppressed(
             if not raw:
                 return False
             pod_nodes = json.loads(raw).get("podNodes") or {}
+            state = json.loads(raw)
             if not pod_nodes:
                 return False
             current_uids = {
@@ -118,7 +130,12 @@ def test_node_affinity_replacement_loop_is_suppressed(
             # like a replacement (the other is already in previousNodes) so loop
             # detection never fires.  Waiting for len == 1 ensures the surge has
             # fully collapsed to a single steady-state pod before we start evicting.
-            return set(pod_nodes.keys()) == current_uids and len(current_uids) == 1
+            return (
+                set(pod_nodes.keys()) == current_uids
+                and len(current_uids) == 1
+                and state.get("attempts", 0) == 0
+                and not state.get("suppressedUntil")
+            )
 
         wait_for(stable_baseline_captured, timeout=120, message="stable compaction loop baseline")
 
@@ -135,7 +152,7 @@ def test_node_affinity_replacement_loop_is_suppressed(
 
         def first_replacement_on_same_node() -> bool:
             return any(
-                pod.metadata.name != victim1.metadata.name and pod.spec.node_name == victim1_node
+                pod.metadata.uid != victim1.metadata.uid and pod.spec.node_name == victim1_node
                 for pod in live_pods()
             )
 
@@ -162,7 +179,7 @@ def test_node_affinity_replacement_loop_is_suppressed(
 
         def second_replacement_on_same_node() -> bool:
             return any(
-                pod.metadata.name != victim2.metadata.name and pod.spec.node_name == victim2_node
+                pod.metadata.uid != victim2.metadata.uid and pod.spec.node_name == victim2_node
                 for pod in live_pods()
             )
 
