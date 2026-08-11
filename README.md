@@ -48,6 +48,12 @@ After bootstrap, the suite expects these controller-managed resources to exist:
 | `GlobalConfiguration` | `global-config` | cluster |
 | `PolicyEvaluation` | `policy-evaluation` | cluster |
 
+ObjectPatch coverage can be run independently after the controller is installed:
+
+```bash
+./run-full-matrix-local.sh tests/test_object_patch.py
+```
+
 ## Usage
 
 ```bash

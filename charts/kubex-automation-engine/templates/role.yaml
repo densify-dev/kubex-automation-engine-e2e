@@ -205,12 +205,14 @@ rules:
   resources:
   - clustercompactionpolicies/status
   - clustergpureactivepolicies/status
+  - clusterobjectpatches/status
   - clusterproactivepolicies/status
   - clusterrollbackpolicies/status
   - clusterstaticpolicies/status
   - globalconfigurations/status
   - gpuconsolidationpolicies/status
   - gpureactivepolicies/status
+  - objectpatches/status
   - podaffinitypolicies/status
   - policyevaluations/status
   - proactivepolicies/status
@@ -220,4 +222,14 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - rightsizing.kubex.ai
+  resources:
+  - clusterobjectpatches
+  - objectpatches
+  verbs:
+  - get
+  - list
+  - patch
+  - watch
 {{- end }}

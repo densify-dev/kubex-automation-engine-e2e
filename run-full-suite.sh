@@ -157,6 +157,7 @@ cleanup_rightsizing_resources() {
     staticpolicies
     rollbackpolicies
     gpureactivepolicies
+    objectpatches
   )
   local cluster_resources=(
     clusterautomationstrategies
@@ -168,6 +169,7 @@ cleanup_rightsizing_resources() {
     policyevaluations
     gpuconsolidationpolicies
     podaffinitypolicies
+    clusterobjectpatches
   )
 
   log "Deleting lingering rightsizing CRs before controller uninstall"
@@ -350,6 +352,8 @@ verify_uninstall() {
     clustergpureactivepolicies.rightsizing.kubex.ai
     gpuconsolidationpolicies.rightsizing.kubex.ai
     podaffinitypolicies.rightsizing.kubex.ai
+    objectpatches.rightsizing.kubex.ai
+    clusterobjectpatches.rightsizing.kubex.ai
   )
   for crd in "${crds[@]}"; do
     wait_for_crd_absent "$crd"

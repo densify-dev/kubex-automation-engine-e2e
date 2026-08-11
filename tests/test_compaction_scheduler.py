@@ -212,6 +212,7 @@ class TestCompactionScheduler:
         node_selector: dict[str, object],
         workload_types: list[str] | None = None,
         descheduler: dict[str, object] | None = None,
+        set_labels_by_eviction: bool = True,
     ) -> None:
         self._delete_policy(k8s_clients, name)
         k8s_clients.custom.create_cluster_custom_object(
@@ -224,6 +225,7 @@ class TestCompactionScheduler:
                 node_selector=node_selector,
                 workload_types=workload_types,
                 descheduler=descheduler,
+                set_labels_by_eviction=set_labels_by_eviction,
             ),
         )
 
