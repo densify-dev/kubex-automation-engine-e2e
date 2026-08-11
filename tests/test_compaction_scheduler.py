@@ -76,15 +76,21 @@ class TestCompactionScheduler:
         for name in self.STATEFULSET_NAMES:
             delete_stateful_set(k8s_clients.apps, k8s_clients.core, test_namespace, name)
 
-        delete_deployments_bulk(k8s_clients.apps, test_namespace, self.MULTI_WORKLOAD_BASE, self.MULTI_WORKLOAD_COUNT)
+        delete_deployments_bulk(
+            k8s_clients.apps, test_namespace, self.MULTI_WORKLOAD_BASE, self.MULTI_WORKLOAD_COUNT
+        )
 
-        wait_for_owned_pods_terminated(k8s_clients.core, test_namespace, app_prefix="e2e-compaction")
+        wait_for_owned_pods_terminated(
+            k8s_clients.core, test_namespace, app_prefix="e2e-compaction"
+        )
 
         self._clear_node_labels(kube_context, k8s_clients)
 
     def _delete_policy(self, k8s_clients, name: str) -> None:
         try:
-            k8s_clients.custom.delete_cluster_custom_object(GROUP, VERSION, "clustercompactionpolicies", name)
+            k8s_clients.custom.delete_cluster_custom_object(
+                GROUP, VERSION, "clustercompactionpolicies", name
+            )
         except ApiException as exc:
             if exc.status != 404:
                 raise
@@ -98,7 +104,9 @@ class TestCompactionScheduler:
 
     def _policy_missing(self, k8s_clients, name: str) -> bool:
         try:
-            k8s_clients.custom.get_cluster_custom_object(GROUP, VERSION, "clustercompactionpolicies", name)
+            k8s_clients.custom.get_cluster_custom_object(
+                GROUP, VERSION, "clustercompactionpolicies", name
+            )
         except ApiException as exc:
             if exc.status == 404:
                 return True
@@ -137,7 +145,9 @@ class TestCompactionScheduler:
             raise RuntimeError(f"compaction descheduler configmap for {policy_name} not found")
         return sorted(configmaps, key=lambda cm: cm.metadata.name)[0]
 
-    def _assert_compaction_runtime(self, k8s_clients, policy_name: str, expected_selector: str) -> None:
+    def _assert_compaction_runtime(
+        self, k8s_clients, policy_name: str, expected_selector: str
+    ) -> None:
         cronjob_name, _ = self._runtime_names(policy_name)
         runtime = get_cronjob(k8s_clients.batch, self.RUNTIME_NAMESPACE, cronjob_name)
         pod_spec = runtime.spec.job_template.spec.template.spec
@@ -242,9 +252,13 @@ class TestCompactionScheduler:
     def _assert_policy_runtime(self, k8s_clients) -> None:
         runtime = get_deployment(k8s_clients.apps, self.RUNTIME_NAMESPACE, self.SCHEDULER_NAME)
         assert runtime.spec.replicas == 1
-        assert runtime.spec.template.spec.containers[0].image.startswith("registry.k8s.io/kube-scheduler:")
+        assert runtime.spec.template.spec.containers[0].image.startswith(
+            "registry.k8s.io/kube-scheduler:"
+        )
 
-        configmap = k8s_clients.core.read_namespaced_config_map(f"{self.SCHEDULER_NAME}-config", self.RUNTIME_NAMESPACE)
+        configmap = k8s_clients.core.read_namespaced_config_map(
+            f"{self.SCHEDULER_NAME}-config", self.RUNTIME_NAMESPACE
+        )
         rendered = configmap.data["scheduler-config.yaml"]
         assert 'schedulerName: "kubex-compaction-scheduler"' in rendered
         assert "kind: KubeSchedulerConfiguration" in rendered
@@ -255,19 +269,28 @@ class TestCompactionScheduler:
             raw = (deployment.metadata.annotations or {}).get(self.COMPACTION_INTENT_ANNOTATION)
             return bool(raw and json.loads(raw).get("schedulerName") == self.SCHEDULER_NAME)
 
-        wait_for(deployment_has_intent, timeout=300, message=f"deployment {test_namespace}/{name} intent")
+        wait_for(
+            deployment_has_intent, timeout=300, message=f"deployment {test_namespace}/{name} intent"
+        )
         deployment = get_deployment(k8s_clients.apps, test_namespace, name)
         assert deployment.spec.template.spec.scheduler_name in (None, "default-scheduler")
-        assert not any(key.startswith("scheduling.kubex.ai/compaction-") for key in (deployment.spec.template.metadata.labels or {}))
+        assert not any(
+            key.startswith("scheduling.kubex.ai/compaction-")
+            for key in (deployment.spec.template.metadata.labels or {})
+        )
 
         def pods_targeted() -> bool:
-            pods = k8s_clients.core.list_namespaced_pod(test_namespace, label_selector=f"app={name}").items
+            pods = k8s_clients.core.list_namespaced_pod(
+                test_namespace, label_selector=f"app={name}"
+            ).items
             live_pods = [pod for pod in pods if pod.metadata.deletion_timestamp is None]
             return bool(live_pods) and all(
                 pod.spec.scheduler_name == self.SCHEDULER_NAME for pod in live_pods
             )
 
-        wait_for(pods_targeted, timeout=300, message=f"deployment {test_namespace}/{name} Pod admission")
+        wait_for(
+            pods_targeted, timeout=300, message=f"deployment {test_namespace}/{name} Pod admission"
+        )
 
     def _wait_for_stateful_set_targeting(self, k8s_clients, test_namespace: str, name: str) -> None:
         def stateful_set_targeted() -> bool:
@@ -275,10 +298,17 @@ class TestCompactionScheduler:
             raw = (stateful_set.metadata.annotations or {}).get(self.COMPACTION_INTENT_ANNOTATION)
             return bool(raw and json.loads(raw).get("schedulerName") == self.SCHEDULER_NAME)
 
-        wait_for(stateful_set_targeted, timeout=300, message=f"statefulset {test_namespace}/{name} intent")
+        wait_for(
+            stateful_set_targeted,
+            timeout=300,
+            message=f"statefulset {test_namespace}/{name} intent",
+        )
         stateful_set = get_stateful_set(k8s_clients.apps, test_namespace, name)
         assert stateful_set.spec.template.spec.scheduler_name in (None, "default-scheduler")
-        assert not any(key.startswith("scheduling.kubex.ai/compaction-") for key in (stateful_set.spec.template.metadata.labels or {}))
+        assert not any(
+            key.startswith("scheduling.kubex.ai/compaction-")
+            for key in (stateful_set.spec.template.metadata.labels or {})
+        )
 
         def pod_targeted() -> bool:
             pod = get_stateful_set_pod(k8s_clients.core, test_namespace, name)
@@ -287,10 +317,52 @@ class TestCompactionScheduler:
                 and pod.metadata.deletion_timestamp is None
             )
 
-        wait_for(pod_targeted, timeout=300, message=f"statefulset {test_namespace}/{name} Pod admission")
+        wait_for(
+            pod_targeted, timeout=300, message=f"statefulset {test_namespace}/{name} Pod admission"
+        )
+
+    def _wait_for_stateful_set_direct_patch(
+        self, k8s_clients, test_namespace: str, name: str, policy_name: str
+    ) -> None:
+        def stateful_set_has_intent() -> bool:
+            stateful_set = get_stateful_set(k8s_clients.apps, test_namespace, name)
+            raw = (stateful_set.metadata.annotations or {}).get(self.COMPACTION_INTENT_ANNOTATION)
+            return bool(raw and json.loads(raw).get("schedulerName") == self.SCHEDULER_NAME)
+
+        wait_for(
+            stateful_set_has_intent,
+            timeout=300,
+            message=f"statefulset {test_namespace}/{name} intent",
+        )
+        stateful_set = get_stateful_set(k8s_clients.apps, test_namespace, name)
+        assert stateful_set.spec.template.spec.scheduler_name in (None, "default-scheduler")
+        assert not any(
+            key.startswith("scheduling.kubex.ai/compaction-")
+            for key in (stateful_set.spec.template.metadata.labels or {})
+        )
+
+        def pod_has_direct_patch() -> bool:
+            pod = get_stateful_set_pod(k8s_clients.core, test_namespace, name)
+            labels = pod.metadata.labels or {}
+            annotations = pod.metadata.annotations or {}
+            raw = annotations.get(self.COMPACTION_INTENT_ANNOTATION)
+            return (
+                pod.metadata.deletion_timestamp is None
+                and pod.spec.scheduler_name in (None, "default-scheduler")
+                and labels.get(self.DESCHEDULER_POLICY_LABEL) == policy_name
+                and bool(raw and json.loads(raw).get("schedulerName") == self.SCHEDULER_NAME)
+            )
+
+        wait_for(
+            pod_has_direct_patch,
+            timeout=300,
+            message=f"statefulset {test_namespace}/{name} direct Pod patch",
+        )
 
     @pytest.mark.timeout(900)
-    def test_workloads_and_runtime_follow_distinct_node_groups(self, k8s_clients, kube_context, test_namespace):
+    def test_workloads_and_runtime_follow_distinct_node_groups(
+        self, k8s_clients, kube_context, test_namespace
+    ):
         nodes = self._schedulable_nodes(k8s_clients)
         self._label_node(
             kube_context,
@@ -332,7 +404,11 @@ class TestCompactionScheduler:
                 "policy": "e2e-compaction-green",
                 "node_selector": {
                     "matchExpressions": [
-                        {"key": self.NODE_POOL_LABEL, "operator": "In", "values": ["green-a", "green-b", "green-c"]},
+                        {
+                            "key": self.NODE_POOL_LABEL,
+                            "operator": "In",
+                            "values": ["green-a", "green-b", "green-c"],
+                        },
                     ]
                 },
                 "workload_selector": {self.NODE_POOL_LABEL: "green-a"},
@@ -344,7 +420,10 @@ class TestCompactionScheduler:
 
         for case in cases:
             self._create_policy(
-                k8s_clients, test_namespace, case["policy"], case["node_selector"],
+                k8s_clients,
+                test_namespace,
+                case["policy"],
+                case["node_selector"],
                 workload_types=case.get("workload_types"),
             )
             if case["policy"] == "e2e-compaction-green":
@@ -386,7 +465,11 @@ class TestCompactionScheduler:
                 ).items
                 return any(pod.spec and pod.spec.node_name == case["expected_node"] for pod in pods)
 
-            wait_for(pod_scheduled_to_expected_node, timeout=300, message=f"pod {case['policy']} scheduling")
+            wait_for(
+                pod_scheduled_to_expected_node,
+                timeout=300,
+                message=f"pod {case['policy']} scheduling",
+            )
 
             if case["policy"] == "e2e-compaction-green":
                 pod = get_stateful_set_pod(k8s_clients.core, test_namespace, case["policy"])
@@ -399,7 +482,9 @@ class TestCompactionScheduler:
             assert policy["status"]["summary"]["managedWorkloads"] == 1
 
             if case["policy"] == "e2e-compaction-green":
-                delete_stateful_set(k8s_clients.apps, k8s_clients.core, test_namespace, case["policy"])
+                delete_stateful_set(
+                    k8s_clients.apps, k8s_clients.core, test_namespace, case["policy"]
+                )
             else:
                 delete_deployment(k8s_clients.apps, test_namespace, case["policy"])
             self._delete_policy(k8s_clients, case["policy"])
@@ -505,7 +590,11 @@ class TestCompactionScheduler:
             policy_name,
             {
                 "matchExpressions": [
-                    {"key": self.NODE_POOL_LABEL, "operator": "In", "values": ["green-a", "green-b", "green-c"]},
+                    {
+                        "key": self.NODE_POOL_LABEL,
+                        "operator": "In",
+                        "values": ["green-a", "green-b", "green-c"],
+                    },
                 ]
             },
             workload_types=["StatefulSet"],
@@ -527,7 +616,7 @@ class TestCompactionScheduler:
 
         self._wait_for_policy_ready(k8s_clients, policy_name)
         for name in [policy_name, "busy-a", "busy-b"]:
-            self._wait_for_stateful_set_targeting(k8s_clients, test_namespace, name)
+            self._wait_for_stateful_set_direct_patch(k8s_clients, test_namespace, name, policy_name)
         wait_for_stateful_set_ready(k8s_clients.apps, test_namespace, "busy-a", min_replicas=8)
         wait_for_stateful_set_ready(k8s_clients.apps, test_namespace, "busy-b", min_replicas=8)
         self._assert_compaction_runtime(
@@ -537,7 +626,10 @@ class TestCompactionScheduler:
         )
 
         wait_for(
-            lambda: get_stateful_set_pod(k8s_clients.core, test_namespace, policy_name).spec.node_name in set(nodes[:3]),
+            lambda: (
+                get_stateful_set_pod(k8s_clients.core, test_namespace, policy_name).spec.node_name
+                in set(nodes[:3])
+            ),
             timeout=300,
             message=f"candidate {policy_name} initial scheduling",
         )
@@ -561,12 +653,17 @@ class TestCompactionScheduler:
                 for event in k8s_clients.core.list_namespaced_event(test_namespace).items
             )
 
-        wait_for(candidate_relocated, timeout=900, message="candidate relocation within the wildcard pool")
+        wait_for(
+            candidate_relocated,
+            timeout=900,
+            message="candidate relocation within the wildcard pool",
+        )
 
         moved_pod = get_stateful_set_pod(k8s_clients.core, test_namespace, policy_name)
         assert moved_pod.spec and moved_pod.spec.node_name in set(nodes[:3])
         assert moved_pod.spec.node_name != seeded_node
         assert moved_pod.metadata.uid != seeded_uid
+        assert moved_pod.spec.scheduler_name == self.SCHEDULER_NAME
 
         policy = get_crd(k8s_clients.custom, "clustercompactionpolicies", policy_name)
         assert policy["status"]["summary"]["managedWorkloads"] == 3
@@ -576,7 +673,9 @@ class TestCompactionScheduler:
         self._delete_policy(k8s_clients, policy_name)
 
     @pytest.mark.timeout(900)
-    def test_scheduler_image_catches_up_after_drift(self, k8s_clients, kube_context, test_namespace, kube_server_version):
+    def test_scheduler_image_catches_up_after_drift(
+        self, k8s_clients, kube_context, test_namespace, kube_server_version
+    ):
         workers = self._worker_nodes(k8s_clients)
         self._label_node(
             kube_context,
@@ -611,7 +710,9 @@ class TestCompactionScheduler:
             f"registry.k8s.io/kube-scheduler:v{kube_server_version.major}.{kube_server_version.minor.rstrip('+')}."
         )
 
-        configmap = k8s_clients.core.read_namespaced_config_map(config_map_name, self.RUNTIME_NAMESPACE)
+        configmap = k8s_clients.core.read_namespaced_config_map(
+            config_map_name, self.RUNTIME_NAMESPACE
+        )
         rendered = configmap.data["scheduler-config.yaml"]
         assert scheduler_name in rendered
 
@@ -639,15 +740,23 @@ class TestCompactionScheduler:
 
         def all_initial_pods_exist() -> bool:
             return all(
-                k8s_clients.core.list_namespaced_pod(test_namespace, label_selector=f"app={name}").items
+                k8s_clients.core.list_namespaced_pod(
+                    test_namespace, label_selector=f"app={name}"
+                ).items
                 for name in names
             )
 
-        wait_for(all_initial_pods_exist, timeout=240, message=f"all {self.MULTI_WORKLOAD_COUNT} initial Pods")
+        wait_for(
+            all_initial_pods_exist,
+            timeout=240,
+            message=f"all {self.MULTI_WORKLOAD_COUNT} initial Pods",
+        )
         initial_pod_uids = {
             pod.metadata.uid
             for name in names
-            for pod in k8s_clients.core.list_namespaced_pod(test_namespace, label_selector=f"app={name}").items
+            for pod in k8s_clients.core.list_namespaced_pod(
+                test_namespace, label_selector=f"app={name}"
+            ).items
         }
 
         k8s_clients.custom.create_cluster_custom_object(
@@ -689,17 +798,28 @@ class TestCompactionScheduler:
         def all_have_intent() -> bool:
             return all(
                 self.COMPACTION_INTENT_ANNOTATION
-                in (get_deployment(k8s_clients.apps, test_namespace, name).metadata.annotations or {})
+                in (
+                    get_deployment(k8s_clients.apps, test_namespace, name).metadata.annotations
+                    or {}
+                )
                 for name in names
             )
 
-        wait_for(all_have_intent, timeout=240, message=f"all {self.MULTI_WORKLOAD_COUNT} workload intents")
+        wait_for(
+            all_have_intent,
+            timeout=240,
+            message=f"all {self.MULTI_WORKLOAD_COUNT} workload intents",
+        )
         current_pod_uids = {
             pod.metadata.uid
             for name in names
-            for pod in k8s_clients.core.list_namespaced_pod(test_namespace, label_selector=f"app={name}").items
+            for pod in k8s_clients.core.list_namespaced_pod(
+                test_namespace, label_selector=f"app={name}"
+            ).items
         }
-        assert current_pod_uids == initial_pod_uids, "policy reconciliation must not replace existing Pods"
+        assert current_pod_uids == initial_pod_uids, (
+            "policy reconciliation must not replace existing Pods"
+        )
         old_pod_names = set()
         for name in names:
             deployment = get_deployment(k8s_clients.apps, test_namespace, name)
@@ -708,24 +828,31 @@ class TestCompactionScheduler:
                 key.startswith("scheduling.kubex.ai/compaction-")
                 for key in (deployment.spec.template.metadata.labels or {})
             )
-            for pod in k8s_clients.core.list_namespaced_pod(test_namespace, label_selector=f"app={name}").items:
+            for pod in k8s_clients.core.list_namespaced_pod(
+                test_namespace, label_selector=f"app={name}"
+            ).items:
                 old_pod_names.add(pod.metadata.name)
                 k8s_clients.core.delete_namespaced_pod(pod.metadata.name, test_namespace)
 
         def all_targeted() -> bool:
             for name in names:
                 deployment = get_deployment(k8s_clients.apps, test_namespace, name)
-                pods = k8s_clients.core.list_namespaced_pod(test_namespace, label_selector=f"app={name}").items
+                pods = k8s_clients.core.list_namespaced_pod(
+                    test_namespace, label_selector=f"app={name}"
+                ).items
                 if deployment.spec.template.spec.scheduler_name not in (None, "default-scheduler"):
                     return False
                 if not pods or not all(
-                    pod.metadata.name not in old_pod_names and pod.spec.scheduler_name == self.SCHEDULER_NAME
+                    pod.metadata.name not in old_pod_names
+                    and pod.spec.scheduler_name == self.SCHEDULER_NAME
                     for pod in pods
                 ):
                     return False
             return True
 
-        wait_for(all_targeted, timeout=240, message=f"all {self.MULTI_WORKLOAD_COUNT} workloads targeted")
+        wait_for(
+            all_targeted, timeout=240, message=f"all {self.MULTI_WORKLOAD_COUNT} workloads targeted"
+        )
 
         policy = get_crd(k8s_clients.custom, "clustercompactionpolicies", "e2e-compaction-multi")
         managed = policy["status"]["summary"]["managedWorkloads"]

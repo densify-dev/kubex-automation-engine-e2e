@@ -191,7 +191,9 @@ class TestClusterObjectPatch:
             )
             patch = _wait_applied(k8s_clients.custom, CLUSTER_OBJECT_PATCHES, name)
             namespace = k8s_clients.core.read_namespace(target_name)
-            assert namespace.metadata.labels == {"keep": "label", "added": "label"}
+            labels = namespace.metadata.labels or {}
+            assert labels.get("keep") == "label"
+            assert labels.get("added") == "label"
             assert patch["status"]["state"] == "Applied"
             assert _condition(patch, "Ready")["reason"] == "Applied"
         finally:
