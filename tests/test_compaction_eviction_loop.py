@@ -85,15 +85,20 @@ def test_node_affinity_replacement_loop_is_suppressed(
                 if pod.metadata.deletion_timestamp is None
             ]
 
-        # Wait for the loop-detection baseline (podNodes map) to be stored AND stable.
-        # The compaction hook may evict the initial pod before the controller writes
-        # the baseline, causing the ReplicaSet to surge-create multiple replacements.
-        # If two replacements land simultaneously, both enter the baseline as
-        # "pre-existing" pods. When the test then manually evicts one, the other is
-        # already in previousNodes and is not treated as a replacement — so loop
-        # detection never fires.  We guard by waiting until the baseline exactly
-        # mirrors the current live pods (one entry per non-terminating pod), which
-        # means the surge has fully resolved before we start manual evictions.
+        # Wait for the loop-detection baseline (podNodes map) to be stored, stable,
+        # and fully collapsed to exactly one pod.
+        #
+        # The compaction hook evicts the initial pod before the controller writes the
+        # baseline, causing the ReplicaSet to surge-create two replacements at once.
+        # Both land on the same node and both get stored in the baseline together.
+        # If the test then deletes one of them, the ReplicaSet won't create a new
+        # pod (the other already satisfies desired=1), and the surviving pod is
+        # already in previousNodes — so loop detection sees no replacement and never
+        # increments attempts.  The test's first_replacement_on_same_node check also
+        # passes spuriously (the surge sibling is on the same node).
+        #
+        # We guard by requiring len == 1: only proceed when the surge has fully
+        # resolved and a single steady-state pod is captured in the baseline.
         def stable_baseline_captured() -> bool:
             deployment = get_deployment(k8s_clients.apps, test_namespace, policy_name)
             raw = (deployment.metadata.annotations or {}).get(_LOOP_STATE_ANNOTATION, "")
@@ -107,8 +112,13 @@ def test_node_affinity_replacement_loop_is_suppressed(
                 for pod in live_pods()
                 if pod.spec.node_name  # only scheduled pods
             }
-            # Baseline must match the live scheduled pods exactly — no extra surge entries.
-            return set(pod_nodes.keys()) == current_uids and len(current_uids) > 0
+            # Baseline must match the live scheduled pods exactly AND there must be
+            # exactly one pod. During a ReplicaSet surge two replacements can land
+            # simultaneously; if both are in the baseline, deleting one doesn't look
+            # like a replacement (the other is already in previousNodes) so loop
+            # detection never fires.  Waiting for len == 1 ensures the surge has
+            # fully collapsed to a single steady-state pod before we start evicting.
+            return set(pod_nodes.keys()) == current_uids and len(current_uids) == 1
 
         wait_for(stable_baseline_captured, timeout=120, message="stable compaction loop baseline")
 
