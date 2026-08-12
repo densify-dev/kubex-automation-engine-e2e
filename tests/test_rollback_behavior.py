@@ -772,7 +772,9 @@ class TestRollbackBehavior:
         self._patch_rollback_policy_target(k8s_clients, "lastSuccessful")
         self._patch_rollback_policy_monitoring_period(k8s_clients, "10s")
         self._patch_rollback_policy_threshold(k8s_clients, 100)
-        self._patch_rollback_policy_backoff(k8s_clients, time_period="5s", max_attempts=1)
+        # Allow the restored replacement to start, become Ready, and propagate
+        # through the API before rollback annotations are cleared.
+        self._patch_rollback_policy_backoff(k8s_clients, time_period="30s", max_attempts=1)
         self._patch_static_policy_resources(k8s_clients, self.UNSCHEDULABLE_RESOURCES)
 
         failed_pod = self._wait_for_unschedulable_pod(k8s_clients, timeout=300)
