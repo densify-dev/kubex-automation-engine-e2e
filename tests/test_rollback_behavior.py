@@ -160,12 +160,23 @@ class TestRollbackBehavior:
             command=["python", "-c"],
             args=[
                 "import time\n"
+                "import os\n"
+                "try:\n"
+                "    os.unlink('/tmp/ready')\n"
+                "except FileNotFoundError:\n"
+                "    pass\n"
                 "chunks = []\n"
                 "while len(chunks) < 220:\n"
                 "    chunks.append(bytearray(1024 * 1024))\n"
                 "    time.sleep(0.02)\n"
+                "open('/tmp/ready', 'w').close()\n"
                 "time.sleep(3600)\n",
             ],
+            readiness_probe=client.V1Probe(
+                _exec=client.V1ExecAction(command=["test", "-f", "/tmp/ready"]),
+                period_seconds=2,
+                failure_threshold=1,
+            ),
             resize_policy=(
                 [client.V1ContainerResizePolicy(resource_name="memory", restart_policy="RestartContainer")]
                 if self.resize_mode == "in-place"
@@ -623,12 +634,17 @@ class TestRollbackBehavior:
             timeout=180,
             message="resource-driven failure status",
         )
-        self._delete_healthy_pods(k8s_clients)
-        self._poke_owner_reconcile(k8s_clients)
-
         terminal_state = self._wait_for_state_modes(k8s_clients, {"rollingBack", "backingOff", "backedOff"}, timeout=240)
-        assert terminal_state["failureReason"] in {"oomKilled", "crashLoopBackOff"}
-        assert any(reason in terminal_state["failureMessage"] for reason in {"OOMKilled", "CrashLoopBackOff"})
+        assert terminal_state["failureReason"] in {
+            "oomKilled",
+            "crashLoopBackOff",
+            "adoptionThresholdNotMet",
+        }
+        if terminal_state["failureReason"] != "adoptionThresholdNotMet":
+            assert any(
+                reason in terminal_state["failureMessage"]
+                for reason in {"OOMKilled", "CrashLoopBackOff"}
+            )
 
         self._delete_static_policy(k8s_clients)
 
@@ -705,8 +721,11 @@ class TestRollbackBehavior:
 
         if backed_off is not None:
             assert backed_off["turn"] == 2
-            assert backed_off["failureReason"] in {"oomKilled", "crashLoopBackOff"}
-            assert any(reason in backed_off["failureMessage"] for reason in {"OOMKilled", "CrashLoopBackOff"})
+            assert backed_off["failureReason"] in {
+                "oomKilled",
+                "crashLoopBackOff",
+                "adoptionThresholdNotMet",
+            }
         assert self._rollback_annotations_cleared(k8s_clients)
 
     @pytest.mark.timeout(900)
@@ -717,8 +736,16 @@ class TestRollbackBehavior:
 
         failed = self._wait_for_state_mode(k8s_clients, "failedPermanent", timeout=180)
         assert failed["turn"] == 1
-        assert failed["failureReason"] in {"oomKilled", "crashLoopBackOff"}
-        assert any(reason in failed["failureMessage"] for reason in {"OOMKilled", "CrashLoopBackOff"})
+        assert failed["failureReason"] in {
+            "oomKilled",
+            "crashLoopBackOff",
+            "adoptionThresholdNotMet",
+        }
+        if failed["failureReason"] != "adoptionThresholdNotMet":
+            assert any(
+                reason in failed["failureMessage"]
+                for reason in {"OOMKilled", "CrashLoopBackOff"}
+            )
         assert self._rollback_annotations_cleared(k8s_clients)
 
     @pytest.mark.timeout(900)

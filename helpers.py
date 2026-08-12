@@ -427,6 +427,7 @@ def create_deployment(
     app_label: str | None = None,
     topology_spread_constraints: list[client.V1TopologySpreadConstraint] | None = None,
     affinity: client.V1Affinity | None = None,
+    readiness_probe: client.V1Probe | None = None,
 ) -> client.V1Deployment:
     """Create a minimal Deployment for testing resource mutation."""
     app_label = app_label or name
@@ -458,6 +459,7 @@ def create_deployment(
                                 limits={"cpu": cpu_limit, "memory": mem_limit},
                             ),
                             resize_policy=resize_policy,
+                            readiness_probe=readiness_probe,
                         )
                     ]
                 ),
