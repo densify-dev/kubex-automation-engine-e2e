@@ -115,8 +115,8 @@ def test_node_affinity_replacement_loop_is_suppressed(
             raw = (deployment.metadata.annotations or {}).get(_LOOP_STATE_ANNOTATION, "")
             if not raw:
                 return False
-            pod_nodes = json.loads(raw).get("podNodes") or {}
             state = json.loads(raw)
+            pod_nodes = state.get("podNodes") or {}
             if not pod_nodes:
                 return False
             current_uids = {

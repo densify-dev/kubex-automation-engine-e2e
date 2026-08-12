@@ -299,22 +299,7 @@ class TestCompactionScheduler:
         )
 
     def _wait_for_stateful_set_targeting(self, k8s_clients, test_namespace: str, name: str) -> None:
-        def stateful_set_targeted() -> bool:
-            stateful_set = get_stateful_set(k8s_clients.apps, test_namespace, name)
-            raw = (stateful_set.metadata.annotations or {}).get(self.COMPACTION_INTENT_ANNOTATION)
-            return bool(raw and json.loads(raw).get("schedulerName") == self.SCHEDULER_NAME)
-
-        wait_for(
-            stateful_set_targeted,
-            timeout=300,
-            message=f"statefulset {test_namespace}/{name} intent",
-        )
-        stateful_set = get_stateful_set(k8s_clients.apps, test_namespace, name)
-        assert stateful_set.spec.template.spec.scheduler_name in (None, "default-scheduler")
-        assert not any(
-            key.startswith("scheduling.kubex.ai/compaction-")
-            for key in (stateful_set.spec.template.metadata.labels or {})
-        )
+        self._assert_stateful_set_intent_ready(k8s_clients, test_namespace, name)
 
         def pod_targeted() -> bool:
             pod = get_stateful_set_pod(k8s_clients.core, test_namespace, name)
@@ -330,22 +315,7 @@ class TestCompactionScheduler:
     def _wait_for_stateful_set_direct_patch(
         self, k8s_clients, test_namespace: str, name: str, policy_name: str
     ) -> None:
-        def stateful_set_has_intent() -> bool:
-            stateful_set = get_stateful_set(k8s_clients.apps, test_namespace, name)
-            raw = (stateful_set.metadata.annotations or {}).get(self.COMPACTION_INTENT_ANNOTATION)
-            return bool(raw and json.loads(raw).get("schedulerName") == self.SCHEDULER_NAME)
-
-        wait_for(
-            stateful_set_has_intent,
-            timeout=300,
-            message=f"statefulset {test_namespace}/{name} intent",
-        )
-        stateful_set = get_stateful_set(k8s_clients.apps, test_namespace, name)
-        assert stateful_set.spec.template.spec.scheduler_name in (None, "default-scheduler")
-        assert not any(
-            key.startswith("scheduling.kubex.ai/compaction-")
-            for key in (stateful_set.spec.template.metadata.labels or {})
-        )
+        self._assert_stateful_set_intent_ready(k8s_clients, test_namespace, name)
 
         def pod_has_direct_patch() -> bool:
             pod = get_stateful_set_pod(k8s_clients.core, test_namespace, name)
@@ -363,6 +333,24 @@ class TestCompactionScheduler:
             pod_has_direct_patch,
             timeout=300,
             message=f"statefulset {test_namespace}/{name} direct Pod patch",
+        )
+
+    def _assert_stateful_set_intent_ready(self, k8s_clients, test_namespace: str, name: str) -> None:
+        def stateful_set_has_intent() -> bool:
+            stateful_set = get_stateful_set(k8s_clients.apps, test_namespace, name)
+            raw = (stateful_set.metadata.annotations or {}).get(self.COMPACTION_INTENT_ANNOTATION)
+            return bool(raw and json.loads(raw).get("schedulerName") == self.SCHEDULER_NAME)
+
+        wait_for(
+            stateful_set_has_intent,
+            timeout=300,
+            message=f"statefulset {test_namespace}/{name} intent",
+        )
+        stateful_set = get_stateful_set(k8s_clients.apps, test_namespace, name)
+        assert stateful_set.spec.template.spec.scheduler_name in (None, "default-scheduler")
+        assert not any(
+            key.startswith("scheduling.kubex.ai/compaction-")
+            for key in (stateful_set.spec.template.metadata.labels or {})
         )
 
     @pytest.mark.timeout(900)
@@ -646,8 +634,18 @@ class TestCompactionScheduler:
         self._wait_for_policy_ready(k8s_clients, policy_name)
         for name in [policy_name, "busy-a", "busy-b"]:
             self._wait_for_stateful_set_direct_patch(k8s_clients, test_namespace, name, policy_name)
-        wait_for_stateful_set_ready(k8s_clients.apps, test_namespace, "busy-a", min_replicas=8)
-        wait_for_stateful_set_ready(k8s_clients.apps, test_namespace, "busy-b", min_replicas=8)
+        wait_for_stateful_set_ready(
+            k8s_clients.apps,
+            test_namespace,
+            "busy-a",
+            min_replicas=busy_replicas[busy_pools[0]],
+        )
+        wait_for_stateful_set_ready(
+            k8s_clients.apps,
+            test_namespace,
+            "busy-b",
+            min_replicas=busy_replicas[busy_pools[1]],
+        )
         self._assert_compaction_runtime(
             k8s_clients,
             policy_name,

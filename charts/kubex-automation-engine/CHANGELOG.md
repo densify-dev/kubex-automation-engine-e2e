@@ -10,6 +10,7 @@ All notable changes to the Kubex Automation Engine Helm chart will be documented
 
 ### Changed
 - Resource and workload handling now preserves more Kubernetes state across resize, rollback, and controller-managed reconciliation paths.
+- Updated the KAI GPU-sharing guide for KAI v0.17.0 and optional HAMi-core 1.1.0 integration.
 
 ### Fixed
 - In-place resize rollback monitoring now records the refreshed post-resize Pod state.
