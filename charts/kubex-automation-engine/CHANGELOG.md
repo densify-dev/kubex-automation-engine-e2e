@@ -12,6 +12,7 @@ All notable changes to the Kubex Automation Engine Helm chart will be documented
 ### Changed
 - Policy evaluation now includes `PodAffinityPolicy` resources.
 - Compaction scheduler and descheduler components are enabled by default for compaction policy support.
+- Pre-delete cleanup now removes finalizers from every supported `rightsizing.kubex.ai` custom resource.
 
 ---
 
