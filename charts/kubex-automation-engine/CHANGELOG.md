@@ -2,6 +2,19 @@
 
 All notable changes to the Kubex Automation Engine Helm chart will be documented in this file.
 
+## [1.11.0] - 2026-08-19
+
+### Added
+- `ContainerArgsPolicy` for managing named container arguments during admission and pod replacement, with support for add, update, and remove operations.
+- Policy snapshots now include all supported `rightsizing.kubex.ai` custom resources, including GPU, compaction, object patch, and container argument policies.
+- Cluster names can be sourced from a ConfigMap or Secret instead of being specified directly in chart values.
+
+### Changed
+- Policy evaluation now includes `PodAffinityPolicy` resources.
+- Compaction scheduler and descheduler components are enabled by default for compaction policy support.
+
+---
+
 ## [1.10.0] - 2026-08-11
 
 ### Added

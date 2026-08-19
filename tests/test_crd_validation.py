@@ -99,6 +99,59 @@ class TestCRDValidation:
         assert result.returncode != 0, "Expected rejection for nonexistent ClusterAutomationStrategy"
         assert "does-not-exist" in result.stderr
 
+    def test_container_args_policy_remove_value_rejected(self, kube_context, test_namespace):
+        bad = {
+            "apiVersion": f"{GROUP}/{VERSION}",
+            "kind": "ContainerArgsPolicy",
+            "metadata": {"name": "bad-container-args-remove"},
+            "spec": {
+                "scope": {
+                    "namespaceSelector": {"operator": "In", "values": [test_namespace]}
+                },
+                "containers": {
+                    "app": {
+                        "args": [{"name": "--flag", "operation": "Remove", "value": "bad"}]
+                    }
+                },
+            },
+        }
+        result = subprocess.run(
+            ["kubectl", "--context", kube_context, "apply", "-f", "-"],
+            input=json.dumps(bad),
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode != 0, "Expected Remove with value to be rejected"
+        assert "must be omitted" in result.stderr or "Remove" in result.stderr
+
+    def test_container_args_policy_mixed_operations_rejected(self, kube_context, test_namespace):
+        bad = {
+            "apiVersion": f"{GROUP}/{VERSION}",
+            "kind": "ContainerArgsPolicy",
+            "metadata": {"name": "bad-container-args-mixed"},
+            "spec": {
+                "scope": {
+                    "namespaceSelector": {"operator": "In", "values": [test_namespace]}
+                },
+                "containers": {
+                    "app": {
+                        "args": [
+                            {"name": "--flag"},
+                            {"name": "--flag", "operation": "Remove"},
+                        ]
+                    }
+                },
+            },
+        }
+        result = subprocess.run(
+            ["kubectl", "--context", kube_context, "apply", "-f", "-"],
+            input=json.dumps(bad),
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode != 0, "Expected mixed operations to be rejected"
+        assert "mixed operations" in result.stderr or "operation" in result.stderr
+
     def test_global_configuration_reload_interval_too_short(self, kube_context):
         bad = {
             "apiVersion": f"{GROUP}/{VERSION}",

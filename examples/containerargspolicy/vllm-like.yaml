@@ -1,0 +1,77 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: container-args-vllm
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: ContainerArgsPolicy
+metadata:
+  name: vllm-serving-args
+spec:
+  scope:
+    workloadTypes:
+      - Deployment
+    namespaceSelector:
+      operator: In
+      values:
+        - container-args-vllm
+    labelSelector:
+      matchLabels:
+        app: vllm-args-demo
+  containers:
+    vllm:
+      args:
+        # Existing split-form value is replaced in place.
+        - name: --max-model-len
+          value: "8192"
+        # Existing equals-form value is replaced in place.
+        - name: --max-num-seqs
+          value: "64"
+        # Missing valueless flag is added.
+        - name: --enable-prefix-caching
+        # Existing valueless flag is removed.
+        - name: --disable-log-stats
+          operation: Remove
+  replaceExistingPods: false
+  weight: 100
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-args-demo
+  namespace: container-args-vllm
+  labels:
+    app: vllm-args-demo
+    app.kubernetes.io/name: vllm
+    app.kubernetes.io/component: inference-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-args-demo
+  template:
+    metadata:
+      labels:
+        app: vllm-args-demo
+        app.kubernetes.io/name: vllm
+        app.kubernetes.io/component: inference-server
+    spec:
+      containers:
+        - name: vllm
+          # CPU-only stand-in: keeps pod ready while exposing realistic vLLM args.
+          image: busybox:1.36
+          command: ["sh", "-c", "echo 'vLLM-shaped CPU stand-in'; sleep 3600"]
+          args:
+            - --model
+            - facebook/opt-125m
+            - --host
+            - 0.0.0.0
+            - --port=8000
+            - --max-model-len
+            - "4096"
+            - --max-num-seqs=32
+            - --served-model-name
+            - old-model-name
+            - --disable-log-stats
+            - --unrelated-argument
+            - keep-me

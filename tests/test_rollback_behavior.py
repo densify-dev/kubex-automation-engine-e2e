@@ -726,6 +726,11 @@ class TestRollbackBehavior:
                 "crashLoopBackOff",
                 "adoptionThresholdNotMet",
             }
+            if backed_off["failureReason"] != "adoptionThresholdNotMet":
+                assert any(
+                    reason in backed_off["failureMessage"]
+                    for reason in {"OOMKilled", "CrashLoopBackOff"}
+                )
         assert self._rollback_annotations_cleared(k8s_clients)
 
     @pytest.mark.timeout(900)

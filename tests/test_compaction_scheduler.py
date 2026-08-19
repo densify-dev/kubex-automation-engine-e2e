@@ -547,7 +547,9 @@ class TestCompactionScheduler:
             return int(value[:-1]) if value.endswith("m") else int(float(value) * 1000)
 
         allocatable_cpu = {
-            node.metadata.name: cpu_millis((node.status.allocatable or {}).get("cpu", "0"))
+            node.metadata.name: cpu_millis(
+                ((node.status or {}).allocatable or {}).get("cpu", "0")
+            )
             for node in k8s_clients.core.list_node().items
             if node.metadata and node.metadata.name in set(nodes[:3])
         }
