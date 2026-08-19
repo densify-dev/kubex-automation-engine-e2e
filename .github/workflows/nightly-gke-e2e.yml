@@ -63,7 +63,7 @@ jobs:
           kubectl get deploy -n kai-scheduler admission binder kai-operator kai-scheduler-default node-scale-adjuster pod-grouper podgroup-controller queue-controller
           kubectl get deploy -n kubeai kubeai
           kubectl get pods -n kubeai
-          kubectl get crd staticpolicies.rightsizing.kubex.ai gpurebalancingpolicies.rightsizing.kubex.ai
+          kubectl get crd staticpolicies.rightsizing.kubex.ai gpureactivepolicies.rightsizing.kubex.ai
 
       - name: Run live-cluster smoke
         run: |
