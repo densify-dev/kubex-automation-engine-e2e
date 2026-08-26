@@ -2,12 +2,20 @@
 
 All notable changes to the Kubex Automation Engine Helm chart will be documented in this file.
 
+## [1.12.0] - 2026-08-26
+
+### Fixed
+- KAI vLLM GPU memory tuning now accounts for HAMi's visible GPU memory instead of the raw device total, avoiding an incorrect double application of the GPU fraction on HAMi-backed clusters.
+- vLLM GPU memory tuning is now applied correctly in mixed resize plans and when the selected GPU recommendation is already applied (no-op resizes).
+
+---
+
 ## [1.11.0] - 2026-08-19
 
 ### Added
-- `ContainerArgsPolicy` for managing named container arguments during admission and pod replacement, with support for add, update, and remove operations.
+- `ContainerArgsPolicy` for managing named container arguments during admission and pod replacement, with support for add, update, and remove operations to support GPU vLLM tuning.
 - Policy snapshots now include all supported `rightsizing.kubex.ai` custom resources, including GPU, compaction, object patch, and container argument policies.
-- Cluster names can be sourced from a ConfigMap or Secret instead of being specified directly in chart values.
+- Cluster names can be sourced from a ConfigMap or Secret instead of being specified directly in chart values, supporting installations from `kubex-automation-stack`.
 
 ### Changed
 - Policy evaluation now includes `PodAffinityPolicy` resources.
