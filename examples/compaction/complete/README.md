@@ -27,7 +27,7 @@ kubectl get deployments -n compaction-test -l scheduling.kubex.ai/compaction-pol
 kubectl get clustercompactionpolicy compaction-test -o yaml
 ```
 
-The policy assigns matching workloads to the Kubex scheduler and replaces existing Pods as needed to converge scheduling intent. Scheduled descheduler runs then evict eligible Pods from underutilized nodes; replacements should move toward fewer nodes when requests, capacity, and other scheduling constraints permit:
+The manifest omits `setLabelsByEviction`, so it uses the default `false`. The controller patches labels and annotations on existing Pods in place, without replacing them or changing their immutable `spec.schedulerName`. New Pods receive the Kubex scheduler at admission. Scheduled descheduler runs can still evict eligible Pods from underutilized nodes, and their controllers may recreate them on fewer nodes when requests, capacity, and other scheduling constraints permit:
 
 ```bash
 kubectl get pods -n compaction-test -o wide --watch
