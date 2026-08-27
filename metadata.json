@@ -1,4 +1,4 @@
 {
   "controller_image_repository": "densify/automation-controller",
-  "controller_image_tag": "1.11.1-beta1"
+  "controller_image_tag": "1.11.2-beta1"
 }
