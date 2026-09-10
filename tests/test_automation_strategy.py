@@ -3,7 +3,7 @@
 import pytest
 from kubernetes.client.rest import ApiException
 
-from helpers import GROUP, VERSION, automation_strategy_manifest, get_crd
+from helpers import GROUP, VERSION, automation_strategy_manifest, get_crd, update_crd_with_retry
 
 
 class TestAutomationStrategy:
@@ -61,13 +61,19 @@ class TestAutomationStrategy:
         k8s_clients.custom.create_namespaced_custom_object(
             GROUP, VERSION, test_namespace, "automationstrategies", manifest
         )
-        # Fetch current version — resourceVersion is required for updates
-        current = get_crd(
-            k8s_clients.custom, "automationstrategies", self.STRATEGY_NAME, test_namespace
-        )
-        current["spec"]["enablement"]["cpu"]["requests"]["downsize"] = False
-        k8s_clients.custom.replace_namespaced_custom_object(
-            GROUP, VERSION, test_namespace, "automationstrategies", self.STRATEGY_NAME, current
+
+        def set_downsize_false(strategy):
+            strategy["spec"]["enablement"]["cpu"]["requests"]["downsize"] = False
+
+        # The controller may concurrently write readiness/outcome status onto
+        # this object, so retry through resource-version conflicts rather
+        # than replacing from a possibly-stale read.
+        update_crd_with_retry(
+            k8s_clients.custom,
+            "automationstrategies",
+            self.STRATEGY_NAME,
+            set_downsize_false,
+            namespace=test_namespace,
         )
         updated = get_crd(
             k8s_clients.custom, "automationstrategies", self.STRATEGY_NAME, test_namespace
@@ -102,12 +108,18 @@ class TestAutomationStrategy:
         k8s_clients.custom.create_cluster_custom_object(
             GROUP, VERSION, "clusterautomationstrategies", manifest
         )
-        current = get_crd(
-            k8s_clients.custom, "clusterautomationstrategies", self.CLUSTER_STRATEGY_NAME
-        )
-        current["spec"]["safetyChecks"]["minCpuChangePercent"] = 25
-        k8s_clients.custom.replace_cluster_custom_object(
-            GROUP, VERSION, "clusterautomationstrategies", self.CLUSTER_STRATEGY_NAME, current
+
+        def set_min_cpu_change_percent(strategy):
+            strategy["spec"]["safetyChecks"]["minCpuChangePercent"] = 25
+
+        # The controller may concurrently write readiness/outcome status onto
+        # this object, so retry through resource-version conflicts rather
+        # than replacing from a possibly-stale read.
+        update_crd_with_retry(
+            k8s_clients.custom,
+            "clusterautomationstrategies",
+            self.CLUSTER_STRATEGY_NAME,
+            set_min_cpu_change_percent,
         )
         updated = get_crd(
             k8s_clients.custom, "clusterautomationstrategies", self.CLUSTER_STRATEGY_NAME

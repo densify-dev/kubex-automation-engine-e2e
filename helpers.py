@@ -215,6 +215,37 @@ def get_crd(custom: client.CustomObjectsApi, plural: str, name: str, namespace: 
     return custom.get_cluster_custom_object(GROUP, VERSION, plural, name)
 
 
+def update_crd_with_retry(
+    custom: client.CustomObjectsApi,
+    plural: str,
+    name: str,
+    mutate,
+    namespace: str = None,
+    attempts: int = 5,
+) -> dict:
+    """Read-modify-write a CRD instance, retrying through resource-version conflicts.
+
+    The controller can concurrently update the same object's status (e.g.
+    readiness/outcome reporting), which bumps resourceVersion. A blind
+    replace built from an earlier read then fails with a 409 Conflict;
+    this re-fetches and re-applies `mutate` on that specific error.
+    """
+    for attempt in range(attempts):
+        current = get_crd(custom, plural, name, namespace)
+        mutate(current)
+        try:
+            if namespace:
+                return custom.replace_namespaced_custom_object(
+                    GROUP, VERSION, namespace, plural, name, current
+                )
+            return custom.replace_cluster_custom_object(GROUP, VERSION, plural, name, current)
+        except ApiException as exc:
+            if exc.status != 409 or attempt == attempts - 1:
+                raise
+            time.sleep(1)
+    raise RuntimeError(f"failed to update {plural}/{name} after {attempts} attempts")
+
+
 def wait_for_crd_condition(
     custom: client.CustomObjectsApi,
     plural: str,

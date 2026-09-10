@@ -12,6 +12,7 @@ from helpers import (
     get_deployment_pod,
     get_pod_resources,
     proactive_policy_manifest,
+    update_crd_with_retry,
     wait_for,
 )
 
@@ -181,19 +182,20 @@ class TestRecommendationBehavior:
 
     @pytest.mark.timeout(600)
     def test_per_container_memory_request_ceiling_clamps_recommendation(self, k8s_clients):
-        strategy = k8s_clients.custom.get_namespaced_custom_object(
-            GROUP, VERSION, "default", "automationstrategies", self.STRATEGY_NAME
-        )
-        strategy["spec"]["enablement"].setdefault("memory", {}).setdefault("requests", {})[
-            "containers"
-        ] = {"api": {"ceiling": "300Mi"}}
-        k8s_clients.custom.replace_namespaced_custom_object(
-            GROUP,
-            VERSION,
-            "default",
+        def set_memory_ceiling(strategy):
+            strategy["spec"]["enablement"].setdefault("memory", {}).setdefault("requests", {})[
+                "containers"
+            ] = {"api": {"ceiling": "300Mi"}}
+
+        # The controller may concurrently write readiness/outcome status onto
+        # this shared, long-lived strategy, so retry through resource-version
+        # conflicts rather than replacing from a possibly-stale read.
+        update_crd_with_retry(
+            k8s_clients.custom,
             "automationstrategies",
             self.STRATEGY_NAME,
-            strategy,
+            set_memory_ceiling,
+            namespace="default",
         )
         k8s_clients.custom.create_namespaced_custom_object(
             GROUP,
