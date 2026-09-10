@@ -196,5 +196,30 @@
         "weight": 10
       }
     }
+  },
+  {
+    "id": "example-proposal-approved-cluster-object-patch-self-target",
+    "status": "APPROVED",
+    "contents": {
+      "apiVersion": "rightsizing.kubex.ai/v1alpha1",
+      "kind": "ClusterObjectPatch",
+      "metadata": {
+        "name": "example-cluster-object-patch-self-target"
+      },
+      "spec": {
+        "targetRef": {
+          "apiVersion": "rightsizing.kubex.ai/v1alpha1",
+          "kind": "ClusterObjectPatch",
+          "name": "example-cluster-object-patch-self-target"
+        },
+        "patch": {
+          "metadata": {
+            "labels": {
+              "self-target-test": "true"
+            }
+          }
+        }
+      }
+    }
   }
 ]

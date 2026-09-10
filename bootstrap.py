@@ -928,7 +928,6 @@ def _controller_values(config: BootstrapConfig) -> dict:
     if config.deploy_kubex_stub:
         values["gateway"] = {"enabled": False}
         values["controllerManager"]["extraEnv"] = [
-            {"name": "ENABLE_AUTOMATION_STATE", "value": "true"},
             {"name": "AUTOMATION_STATE_INTERVAL", "value": "1m"},
         ]
     if config.recommendations_file and not config.deploy_kubex_stub:
