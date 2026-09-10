@@ -18,6 +18,7 @@ STATE = {
     "policies": [],
     "states": [],
     "recommendations": [],
+    "proposals": [],
     "requests": [],
 }
 REMAP_CONTAINER_IDS = False
@@ -129,6 +130,10 @@ class Handler(BaseHTTPRequestHandler):
             cluster_name = _cluster_name_from_path(parts, "containers")
             _record("recommendations", cluster_name, None)
             self._send_json(HTTPStatus.OK, _recommendations_for_cluster(cluster_name))
+            return
+        if parts and parts[-1] == "proposals":
+            _record("proposals", _cluster_name_from_path(parts, "proposals"), None)
+            self._send_json(HTTPStatus.OK, {"automations": []})
             return
 
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
