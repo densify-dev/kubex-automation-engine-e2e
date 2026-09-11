@@ -5,7 +5,7 @@ All notable changes to the Kubex Automation Engine Helm chart will be documented
 ## [1.12.0] - 2026-09-10
 
 ### Added
-- Managed custom resources (automation strategies, policies, and proposals) now report readiness and reconciliation outcomes directly on the resource, so status can be checked without digging through controller logs.
+- Managed custom resources (automation strategies, policies, and proposals) now report readiness and reconciliation outcomes directly on the resource.
 
 ### Changed
 - Proposal sync to the Kubex SaaS is now enabled by default.

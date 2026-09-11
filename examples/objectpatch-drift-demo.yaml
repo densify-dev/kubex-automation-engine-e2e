@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: objectpatch-drift-demo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: drift-demo
+  namespace: objectpatch-drift-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: drift-demo
+  template:
+    metadata:
+      labels:
+        app: drift-demo
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.29-alpine
+---
+apiVersion: rightsizing.kubex.ai/v1alpha1
+kind: ObjectPatch
+metadata:
+  name: drift-demo
+  namespace: objectpatch-drift-demo
+spec:
+  retryAmount: 0
+  requeueInterval: 30s
+  drift:
+    retryInterval: 30s
+    retryAmount: 3
+    stabilizationWindow: 15m
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: drift-demo
+  patch:
+    metadata:
+      labels:
+        managed-by-objectpatch: "true"
+    spec:
+      replicas: 3
