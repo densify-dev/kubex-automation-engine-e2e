@@ -2,6 +2,17 @@
 
 All notable changes to the Kubex Automation Engine Helm chart will be documented in this file.
 
+## [1.13.0] - 2026-09-14
+
+### Added
+- `ObjectPatch` and `ClusterObjectPatch` can now automatically repair drift instead of only reporting it, with configurable retry limits, exponential backoff between repairs, and a stabilization window before the retry count resets.
+- `ObjectPatch` and `ClusterObjectPatch` can now target Karpenter `NodePool` resources.
+
+### Changed
+- The target observation interval for `ObjectPatch` and `ClusterObjectPatch` is now configurable instead of a fixed five minutes.
+
+---
+
 ## [1.12.0] - 2026-09-10
 
 ### Added
