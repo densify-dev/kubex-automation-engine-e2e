@@ -1,6 +1,7 @@
 """Shared utilities, manifest builders, and constants for the E2E test suite."""
 
 import json
+import re
 from copy import deepcopy
 import subprocess
 import socket
@@ -11,6 +12,7 @@ import urllib.parse
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
+from dataclasses import dataclass
 
 from kubernetes import client
 from kubernetes.client.rest import ApiException
@@ -33,6 +35,73 @@ ROLLBACK_STATE_ANNOTATION = "rightsizing.kubex.ai/rollback-state"
 # StaticPolicy reconcile + annotation-sync cycle has completed, so the
 # policyevaluation_controller can attempt an in-place resize.
 STATIC_POLICY_ANNOTATION = "static.rightsizing.kubex.ai/desired-resource-requests"
+
+
+@dataclass(frozen=True)
+class InformerStart:
+    """A parsed controller informer startup record."""
+
+    kind: str
+    gvk: str
+    cache_mode: str
+
+
+INFORMER_CACHE_MODES = {"metadata", "structured", "unstructured"}
+_INFORMER_JSON_RE = re.compile(r"(\{.*\})\s*$")
+_INFORMER_FIELD_RE = re.compile(
+    r'"(?P<field>kind|gvk|cache_mode)"\s*:\s*"(?P<value>(?:\\.|[^"\\])*)"'
+)
+
+
+def parse_informer_start_logs(log_text: str) -> tuple[list[InformerStart], list[str]]:
+    """Parse informer startup records, retaining malformed matching lines."""
+    records: list[InformerStart] = []
+    errors: list[str] = []
+    for line in log_text.splitlines():
+        if "starting informer" not in line:
+            continue
+        fields: dict[str, str] = {}
+        match = _INFORMER_JSON_RE.search(line)
+        if match:
+            try:
+                decoded = json.loads(match.group(1))
+                if isinstance(decoded, dict):
+                    fields = {key: decoded.get(key) for key in ("kind", "gvk", "cache_mode")}
+            except json.JSONDecodeError:
+                pass
+        if not fields:
+            try:
+                fields = {
+                    match.group("field"): json.loads(f'"{match.group("value")}"')
+                    for match in _INFORMER_FIELD_RE.finditer(line)
+                }
+            except json.JSONDecodeError:
+                errors.append(line)
+                continue
+        if not all(isinstance(fields.get(key), str) and fields[key] for key in ("kind", "gvk", "cache_mode")):
+            errors.append(line)
+            continue
+        if fields["cache_mode"] not in INFORMER_CACHE_MODES:
+            errors.append(line)
+            continue
+        records.append(InformerStart(fields["kind"], fields["gvk"], fields["cache_mode"]))
+    return records, errors
+
+
+def informer_structured_allowed(record: InformerStart) -> bool:
+    """Return whether a structured informer is allowed by PD-60602."""
+    if record.gvk.startswith("rightsizing.kubex.ai/"):
+        return True
+    allowed = {
+        "/v1, Kind=Pod",
+        "/v1, Kind=Node",
+        "/v1, Kind=Namespace",
+        "/v1, Kind=LimitRange",
+        "/v1, Kind=ResourceQuota",
+        "autoscaling/v2, Kind=HorizontalPodAutoscaler",
+        "autoscaling.k8s.io/",  # VPA versions vary by installation.
+    }
+    return record.gvk in allowed or any(record.gvk.startswith(prefix) for prefix in allowed if prefix.endswith("/"))
 
 
 # ---------------------------------------------------------------------------

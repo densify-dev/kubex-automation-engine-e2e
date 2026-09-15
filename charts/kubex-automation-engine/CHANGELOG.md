@@ -2,14 +2,21 @@
 
 All notable changes to the Kubex Automation Engine Helm chart will be documented in this file.
 
+## [1.13.1] - 2026-09-15
+
+### Fixed
+- Reduced controller memory usage on clusters with large numbers of compaction-managed ConfigMaps, fixing a regression that could significantly increase memory usage under heavy compaction load.
+
+---
+
 ## [1.13.0] - 2026-09-14
 
 ### Added
-- `ObjectPatch` and `ClusterObjectPatch` can now automatically repair drift instead of only reporting it, with configurable retry limits, exponential backoff between repairs, and a stabilization window before the retry count resets.
-- `ObjectPatch` and `ClusterObjectPatch` can now target Karpenter `NodePool` resources.
+- Controller can now target Karpenter `NodePool` resources.
+- `ObjectPatch` and `ClusterObjectPatch` automatically repair drift with configurable retry limits, exponential backoff between repairs, and a stabilization window.
 
 ### Changed
-- The target observation interval for `ObjectPatch` and `ClusterObjectPatch` is now configurable instead of a fixed five minutes.
+- The target observation interval for `ObjectPatch` and `ClusterObjectPatch` is now configurable.
 
 ---
 

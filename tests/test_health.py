@@ -5,7 +5,7 @@ import time
 
 from kubernetes import client
 
-from helpers import get_crd, wait_for
+from helpers import get_crd, informer_structured_allowed, parse_informer_start_logs, wait_for
 
 
 class TestControllerHealth:
@@ -29,6 +29,47 @@ class TestControllerHealth:
         assert len(pods) >= 1, "No controller pod found"
         for pod in pods:
             assert pod.status.phase == "Running", f"Pod {pod.metadata.name} is {pod.status.phase}"
+
+    def test_controller_informer_startup_cache_modes(self, k8s_clients, controller_namespace):
+        """Verify startup informer modes against the PD-60602 cache contract."""
+        pods = k8s_clients.core.list_namespaced_pod(
+            controller_namespace,
+            label_selector="control-plane=controller-manager",
+        ).items
+        assert pods, "No controller pod found for informer startup validation"
+
+        required = {
+            ("/v1, Kind=Pod", "structured"),
+            (("/v1, Kind=Node"), "structured"),
+            (("/v1, Kind=ConfigMap"), "metadata"),
+            (("batch/v1, Kind=CronJob"), "metadata"),
+            (("apps/v1, Kind=Deployment"), "metadata"),
+        }
+        failures = []
+        for pod in pods:
+            if pod.metadata.deletion_timestamp:
+                continue
+            logs = k8s_clients.core.read_namespaced_pod_log(
+                pod.metadata.name,
+                controller_namespace,
+                container="manager",
+                timestamps=False,
+            )
+            records, parse_errors = parse_informer_start_logs(logs)
+            observed = {(record.gvk, record.cache_mode) for record in records}
+            if "starting manager" not in logs:
+                failures.append(f"{pod.metadata.name}: startup marker missing")
+            if not records:
+                failures.append(f"{pod.metadata.name}: no informer startup records found")
+            if parse_errors:
+                failures.append(f"{pod.metadata.name}: malformed informer records: {parse_errors}")
+            for record in records:
+                if record.cache_mode in {"structured", "unstructured"} and not informer_structured_allowed(record):
+                    failures.append(f"{pod.metadata.name}: forbidden {record}")
+            missing = required - observed
+            if missing:
+                failures.append(f"{pod.metadata.name}: missing required informer records: {sorted(missing)}")
+        assert not failures, "\n".join(failures)
 
     def test_all_containers_ready(self, k8s_clients, controller_namespace):
         pods = k8s_clients.core.list_namespaced_pod(

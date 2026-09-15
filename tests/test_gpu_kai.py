@@ -137,9 +137,8 @@ def _wait_for_prometheus_series(
     deployment_name: str,
     metric_name: str,
 ):
-    pod = get_deployment_pod(k8s_clients.core, namespace, deployment_name)
-
     def has_series():
+        pod = get_deployment_pod(k8s_clients.core, namespace, deployment_name)
         query = f'{metric_name}{{namespace="{namespace}",pod="{pod.metadata.name}",container="app"}}'
         result = prometheus_query(kube_context, "monitoring", query)
         return bool(result["data"]["result"])
