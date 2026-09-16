@@ -2,10 +2,17 @@
 
 All notable changes to the Kubex Automation Engine Helm chart will be documented in this file.
 
+## [1.13.2] - 2026-09-16
+
+### Fixed
+- Rollback no longer double-counts container resources for workloads using a wildcard (all-containers) rollback resource entry.
+
+---
+
 ## [1.13.1] - 2026-09-15
 
 ### Fixed
-- Reduced controller memory usage on clusters with large numbers of compaction-managed ConfigMaps, fixing a regression that could significantly increase memory usage under heavy compaction load.
+- Reduced memory usage from ClusterCompactionPolicy controllers.
 
 ---
 
