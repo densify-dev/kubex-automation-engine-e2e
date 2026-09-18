@@ -65,15 +65,24 @@ def parse_informer_start_logs(log_text: str) -> tuple[list[InformerStart], list[
         if match:
             try:
                 decoded = json.loads(match.group(1))
-                if isinstance(decoded, dict):
-                    fields = {key: decoded.get(key) for key in ("kind", "gvk", "cache_mode")}
             except json.JSONDecodeError:
-                pass
-        if not fields:
+                # The trailing `{...}` span didn't decode as a single JSON
+                # object -- e.g. two log entries ended up concatenated on
+                # one line with no separator. Falling back to scanning the
+                # whole line for "kind"/"gvk"/"cache_mode" independently
+                # would silently splice fields from unrelated entries
+                # together (PD-60602); treat this as unparseable instead.
+                errors.append(line)
+                continue
+            if isinstance(decoded, dict):
+                fields = {key: decoded.get(key) for key in ("kind", "gvk", "cache_mode")}
+        else:
+            # No trailing JSON object at all: fall back to a loose scan for
+            # other log formats that may not put the blob at the line end.
             try:
                 fields = {
-                    match.group("field"): json.loads(f'"{match.group("value")}"')
-                    for match in _INFORMER_FIELD_RE.finditer(line)
+                    m.group("field"): json.loads(f'"{m.group("value")}"')
+                    for m in _INFORMER_FIELD_RE.finditer(line)
                 }
             except json.JSONDecodeError:
                 errors.append(line)
