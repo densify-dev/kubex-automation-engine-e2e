@@ -5,7 +5,7 @@ All notable changes to the Kubex Automation Engine Helm chart will be documented
 ## [1.13.2] - 2026-09-16
 
 ### Fixed
-- Rollback no longer double-counts container resources for workloads using a wildcard (all-containers) rollback resource entry.
+- Rollback applies specific container resources instead of aggregation and applying to all containers.
 
 ---
 
