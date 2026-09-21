@@ -58,4 +58,7 @@ def test_structured_allowlist_matches_pd60602():
     assert informer_structured_allowed(InformerStart("Pod", "/v1, Kind=Pod", "structured"))
     assert informer_structured_allowed(InformerStart("Node", "/v1, Kind=Node", "structured"))
     assert informer_structured_allowed(InformerStart("Policy", "rightsizing.kubex.ai/v1alpha1, Kind=Policy", "structured"))
+    assert informer_structured_allowed(
+        InformerStart("Lease", "coordination.k8s.io/v1, Kind=Lease", "structured")
+    ), "controller-runtime leader election always watches a single structured Lease object"
     assert not informer_structured_allowed(InformerStart("ConfigMap", "/v1, Kind=ConfigMap", "structured"))

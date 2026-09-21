@@ -115,6 +115,7 @@ def informer_structured_allowed(record: InformerStart) -> bool:
         "/v1, Kind=ResourceQuota",
         "autoscaling/v2, Kind=HorizontalPodAutoscaler",
         "autoscaling.k8s.io/",  # VPA versions vary by installation.
+        "coordination.k8s.io/v1, Kind=Lease",  # controller-runtime leader election; a single object, not a scaling watch.
     }
     return record.gvk in allowed or any(record.gvk.startswith(prefix) for prefix in allowed if prefix.endswith("/"))
 
