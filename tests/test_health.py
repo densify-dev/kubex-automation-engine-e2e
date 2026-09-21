@@ -63,12 +63,23 @@ class TestControllerHealth:
                 failures.append(f"{pod.metadata.name}: no informer startup records found")
             if parse_errors:
                 failures.append(f"{pod.metadata.name}: malformed informer records: {parse_errors}")
+            forbidden_found = False
             for record in records:
                 if record.cache_mode in {"structured", "unstructured"} and not informer_structured_allowed(record):
                     failures.append(f"{pod.metadata.name}: forbidden {record}")
+                    forbidden_found = True
             missing = required - observed
             if missing:
                 failures.append(f"{pod.metadata.name}: missing required informer records: {sorted(missing)}")
+            # PD-60602 diagnostic: on a forbidden-informer failure, dump the
+            # raw source lines so a CI failure reveals the exact bytes
+            # instead of only the already-parsed record.
+            if forbidden_found:
+                raw_lines = [line for line in logs.splitlines() if "starting informer" in line]
+                failures.append(
+                    f"{pod.metadata.name}: raw informer-start lines ({len(raw_lines)}):\n"
+                    + "\n".join(repr(line) for line in raw_lines)
+                )
         assert not failures, "\n".join(failures)
 
     def test_all_containers_ready(self, k8s_clients, controller_namespace):
