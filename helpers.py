@@ -87,6 +87,22 @@ def parse_informer_start_logs(log_text: str) -> tuple[list[InformerStart], list[
     return records, errors
 
 
+def read_pod_log(core_api: client.CoreV1Api, name: str, namespace: str, **kwargs) -> str:
+    """Fetch a pod's log, decoding it ourselves instead of the client's default path.
+
+    kubernetes-client-python's ApiClient.deserialize() tries `json.loads(response.data)`
+    first (response.data is raw bytes) and, since plain-text log output is never valid
+    JSON, falls back to `data = response.data` -- still raw bytes, never decoded. The
+    "str" primitive deserializer then does `str(data)` on those bytes, producing a
+    `"b'...'"` repr string with escaped `\\t`/`\\n` as literal text instead of real
+    control characters, collapsing the whole log into one unparseable line (PD-60602).
+    Passing `_preload_content=False` returns the raw response so we can decode it
+    correctly ourselves.
+    """
+    response = core_api.read_namespaced_pod_log(name, namespace, _preload_content=False, **kwargs)
+    return response.data.decode("utf-8")
+
+
 def informer_structured_allowed(record: InformerStart) -> bool:
     """Return whether a structured informer is allowed by PD-60602."""
     if record.gvk.startswith("rightsizing.kubex.ai/"):
