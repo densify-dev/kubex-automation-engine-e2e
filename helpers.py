@@ -48,9 +48,6 @@ class InformerStart:
 
 INFORMER_CACHE_MODES = {"metadata", "structured", "unstructured"}
 _INFORMER_JSON_RE = re.compile(r"(\{.*\})\s*$")
-_INFORMER_FIELD_RE = re.compile(
-    r'"(?P<field>kind|gvk|cache_mode)"\s*:\s*"(?P<value>(?:\\.|[^"\\])*)"'
-)
 
 
 def parse_informer_start_logs(log_text: str) -> tuple[list[InformerStart], list[str]]:
@@ -60,33 +57,26 @@ def parse_informer_start_logs(log_text: str) -> tuple[list[InformerStart], list[
     for line in log_text.splitlines():
         if "starting informer" not in line:
             continue
-        fields: dict[str, str] = {}
+        # A well-formed informer-start line always ends in exactly one JSON
+        # object. If it doesn't -- no trailing object at all, or a decode
+        # failure (e.g. two entries ended up concatenated on one line with
+        # no separator) -- treat it as unparseable. A loose per-field scan
+        # across the whole line used to be tried as a "recovery" here, but
+        # that silently splices fields from unrelated entries together
+        # (PD-60602); never do that.
         match = _INFORMER_JSON_RE.search(line)
-        if match:
-            try:
-                decoded = json.loads(match.group(1))
-            except json.JSONDecodeError:
-                # The trailing `{...}` span didn't decode as a single JSON
-                # object -- e.g. two log entries ended up concatenated on
-                # one line with no separator. Falling back to scanning the
-                # whole line for "kind"/"gvk"/"cache_mode" independently
-                # would silently splice fields from unrelated entries
-                # together (PD-60602); treat this as unparseable instead.
-                errors.append(line)
-                continue
-            if isinstance(decoded, dict):
-                fields = {key: decoded.get(key) for key in ("kind", "gvk", "cache_mode")}
-        else:
-            # No trailing JSON object at all: fall back to a loose scan for
-            # other log formats that may not put the blob at the line end.
-            try:
-                fields = {
-                    m.group("field"): json.loads(f'"{m.group("value")}"')
-                    for m in _INFORMER_FIELD_RE.finditer(line)
-                }
-            except json.JSONDecodeError:
-                errors.append(line)
-                continue
+        if not match:
+            errors.append(line)
+            continue
+        try:
+            decoded = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            errors.append(line)
+            continue
+        if not isinstance(decoded, dict):
+            errors.append(line)
+            continue
+        fields = {key: decoded.get(key) for key in ("kind", "gvk", "cache_mode")}
         if not all(isinstance(fields.get(key), str) and fields[key] for key in ("kind", "gvk", "cache_mode")):
             errors.append(line)
             continue

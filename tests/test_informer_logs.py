@@ -39,6 +39,21 @@ def test_parse_concatenated_json_objects_does_not_splice_fields():
     assert len(errors) == 1
 
 
+def test_parse_line_without_trailing_json_reports_malformed_record():
+    """PD-60602: confirmed root cause via a real CI failure -- when the pod
+    log is fetched as one giant non-line-broken blob (e.g. embedded
+    literal \\n/\\t sequences instead of real newlines), the strict regex
+    finds no clean trailing `{...}` at all. The old code fell back to
+    scanning the whole blob for "kind"/"gvk"/"cache_mode" independently,
+    which spliced fields from unrelated entries into a fabricated
+    forbidden-structured-Deployment record. It must be rejected instead."""
+    records, errors = parse_informer_start_logs(
+        'starting informer {"kind":"AutomationStrategy","gvk":"rightsizing.kubex.ai/v1alpha1, Kind=AutomationStrategy","cache_mode":"structured"} trailing content after the object'
+    )
+    assert records == []
+    assert len(errors) == 1
+
+
 def test_structured_allowlist_matches_pd60602():
     assert informer_structured_allowed(InformerStart("Pod", "/v1, Kind=Pod", "structured"))
     assert informer_structured_allowed(InformerStart("Node", "/v1, Kind=Node", "structured"))
