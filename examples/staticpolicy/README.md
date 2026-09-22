@@ -92,11 +92,6 @@ This directory has example bundles:
     - Includes sample `Model`; when KubeAI creates model-owned pods, recommendations anchor on `Model` and flow to those pods.
     - Requires KubeAI CRD installed in cluster.
 
-21) `multi-policy-container-scope.yaml`
-    - Uses one AutomationStrategy and two StaticPolicies against one three-container Deployment.
-    - Each policy scopes to a different container and uses `resources.containers."*"`.
-    - Requires `GlobalConfiguration.spec.multiPolicyContainerRightsizingEnabled: true`; the unscoped `metrics` container keeps its initial resources.
-
 Apply examples:
 
 ```sh
@@ -107,7 +102,6 @@ kubectl apply -f examples/staticpolicy/per-container.yaml
 kubectl apply -f examples/staticpolicy/with-resource-quota.yaml
 kubectl apply -f examples/staticpolicy/multi-container-filtered.yaml
 kubectl apply -f examples/staticpolicy/multi-container.yaml
-kubectl apply -f examples/staticpolicy/multi-policy-container-scope.yaml
 kubectl apply -f examples/staticpolicy/enablement-directions.yaml
 kubectl apply -f examples/staticpolicy/with-pdb-multi-replica.yaml
 kubectl apply -f examples/staticpolicy/same-order-weight-precedence.yaml
@@ -121,52 +115,6 @@ kubectl apply -f examples/staticpolicy/in-place-memory-decrease-success.yaml
 kubectl apply -f examples/staticpolicy/in-place-memory-decrease-fail.yaml
 kubectl apply -f examples/staticpolicy/with-skip-containers.yaml
 kubectl apply -f examples/staticpolicy/model.yaml
-```
-
-The `multi-policy-container-scope.yaml` example requires:
-
-```text
-GlobalConfiguration.spec.multiPolicyContainerRightsizingEnabled: true
-```
-
-The example does not include a `GlobalConfiguration` because Helm manages the cluster singleton. Record the current value, enable the flag by patching the existing object, and apply the example:
-
-```sh
-previous_multi_policy_flag="$(kubectl get globalconfiguration global-config -o jsonpath='{.spec.multiPolicyContainerRightsizingEnabled}')"
-test -n "$previous_multi_policy_flag" || previous_multi_policy_flag=false
-kubectl patch globalconfiguration global-config --type=merge \
-  -p '{"spec":{"multiPolicyContainerRightsizingEnabled":true}}'
-kubectl apply -f examples/staticpolicy/multi-policy-container-scope.yaml
-```
-
-After reconciliation, the Deployment should have these values:
-
-| Container | Requests | Limits |
-| --- | --- | --- |
-| `app` | `cpu: 250m`, `memory: 256Mi` | `cpu: 500m`, `memory: 512Mi` |
-| `sidecar` | `cpu: 150m`, `memory: 192Mi` | `cpu: 300m`, `memory: 384Mi` |
-| `metrics` | `cpu: 25m`, `memory: 32Mi` | `cpu: 50m`, `memory: 64Mi` |
-
-`metrics` is outside both policy scopes, so its initial values stay unchanged. Inspect the resources with:
-
-```sh
-kubectl get deployment multi-policy-container-scope-demo -n default \
-  -o jsonpath='{range .spec.template.spec.containers[*]}{.name}: requests={.resources.requests} limits={.resources.limits}{"\n"}{end}'
-```
-
-With the flag enabled, the Deployment has separate hashed annotation keys for each policy. Each key starts with `static.rightsizing.kubex.ai/h` and ends with either `-desired-resource-requests` or `-desired-resource-limits`:
-
-```sh
-kubectl get deployment multi-policy-container-scope-demo -n default -o yaml \
-  | grep -E 'static\.rightsizing\.kubex\.ai/h.*desired-resource-(requests|limits)'
-```
-
-Clean up the example, then restore the value recorded before the example. If the commands run in separate shells, replace `$previous_multi_policy_flag` with the recorded `true` or `false` value:
-
-```sh
-kubectl delete -f examples/staticpolicy/multi-policy-container-scope.yaml
-kubectl patch globalconfiguration global-config --type=merge \
-  -p "{\"spec\":{\"multiPolicyContainerRightsizingEnabled\":${previous_multi_policy_flag}}}"
 ```
 
 Then inspect workloads with the matching labels (e.g., `kubectl get deploy -n default -o yaml`) to see desired request/limit annotations and the resolved rule metadata.

@@ -16,13 +16,11 @@ spec:
   snapshotInterval: {{ .Values.globalConfiguration.snapshotInterval }}
   gpuReactiveCheckInterval: {{ .Values.globalConfiguration.gpuReactiveCheckInterval }}
   heartbeatInterval: {{ .Values.globalConfiguration.heartbeatInterval }}
-  proposalSyncInterval: {{ .Values.globalConfiguration.proposalSyncInterval }}
   kubexAPIRequestTimeout: {{ $kubexAPIRequestTimeout }}
   webhookOwnerResolutionRetryTimeout: {{ .Values.globalConfiguration.webhookOwnerResolutionRetryTimeout | quote }}
   
   # Behavior configuration
   automationEnabled: {{ .Values.globalConfiguration.automationEnabled }}
-  multiPolicyContainerRightsizingEnabled: {{ .Values.globalConfiguration.multiPolicyContainerRightsizingEnabled }}
   proposalSyncEnabled: {{ .Values.globalConfiguration.proposalSyncEnabled }}
   suppressFetchRecommendations: {{ .Values.globalConfiguration.suppressFetchRecommendations }}
   respectKubexAutomation: {{ .Values.globalConfiguration.respectKubexAutomation }}

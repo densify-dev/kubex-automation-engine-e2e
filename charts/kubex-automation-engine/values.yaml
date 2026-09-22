@@ -364,12 +364,8 @@ globalConfiguration:
   snapshotInterval: "30m"
   # -- Controller heartbeat report interval
   heartbeatInterval: "5m"
-  # -- Proposal synchronization interval
-  proposalSyncInterval: "1m"
   # -- Whether automation is globally enabled
   automationEnabled: true
-  # -- Emit one rightsizing recommendation annotation per resource policy
-  multiPolicyContainerRightsizingEnabled: false
   # -- Whether proposal sync runs; when false, proposal-managed resources are deleted
   proposalSyncEnabled: true
   # -- Suppress fetching recommendations from gateway (testing only)
@@ -527,7 +523,6 @@ scope: []
   # - name: base-optimization-scope    # Unique scope name
   #   policy: base-optimization         # Policy name (optional - uses defaultPolicy if omitted)
   #   weight: 0                         # Policy weight (higher = higher priority)
-#   containers: ["app", "sidecar"]    # Exact container names; empty targets all automatable containers
   #   namespaces:                       # Mandatory - defines which namespaces to include/exclude
   #     operator: NotIn                 # Options: In | NotIn
   #     values:

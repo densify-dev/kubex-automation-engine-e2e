@@ -5,7 +5,7 @@ import time
 
 from kubernetes import client
 
-from helpers import get_crd, informer_structured_allowed, parse_informer_start_logs, wait_for
+from helpers import get_crd, informer_structured_allowed, parse_informer_start_logs, read_pod_log, wait_for
 
 
 class TestControllerHealth:
@@ -49,7 +49,8 @@ class TestControllerHealth:
         for pod in pods:
             if pod.metadata.deletion_timestamp:
                 continue
-            logs = k8s_clients.core.read_namespaced_pod_log(
+            logs = read_pod_log(
+                k8s_clients.core,
                 pod.metadata.name,
                 controller_namespace,
                 container="manager",

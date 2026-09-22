@@ -333,12 +333,10 @@ Use [Global Configuration Reference](./Global-Configuration.md) for the CR field
 | `globalConfiguration.mutationLogInterval` | `5m` | Mutation log send cadence |
 | `globalConfiguration.snapshotInterval` | `30m` | Policy snapshot upload cadence |
 | `globalConfiguration.heartbeatInterval` | `5m` | Controller heartbeat upload cadence |
-| `globalConfiguration.proposalSyncInterval` | `1m` | Proposal synchronization cadence |
 | `globalConfiguration.proposalSyncEnabled` | `true` | Proposal sync is enabled by default. Set to `false` to disable it; disabled proposal sync deletes proposal-managed resources |
 | `globalConfiguration.kubexAPIRequestTimeout` | `60s` | Timeout for Kubex API requests. Also sets the gateway sidecar `API_REQUEST_TIMEOUT` env var at Helm install/upgrade time; live CR edits do not update the sidecar. |
 | `globalConfiguration.webhookOwnerResolutionRetryTimeout` | `1s` | Pod webhook owner-resolution retry budget |
 | `globalConfiguration.automationEnabled` | `true` | Global enable/disable switch |
-| `globalConfiguration.multiPolicyContainerRightsizingEnabled` | `false` | Emit policy-owned resource recommendation keys so same-kind policies can contribute to one pod |
 | `globalConfiguration.suppressFetchRecommendations` | `false` | Testing-only fetch suppression |
 | `globalConfiguration.respectKubexAutomation` | `true` | Respect recommendation-level disablement |
 | `globalConfiguration.protectedNamespacePatterns` | `["kube-*","openshift-*","gmp-*"]` | Namespace patterns protected from automation |
@@ -385,7 +383,6 @@ These values apply to Helm-managed recommendation-driven automation only. If you
 | `scope[].namespaces.values` | Namespace selection values |
 | `scope[].podLabels` | Label selector rules converted to `matchLabels` or `matchExpressions` |
 | `scope[].weight` | Policy weight for precedence resolution |
-| `scope[].containers` | Exact container names for the generated `ClusterProactivePolicy`; empty targets all automatable containers |
 
 For the generated resource fields behind these values, see [Cluster Automation Strategies](./Cluster-Automation-Strategies.md) and [Cluster Proactive Policies](./Cluster-Proactive-Policies.md).
 
