@@ -20,6 +20,7 @@ For the cluster-scoped variant, see [Cluster Proactive Policies](./Cluster-Proac
 | `spec.scope` | none | Optional scope object for workload selection. |
 | `spec.scope.labelSelector` | none | Kubernetes label selector for matching workloads. |
 | `spec.scope.workloadTypes` | `[Deployment, StatefulSet, CronJob, Rollout, Job, AnalysisRun, DaemonSet, Model]` | Workload kinds this policy applies to. Default excludes `StrimziPodSet` only. |
+| `spec.scope.containers` | all automatable containers | Exact container names to retain from external recommendations. Unknown names are allowed. |
 | `spec.automationStrategyRef.name` | none | Required namespaced strategy name. |
 | `spec.weight` | `0` | Higher weight wins when multiple proactive policies match. |
 | `spec.safetyChecks.maxAnalysisAgeDays` | `5` | Rejects old recommendations. |
@@ -34,6 +35,9 @@ metadata:
   namespace: team-a
 spec:
   scope:
+    containers:
+      - api
+      - worker
     labelSelector:
       matchLabels:
         app.kubernetes.io/part-of: storefront
@@ -56,6 +60,7 @@ spec:
 ## Notes
 
 - Use namespaced proactive policies when teams own their own namespaces.
+- Container filtering happens before recommendation age and `KubexAutomation` checks, so summaries cover only containers owned by the policy.
 - When multiple proactive policies of the same kind match, higher `weight` wins, then older objects win on ties.
 - `Model` is included in default workload types. Use `spec.scope.workloadTypes: [Model]` when you want to restrict scope to KubeAI `Model` objects only. Recommendations and rollback state are stored on the `Model` owner, then inherited by model-owned pods.
 - For cluster-scoped examples and field references, see [Cluster Proactive Policies](./Cluster-Proactive-Policies.md).

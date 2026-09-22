@@ -15,10 +15,12 @@ Use it to control recommendation refresh timing, proactive rescans, heartbeat re
 | `spec.mutationLogInterval` | `5m` | How often mutation logs are sent. |
 | `spec.snapshotInterval` | `30m` | How often snapshots containing all supported `rightsizing.kubex.ai` custom resources are sent. |
 | `spec.heartbeatInterval` | `5m` | How often controller heartbeat status is sent to Kubex. |
+| `spec.proposalSyncInterval` | `1m` | How often proposal sync runs. |
 | `spec.proposalSyncEnabled` | `false` | Controls proposal sync. When omitted or set to `false`, the controller stops syncing proposals and deletes proposal-managed resources. |
 | `spec.kubexAPIRequestTimeout` | `60s` | Timeout for Kubex API requests. |
 | `spec.webhookOwnerResolutionRetryTimeout` | `1s` | How long the pod admission webhook retries owner recommendation resolution before continuing without owner annotations. |
 | `spec.automationEnabled` | `true` | Global on or off switch for automation behavior. |
+| `spec.multiPolicyContainerRightsizingEnabled` | `false` | When true, resource policies emit policy-owned recommendation keys so several policies can contribute to one pod. Consumers read both key formats in either state. |
 | `spec.suppressFetchRecommendations` | `false` | Testing-oriented switch to suppress recommendation fetches. |
 | `spec.respectKubexAutomation` | `true` | Ignores recommendations marked with `KubexAutomation=false`. |
 | `spec.protectedNamespacePatterns` | `["kube-*","openshift-*","gmp-*"]` | Namespace glob patterns protected from automation. |
@@ -63,10 +65,12 @@ spec:
   mutationLogInterval: 5m
   snapshotInterval: 30m
   heartbeatInterval: 5m
+  proposalSyncInterval: 1m
   proposalSyncEnabled: false
   kubexAPIRequestTimeout: 60s
   webhookOwnerResolutionRetryTimeout: 1s
   automationEnabled: true
+  multiPolicyContainerRightsizingEnabled: false
   suppressFetchRecommendations: false
   respectKubexAutomation: true
   protectedNamespacePatterns:
@@ -106,10 +110,12 @@ The chart creates a default `GlobalConfiguration` when `globalConfiguration.enab
 | `globalConfiguration.mutationLogInterval` | `spec.mutationLogInterval` | Direct mapping |
 | `globalConfiguration.snapshotInterval` | `spec.snapshotInterval` | Direct mapping |
 | `globalConfiguration.heartbeatInterval` | `spec.heartbeatInterval` | Direct mapping |
+| `globalConfiguration.proposalSyncInterval` | `spec.proposalSyncInterval` | Defaults to `1m` and controls how often proposal sync runs |
 | `globalConfiguration.proposalSyncEnabled` | `spec.proposalSyncEnabled` | Enabled by default in the Helm chart. Set to `false` to disable it; disabling also deletes proposal-managed resources |
 | `globalConfiguration.kubexAPIRequestTimeout` | `spec.kubexAPIRequestTimeout` | Falls back to legacy value if unset |
 | `globalConfiguration.webhookOwnerResolutionRetryTimeout` | `spec.webhookOwnerResolutionRetryTimeout` | Direct mapping |
 | `globalConfiguration.automationEnabled` | `spec.automationEnabled` | Direct mapping |
+| `globalConfiguration.multiPolicyContainerRightsizingEnabled` | `spec.multiPolicyContainerRightsizingEnabled` | Disabled by default. Changing it rescans all static, proactive, and GPU reactive policies. |
 | `globalConfiguration.suppressFetchRecommendations` | `spec.suppressFetchRecommendations` | Direct mapping |
 | `globalConfiguration.respectKubexAutomation` | `spec.respectKubexAutomation` | Direct mapping |
 | `globalConfiguration.protectedNamespacePatterns` | `spec.protectedNamespacePatterns` | Supports `*` wildcard matching. Wildcard patterns must be enclosed in double quotes (e.g., "kube-*"). |
@@ -132,6 +138,14 @@ Legacy `deployment.controllerEnv` values still act as fallbacks for the default 
 | `deployment.controllerEnv.apiRequestTimeout` | `spec.kubexAPIRequestTimeout` |
 
 If both the new `globalConfiguration.*` value and the legacy value are set, the `globalConfiguration.*` value wins.
+
+## Multi-policy annotation keys
+
+When `multiPolicyContainerRightsizingEnabled` is false, resource policies use their fixed legacy request and limit annotation keys. When true, each policy writes keys shaped like `<policy-prefix>/h<digest>-desired-resource-requests` and `<policy-prefix>/h<digest>-desired-resource-limits`. GPU reactive policies use the same digest for baseline state.
+
+A flag change converts each workload in one Kubernetes patch. Conversion across the cluster is eventual because policy reconcilers process workloads independently. Readers accept fixed and hashed keys throughout the transition. A selected recommendation that changes key restarts rollback monitoring because rollback fingerprints remain key-sensitive.
+
+Each matching policy adds up to two annotations, or three for GPU reactive state. Kubernetes limits total annotation data on an object to 256 KiB. Keep the number and payload size of overlapping policies within that limit.
 
 ## Heartbeat Reporting
 

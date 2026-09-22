@@ -48,6 +48,9 @@ class InformerStart:
 
 INFORMER_CACHE_MODES = {"metadata", "structured", "unstructured"}
 _INFORMER_JSON_RE = re.compile(r"(\{.*\})\s*$")
+_INFORMER_FIELD_RE = re.compile(
+    r'"(?P<field>kind|gvk|cache_mode)"\s*:\s*"(?P<value>(?:\\.|[^"\\])*)"'
+)
 
 
 def parse_informer_start_logs(log_text: str) -> tuple[list[InformerStart], list[str]]:
@@ -57,26 +60,24 @@ def parse_informer_start_logs(log_text: str) -> tuple[list[InformerStart], list[
     for line in log_text.splitlines():
         if "starting informer" not in line:
             continue
-        # A well-formed informer-start line always ends in exactly one JSON
-        # object. If it doesn't -- no trailing object at all, or a decode
-        # failure (e.g. two entries ended up concatenated on one line with
-        # no separator) -- treat it as unparseable. A loose per-field scan
-        # across the whole line used to be tried as a "recovery" here, but
-        # that silently splices fields from unrelated entries together
-        # (PD-60602); never do that.
+        fields: dict[str, str] = {}
         match = _INFORMER_JSON_RE.search(line)
-        if not match:
-            errors.append(line)
-            continue
-        try:
-            decoded = json.loads(match.group(1))
-        except json.JSONDecodeError:
-            errors.append(line)
-            continue
-        if not isinstance(decoded, dict):
-            errors.append(line)
-            continue
-        fields = {key: decoded.get(key) for key in ("kind", "gvk", "cache_mode")}
+        if match:
+            try:
+                decoded = json.loads(match.group(1))
+                if isinstance(decoded, dict):
+                    fields = {key: decoded.get(key) for key in ("kind", "gvk", "cache_mode")}
+            except json.JSONDecodeError:
+                pass
+        if not fields:
+            try:
+                fields = {
+                    match.group("field"): json.loads(f'"{match.group("value")}"')
+                    for match in _INFORMER_FIELD_RE.finditer(line)
+                }
+            except json.JSONDecodeError:
+                errors.append(line)
+                continue
         if not all(isinstance(fields.get(key), str) and fields[key] for key in ("kind", "gvk", "cache_mode")):
             errors.append(line)
             continue
@@ -85,22 +86,6 @@ def parse_informer_start_logs(log_text: str) -> tuple[list[InformerStart], list[
             continue
         records.append(InformerStart(fields["kind"], fields["gvk"], fields["cache_mode"]))
     return records, errors
-
-
-def read_pod_log(core_api: client.CoreV1Api, name: str, namespace: str, **kwargs) -> str:
-    """Fetch a pod's log, decoding it ourselves instead of the client's default path.
-
-    kubernetes-client-python's ApiClient.deserialize() tries `json.loads(response.data)`
-    first (response.data is raw bytes) and, since plain-text log output is never valid
-    JSON, falls back to `data = response.data` -- still raw bytes, never decoded. The
-    "str" primitive deserializer then does `str(data)` on those bytes, producing a
-    `"b'...'"` repr string with escaped `\\t`/`\\n` as literal text instead of real
-    control characters, collapsing the whole log into one unparseable line (PD-60602).
-    Passing `_preload_content=False` returns the raw response so we can decode it
-    correctly ourselves.
-    """
-    response = core_api.read_namespaced_pod_log(name, namespace, _preload_content=False, **kwargs)
-    return response.data.decode("utf-8")
 
 
 def informer_structured_allowed(record: InformerStart) -> bool:
@@ -115,7 +100,6 @@ def informer_structured_allowed(record: InformerStart) -> bool:
         "/v1, Kind=ResourceQuota",
         "autoscaling/v2, Kind=HorizontalPodAutoscaler",
         "autoscaling.k8s.io/",  # VPA versions vary by installation.
-        "coordination.k8s.io/v1, Kind=Lease",  # controller-runtime leader election; a single object, not a scaling watch.
     }
     return record.gvk in allowed or any(record.gvk.startswith(prefix) for prefix in allowed if prefix.endswith("/"))
 

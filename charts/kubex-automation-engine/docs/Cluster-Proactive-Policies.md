@@ -18,6 +18,7 @@ For the namespaced variant, see [Proactive Policies](./Proactive-Policies.md). F
 | --- | --- | --- |
 | `spec.scope.labelSelector` | none | Kubernetes label selector for matching workloads. |
 | `spec.scope.workloadTypes` | `[Deployment, StatefulSet, CronJob, Rollout, Job, AnalysisRun, DaemonSet, Model]` | Workload kinds this policy applies to. Default excludes `StrimziPodSet` only. |
+| `spec.scope.containers` | all automatable containers | Exact container names to retain from external recommendations. Unknown names are allowed. |
 | `spec.scope.namespaceSelector.operator` | none | Namespace selector operator: `In` or `NotIn`. |
 | `spec.scope.namespaceSelector.values` | none | Namespace patterns to include or exclude (supports `*` wildcards, e.g. "prod-*"). Wildcard patterns must be enclosed in double quotes. |
 | `spec.automationStrategyRef.name` | none | Required cluster strategy name. |
@@ -33,6 +34,9 @@ metadata:
   name: platform-prod-proactive
 spec:
   scope:
+    containers:
+      - api
+      - worker
     labelSelector:
       matchLabels:
         team: platform
@@ -61,6 +65,7 @@ spec:
 ## Notes
 
 - Use cluster proactive policies when a platform team needs one recommendation-driven policy across many namespaces.
+- Helm-managed policies accept the same list through `scope[].containers`.
 - Start with narrow namespace and label selectors, then widen scope after verifying the selected-policy behavior in events and controller logs.
 - `Model` is included in default workload types. Use `spec.scope.workloadTypes: [Model]` when you want to restrict scope to KubeAI `Model` objects only. Recommendations and rollback state are stored on the `Model` owner, then inherited by model-owned pods.
 - GPU scheduler behavior still comes from the referenced `ClusterAutomationStrategy`; proactive recommendations only supply the desired GPU request value.
