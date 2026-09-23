@@ -164,6 +164,110 @@ class TestObjectPatch:
                 if exc.status != 404:
                     raise
 
+    def test_selector_replace_is_atomic_and_repairs_drift(self, k8s_clients, test_namespace):
+        name = "e2e-object-patch-selector"
+        target_name = "e2e-object-patch-selector-target"
+        try:
+            k8s_clients.apps.create_namespaced_deployment(
+                test_namespace,
+                {
+                    "metadata": {"name": target_name, "labels": {"app": target_name}},
+                    "spec": {
+                        "replicas": 1,
+                        "selector": {"matchLabels": {"app": target_name}},
+                        "template": {
+                            "metadata": {"labels": {"app": target_name}},
+                            "spec": {
+                                "containers": [
+                                    {"name": "app", "image": "busybox", "args": ["--old"]},
+                                    {
+                                        "name": "sidecar",
+                                        "image": "busybox",
+                                        "args": ["--keep"],
+                                    },
+                                ]
+                            },
+                        },
+                    },
+                },
+            )
+            k8s_clients.custom.create_namespaced_custom_object(
+                GROUP,
+                VERSION,
+                test_namespace,
+                OBJECT_PATCHES,
+                {
+                    "apiVersion": f"{GROUP}/{VERSION}",
+                    "kind": "ObjectPatch",
+                    "metadata": {"name": name},
+                    "spec": {
+                        "targetRef": {
+                            "apiVersion": "apps/v1",
+                            "kind": "Deployment",
+                            "name": target_name,
+                        },
+                        "requeueInterval": "1s",
+                        "drift": {
+                            "retryInterval": "1s",
+                            "retryAmount": 3,
+                            "stabilizationWindow": "2s",
+                        },
+                        "patch": {"metadata": {"labels": {"managed-by": "kubex"}}},
+                        "jsonPatch": [
+                            {
+                                "op": "replace",
+                                "path": "/spec/template/spec/containers/@/args",
+                                "selector": 'item.name == "app"',
+                                "value": ["--serve"],
+                            }
+                        ],
+                    },
+                },
+            )
+            _wait_applied(k8s_clients.custom, OBJECT_PATCHES, name, test_namespace)
+            target = k8s_clients.apps.read_namespaced_deployment(target_name, test_namespace)
+            assert target.metadata.labels["managed-by"] == "kubex"
+            assert target.spec.template.spec.containers[0].args == ["--serve"]
+            assert target.spec.template.spec.containers[1].args == ["--keep"]
+
+            k8s_clients.apps.patch_namespaced_deployment(
+                target_name,
+                test_namespace,
+                {
+                    "spec": {
+                        "template": {
+                            "spec": {
+                                "containers": [
+                                    {"name": "app", "args": ["--drifted"]},
+                                    {"name": "sidecar", "args": ["--concurrent"]},
+                                ]
+                            }
+                        }
+                    }
+                },
+            )
+
+            def repaired_with_concurrent_change():
+                deployment = k8s_clients.apps.read_namespaced_deployment(
+                    target_name, test_namespace
+                )
+                containers = deployment.spec.template.spec.containers
+                return containers[0].args == ["--serve"] and containers[1].args == [
+                    "--concurrent"
+                ]
+
+            wait_for(repaired_with_concurrent_change, timeout=120, message="selector drift repair")
+
+        finally:
+            delete_custom_object(
+                k8s_clients.custom, GROUP, VERSION, test_namespace, OBJECT_PATCHES, name
+            )
+            try:
+                k8s_clients.apps.delete_namespaced_deployment(target_name, test_namespace)
+            except ApiException as exc:
+                if exc.status != 404:
+                    raise
+
 
 class TestClusterObjectPatch:
     """Verify a cluster-scoped patch can mutate a Namespace."""
