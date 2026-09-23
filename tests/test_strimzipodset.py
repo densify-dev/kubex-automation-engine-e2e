@@ -17,6 +17,7 @@ from helpers import (
     automation_strategy_manifest,
     create_strimzipodset,
     delete_strimzipodset,
+    find_recommendation_annotation_key,
     get_strimzipodset,
     get_strimzipodset_pod,
     static_policy_manifest,
@@ -95,7 +96,10 @@ def _wait_for_static_policy_annotation(k8s_clients, test_namespace: str, name: s
     def workload_has_annotation():
         sps = get_strimzipodset(k8s_clients.custom, test_namespace, name, version=version)
         annotations = sps.get("metadata", {}).get("annotations", {})
-        return STATIC_POLICY_ANNOTATION in annotations
+        return (
+            find_recommendation_annotation_key(annotations, STATIC_POLICY_ANNOTATION)
+            is not None
+        )
 
     wait_for(
         workload_has_annotation,
@@ -108,7 +112,10 @@ def _wait_for_owned_pod_annotation(k8s_clients, test_namespace: str, name: str) 
     def pod_has_annotation():
         pod = get_strimzipodset_pod(k8s_clients.core, test_namespace, name)
         annotations = pod.metadata.annotations or {}
-        return STATIC_POLICY_ANNOTATION in annotations
+        return (
+            find_recommendation_annotation_key(annotations, STATIC_POLICY_ANNOTATION)
+            is not None
+        )
 
     wait_for(
         pod_has_annotation,
@@ -117,10 +124,13 @@ def _wait_for_owned_pod_annotation(k8s_clients, test_namespace: str, name: str) 
     )
 
 
-def _annotation_payload(annotations: dict[str, str] | None, annotation_key: str = STATIC_POLICY_ANNOTATION) -> dict:
-    raw = (annotations or {}).get(annotation_key)
-    assert raw is not None
-    return json.loads(raw)
+def _annotation_payload(
+    annotations: dict[str, str] | None, annotation_key: str = STATIC_POLICY_ANNOTATION
+) -> dict:
+    annotations = annotations or {}
+    key = find_recommendation_annotation_key(annotations, annotation_key)
+    assert key is not None
+    return json.loads(annotations[key])
 
 
 def _create_static_policy(
@@ -265,8 +275,16 @@ def test_static_policy_requires_strimzipodset_opt_in(
         sps = get_strimzipodset(k8s_clients.custom, test_namespace, strimzipodset_name, version=strimzi_version)
         pod = get_strimzipodset_pod(k8s_clients.core, test_namespace, strimzipodset_name)
 
-        assert STATIC_POLICY_ANNOTATION not in (sps.get("metadata", {}).get("annotations", {}))
-        assert STATIC_POLICY_ANNOTATION not in (pod.metadata.annotations or {})
+        assert (
+            find_recommendation_annotation_key(
+                sps.get("metadata", {}).get("annotations", {}), STATIC_POLICY_ANNOTATION
+            )
+            is None
+        )
+        assert (
+            find_recommendation_annotation_key(pod.metadata.annotations, STATIC_POLICY_ANNOTATION)
+            is None
+        )
     finally:
         _delete_static_policy(k8s_clients, test_namespace, policy_name)
 

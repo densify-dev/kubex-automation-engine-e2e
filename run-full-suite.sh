@@ -36,6 +36,7 @@ INSTALL_KUBEAI="${INSTALL_KUBEAI:-}"
 DEPLOY_KUBEX_STUB="${DEPLOY_KUBEX_STUB:-true}"
 GPU_SUITE="${GPU_SUITE:-false}"
 GPU_KIND_CONFIG="${GPU_KIND_CONFIG:-}"
+MULTI_POLICY_CONTAINER_RIGHTSIZING_ENABLED="${MULTI_POLICY_CONTAINER_RIGHTSIZING_ENABLED:-false}"
 
 is_true() {
   [[ "$1" == "1" ]] || [[ "$1" == "true" ]]
@@ -245,6 +246,9 @@ bootstrap_cluster() {
   if is_true "$DEPLOY_KUBEX_STUB"; then
     bootstrap_args+=(--deploy-kubex-stub)
   fi
+  if is_true "$MULTI_POLICY_CONTAINER_RIGHTSIZING_ENABLED"; then
+    bootstrap_args+=(--multi-policy-container-rightsizing-enabled)
+  fi
   if is_true "$GPU_SUITE"; then
     bootstrap_args+=(--gpu-suite)
     if [[ -n "$GPU_KIND_CONFIG" ]]; then
@@ -266,6 +270,24 @@ bootstrap_cluster() {
 
   log "Bootstrapping cluster ${KUBE_CONTEXT}"
   run_cmd "$VENV_PYTHON" -m bootstrap "${bootstrap_args[@]}"
+}
+
+verify_multi_policy_container_rightsizing() {
+  local expected actual
+  if is_true "$MULTI_POLICY_CONTAINER_RIGHTSIZING_ENABLED"; then
+    expected=true
+  else
+    expected=false
+  fi
+
+  actual="$(kubectl --context "$KUBE_CONTEXT" get globalconfiguration global-config \
+    -o 'jsonpath={.spec.multiPolicyContainerRightsizingEnabled}')"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "GlobalConfiguration/global-config has multiPolicyContainerRightsizingEnabled=${actual:-<unset>}; expected ${expected}" >&2
+    kubectl --context "$KUBE_CONTEXT" get globalconfiguration global-config -o yaml || true
+    return 1
+  fi
+  log "Verified GlobalConfiguration/global-config multiPolicyContainerRightsizingEnabled=${expected}"
 }
 
 run_functional_suite() {
@@ -362,6 +384,7 @@ verify_uninstall() {
 
 ensure_python_env
 bootstrap_cluster
+verify_multi_policy_container_rightsizing
 run_functional_suite "$@"
 if [[ "$KEEP_KIND_CLUSTER" == "1" ]] || [[ "$KEEP_KIND_CLUSTER" == "true" ]]; then
   log "KEEP_KIND_CLUSTER set — skipping uninstall and cluster teardown"

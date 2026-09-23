@@ -37,6 +37,29 @@ ROLLBACK_STATE_ANNOTATION = "rightsizing.kubex.ai/rollback-state"
 STATIC_POLICY_ANNOTATION = "static.rightsizing.kubex.ai/desired-resource-requests"
 
 
+def find_recommendation_annotation_key(
+    annotations: dict[str, str] | None, fixed_key: str
+) -> str | None:
+    """Return a fixed or per-policy recommendation annotation key."""
+    if not annotations:
+        return None
+    if fixed_key in annotations:
+        return fixed_key
+
+    prefix, separator, suffix = fixed_key.rpartition("/")
+    if not separator:
+        return None
+    derived_suffix = f"-{suffix}"
+    return next(
+        (
+            key
+            for key in annotations
+            if key.startswith(f"{prefix}/") and key.endswith(derived_suffix)
+        ),
+        None,
+    )
+
+
 @dataclass(frozen=True)
 class InformerStart:
     """A parsed controller informer startup record."""

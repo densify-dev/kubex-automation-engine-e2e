@@ -11,6 +11,7 @@ from kubernetes.client.rest import ApiException
 from bootstrap import ignore_not_found
 from example_utils import EXAMPLES_ROOT, apply_manifest, delete_manifest_in_reverse
 from helpers import (
+    find_recommendation_annotation_key,
     get_crd,
     GROUP,
     ROLLBACK_STATE_ANNOTATION,
@@ -58,8 +59,14 @@ def _wait_for_gpu_recommendations(k8s_clients, namespace: str, deployment_name: 
         pod = get_deployment_pod(k8s_clients.core, namespace, deployment_name)
         annotations = pod.metadata.annotations or {}
         return (
-            "static.rightsizing.kubex.ai/desired-resource-requests" in annotations
-            and "static.rightsizing.kubex.ai/desired-resource-limits" in annotations
+            find_recommendation_annotation_key(
+                annotations, "static.rightsizing.kubex.ai/desired-resource-requests"
+            )
+            is not None
+            and find_recommendation_annotation_key(
+                annotations, "static.rightsizing.kubex.ai/desired-resource-limits"
+            )
+            is not None
         )
 
     wait_for(
@@ -514,8 +521,14 @@ class TestGpuKaiRollback:
     def _rollback_annotations_cleared(self, k8s_clients) -> bool:
         annotations = self._deployment(k8s_clients).metadata.annotations or {}
         return (
-            "rollbackpolicy.rightsizing.kubex.ai/desired-resource-requests" not in annotations
-            and "rollbackpolicy.rightsizing.kubex.ai/desired-resource-limits" not in annotations
+            find_recommendation_annotation_key(
+                annotations, "rollbackpolicy.rightsizing.kubex.ai/desired-resource-requests"
+            )
+            is None
+            and find_recommendation_annotation_key(
+                annotations, "rollbackpolicy.rightsizing.kubex.ai/desired-resource-limits"
+            )
+            is None
         )
 
     def _patch_rollback_policy_backoff(self, k8s_clients, *, time_period: str, max_attempts: int) -> None:

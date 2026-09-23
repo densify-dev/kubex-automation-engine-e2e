@@ -16,6 +16,7 @@ from helpers import (
     create_deployment,
     delete_deployment,
     delete_hpa,
+    find_recommendation_annotation_key,
     get_crd,
     get_deployment_pod,
     get_pod_resources,
@@ -290,9 +291,11 @@ class TestNamespacePauseUntil:
                 deployment = k8s_clients.apps.read_namespaced_deployment(
                     self.DEPLOYMENT, test_namespace
                 )
-                return bool(
-                    deployment.metadata.annotations
-                    and STATIC_POLICY_ANNOTATION in deployment.metadata.annotations
+                return (
+                    find_recommendation_annotation_key(
+                        deployment.metadata.annotations, STATIC_POLICY_ANNOTATION
+                    )
+                    is not None
                 )
             except ApiException:
                 return False
@@ -435,7 +438,11 @@ class TestNodeAllocatableAdmissionGap:
 
         def owner_annotation_updated():
             deployment = k8s_clients.apps.read_namespaced_deployment(self.DEPLOYMENT, test_namespace)
-            raw = (deployment.metadata.annotations or {}).get(STATIC_POLICY_ANNOTATION, "")
+            annotations = deployment.metadata.annotations or {}
+            annotation_key = find_recommendation_annotation_key(
+                annotations, STATIC_POLICY_ANNOTATION
+            )
+            raw = annotations.get(annotation_key, "") if annotation_key else ""
             return '"cpu":"80"' in raw and '"memory":"200Gi"' in raw
 
         wait_for(
@@ -487,7 +494,12 @@ class TestNodeAllocatableAdmissionGap:
         assert resources["app"]["limits"].get("cpu") == self.UNSCHEDULABLE_RESOURCES["limits"]["cpu"]
         assert resources["app"]["limits"].get("memory") == self.UNSCHEDULABLE_RESOURCES["limits"]["memory"]
         assert RIGHTSIZING_ANNOTATION in (pod.metadata.annotations or {})
-        assert STATIC_POLICY_ANNOTATION in (deployment.metadata.annotations or {})
+        assert (
+            find_recommendation_annotation_key(
+                deployment.metadata.annotations, STATIC_POLICY_ANNOTATION
+            )
+            is not None
+        )
         assert any(
             event.reason == "FailedScheduling"
             and event.involved_object
