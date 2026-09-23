@@ -80,6 +80,7 @@ Rollback policies are also fully supported by the controller and must be managed
 | `scope[].namespaces` | `ClusterProactivePolicy.spec.scope.namespaceSelector` | Namespace include or exclude rules. |
 | `scope[].podLabels` | `ClusterProactivePolicy.spec.scope.labelSelector` | Converted into `matchLabels` or `matchExpressions`. |
 | `scope[].weight` | `ClusterProactivePolicy.spec.weight` | Higher weight wins within the same policy type. |
+| `scope[].containers` | `ClusterProactivePolicy.spec.scope.containers` | Exact container names. Empty means all automatable containers. |
 | `policy.policies.<name>.allowedPodOwners` | `ClusterProactivePolicy.spec.scope.workloadTypes` | Supported values: `Deployment`, `StatefulSet`, `DaemonSet`, `CronJob`, `Rollout`, `Job`, `AnalysisRun`, `StrimziPodSet` (opt-in), `Model`. |
 | `policy.policies.<name>.safetyChecks.maxAnalysisAgeDays` | `ClusterProactivePolicy.spec.safetyChecks.maxAnalysisAgeDays` | Per-policy value wins over top-level `policy.safetyChecks.maxAnalysisAgeDays`. |
 | `policy.safetyChecks.maxAnalysisAgeDays` | `ClusterProactivePolicy.spec.safetyChecks.maxAnalysisAgeDays` | Backward-compatible fallback when not set per policy. |
@@ -226,6 +227,7 @@ Proposal sync supports `ContainerArgsPolicy` as a cluster-scoped proposal kind. 
 
 - Prefer mutually exclusive scopes so winner selection stays predictable.
 - Use `weight` deliberately when multiple cluster proactive policies may match.
+- Enable `globalConfiguration.multiPolicyContainerRightsizingEnabled` when same-kind resource policies must contribute separate container or resource candidates. The default fixed-key mode preserves one effective policy per kind.
 - Start with narrow namespace and label selectors before widening scope.
 - Exclude system and platform namespaces from broad proactive automation.
 - Use static policies when exact requests and limits matter more than recommendation-driven tuning.
@@ -236,7 +238,7 @@ When more than one policy matches, the controller resolves a winner using this o
 
 1. **Policy-type precedence** (static vs. proactive)
 2. **Weight** (higher wins)
-3. **Creation time** (newer wins if weights are equal)
+3. **Creation time** (older wins if weights are equal)
 
 ### Policy Type Precedence
 

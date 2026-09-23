@@ -7,6 +7,7 @@
 ## Behavior
 
 - Baseline is the live GPU allocation before first upsize and is persisted per container.
+- `spec.scope.containers` limits baseline state, metrics, aggregation, and redistribution to exact names. Empty means all regular containers and restartable init containers. Narrowing scope removes old recommendation and baseline entries for excluded containers.
 - Pod metrics are considered only after the pod age reaches `spec.minPodMetricsAge` (default `15m`).
 - The policy evaluates two required GPU signals: `spec.metrics.compute` and `spec.metrics.memory`.
 - Each metric declares its Prometheus value interpretation through `spec.metrics.<signal>.prometheus.interpretation`. `fullGPU` treats the value as a percentage of one whole GPU. `currentAllocation` treats it as a percentage of the container's current GPU allocation.
@@ -39,6 +40,8 @@ spec:
   experimental:
     gpuKaiContract: v1alpha1-2026-07
   scope:
+    containers:
+      - inference
     labelSelector:
       matchLabels:
         app: my-gpu-app
@@ -91,6 +94,8 @@ spec:
   experimental:
     gpuKaiContract: v1alpha1-2026-07
   scope:
+    containers:
+      - inference
     namespaceSelector:
       operator: In
       values: ["*"]

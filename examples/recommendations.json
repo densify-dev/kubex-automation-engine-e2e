@@ -134,6 +134,46 @@
       "gpu": {
         "gpuOverallOptimal": "0.25"
       }
+    },
+    {
+      "Cluster": "local-cluster",
+      "Namespace": "default",
+      "PodOwnerKind": "Deployment",
+      "PodOwnerName": "multi-policy-proactive-container-scope-demo",
+      "Container": "app",
+      "EntityId": "entity-904",
+      "ContainerId": "container-904",
+      "KubexAutomation": "true",
+      "HpaMetricName": "",
+      "AnalyzedOn": "2026-01-29T19:36:50Z",
+      "CurrentCpuRequestMCores": 100,
+      "CurrentMemRequestBytes": 134217728,
+      "CurrentCpuLimitMCores": 200,
+      "CurrentMemLimitBytes": 268435456,
+      "RecommendedCpuRequestMCores": 250,
+      "RecommendedMemRequestBytes": 268435456,
+      "RecommendedCpuLimitMCores": 500,
+      "RecommendedMemLimitBytes": 536870912
+    },
+    {
+      "Cluster": "local-cluster",
+      "Namespace": "default",
+      "PodOwnerKind": "Deployment",
+      "PodOwnerName": "multi-policy-proactive-container-scope-demo",
+      "Container": "sidecar",
+      "EntityId": "entity-905",
+      "ContainerId": "container-905",
+      "KubexAutomation": "true",
+      "HpaMetricName": "",
+      "AnalyzedOn": "2026-01-29T19:36:50Z",
+      "CurrentCpuRequestMCores": 50,
+      "CurrentMemRequestBytes": 67108864,
+      "CurrentCpuLimitMCores": 100,
+      "CurrentMemLimitBytes": 134217728,
+      "RecommendedCpuRequestMCores": 150,
+      "RecommendedMemRequestBytes": 201326592,
+      "RecommendedCpuLimitMCores": 300,
+      "RecommendedMemLimitBytes": 402653184
     }
   ]
 }
