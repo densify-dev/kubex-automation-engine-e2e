@@ -31,6 +31,11 @@ on:
         description: "Helm chart version override for kubex-crds"
         required: false
         default: ""
+      multi_policy_container_rightsizing_enabled:
+        description: "Enable per-policy container rightsizing recommendation keys"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -40,7 +45,7 @@ env:
 
 jobs:
   e2e:
-    name: E2E Tests (${{ matrix.kubernetes.version }})
+    name: "E2E Tests (${{ matrix.kubernetes.version }}, multi-policy container rightsizing: ${{ github.event_name == 'workflow_dispatch' && inputs.multi_policy_container_rightsizing_enabled || false }})"
     runs-on: ubuntu-latest
     timeout-minutes: 180
     strategy:
@@ -80,6 +85,7 @@ jobs:
       WITH_VPA: ${{ matrix.kubernetes.with_vpa }}
       GPU_SUITE: ${{ matrix.kubernetes.gpu_suite }}
       GPU_KIND_CONFIG: ${{ matrix.kubernetes.gpu_kind_config }}
+      MULTI_POLICY_CONTAINER_RIGHTSIZING_ENABLED: ${{ github.event_name == 'workflow_dispatch' && inputs.multi_policy_container_rightsizing_enabled || false }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -136,3 +142,4 @@ jobs:
           WITH_METRICS_SERVER: ${{ env.WITH_METRICS_SERVER }}
           WITH_KEDA: ${{ env.WITH_KEDA }}
           WITH_VPA: ${{ env.WITH_VPA }}
+          MULTI_POLICY_CONTAINER_RIGHTSIZING_ENABLED: ${{ env.MULTI_POLICY_CONTAINER_RIGHTSIZING_ENABLED }}
