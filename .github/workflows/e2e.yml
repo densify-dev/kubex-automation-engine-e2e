@@ -63,7 +63,7 @@ jobs:
             gpu_suite: "true"
             gpu_kind_config: features/gpu/kind-config.yaml
             multi_policy_container_rightsizing_enabled: "false"
-          - version: v1.35.0 (with multi-policies)
+          - version: v1.35.0
             cluster_name: e2e-135
             with_metrics_server: "true"
             with_keda: "true"
@@ -71,7 +71,7 @@ jobs:
             gpu_suite: "true"
             gpu_kind_config: features/gpu/kind-config.yaml
             multi_policy_container_rightsizing_enabled: "true"
-          - version: v1.32.0 (with multi-policies)
+          - version: v1.32.0
             cluster_name: e2e-132
             with_metrics_server: "true"
             with_keda: "false"
