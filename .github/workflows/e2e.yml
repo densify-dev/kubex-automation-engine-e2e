@@ -59,6 +59,7 @@ jobs:
             with_vpa: "true"
             gpu_suite: "true"
             gpu_kind_config: features/gpu/kind-config.yaml
+            multi_policy_container_rightsizing_enabled: ${{ inputs.multi_policy_container_rightsizing_enabled }}
           - version: v1.32.0
             cluster_name: e2e-132
             with_metrics_server: "true"
@@ -66,6 +67,7 @@ jobs:
             with_vpa: "false"
             gpu_suite: "true"
             gpu_kind_config: features/gpu/kind-config.yaml
+            multi_policy_container_rightsizing_enabled: ${{ inputs.multi_policy_container_rightsizing_enabled }}
     env:
       # Push/pull_request use local charts and metadata; schedule uses the latest Helm chart defaults.
       HELM_RELEASE: kubex-automation-engine
@@ -85,7 +87,7 @@ jobs:
       WITH_VPA: ${{ matrix.kubernetes.with_vpa }}
       GPU_SUITE: ${{ matrix.kubernetes.gpu_suite }}
       GPU_KIND_CONFIG: ${{ matrix.kubernetes.gpu_kind_config }}
-      MULTI_POLICY_CONTAINER_RIGHTSIZING_ENABLED: ${{ github.event_name == 'workflow_dispatch' && inputs.multi_policy_container_rightsizing_enabled || false }}
+      MULTI_POLICY_CONTAINER_RIGHTSIZING_ENABLED: ${{ matrix.kubernetes.multi_policy_container_rightsizing_enabled }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
