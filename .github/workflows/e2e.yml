@@ -31,11 +31,6 @@ on:
         description: "Helm chart version override for kubex-crds"
         required: false
         default: ""
-      multi_policy_container_rightsizing_enabled:
-        description: "Enable per-policy container rightsizing recommendation keys"
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -59,7 +54,7 @@ jobs:
             with_vpa: "true"
             gpu_suite: "true"
             gpu_kind_config: features/gpu/kind-config.yaml
-            multi_policy_container_rightsizing_enabled: ${{ inputs.multi_policy_container_rightsizing_enabled }}
+            multi_policy_container_rightsizing_enabled: "false"
           - version: v1.32.0
             cluster_name: e2e-132
             with_metrics_server: "true"
@@ -67,7 +62,23 @@ jobs:
             with_vpa: "false"
             gpu_suite: "true"
             gpu_kind_config: features/gpu/kind-config.yaml
-            multi_policy_container_rightsizing_enabled: ${{ inputs.multi_policy_container_rightsizing_enabled }}
+            multi_policy_container_rightsizing_enabled: "false"
+          - version: v1.35.0 (with multi-policies)
+            cluster_name: e2e-135
+            with_metrics_server: "true"
+            with_keda: "true"
+            with_vpa: "true"
+            gpu_suite: "true"
+            gpu_kind_config: features/gpu/kind-config.yaml
+            multi_policy_container_rightsizing_enabled: "true"
+          - version: v1.32.0 (with multi-policies)
+            cluster_name: e2e-132
+            with_metrics_server: "true"
+            with_keda: "false"
+            with_vpa: "false"
+            gpu_suite: "true"
+            gpu_kind_config: features/gpu/kind-config.yaml
+            multi_policy_container_rightsizing_enabled: "true"
     env:
       # Push/pull_request use local charts and metadata; schedule uses the latest Helm chart defaults.
       HELM_RELEASE: kubex-automation-engine
