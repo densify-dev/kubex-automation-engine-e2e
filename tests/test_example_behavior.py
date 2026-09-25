@@ -130,7 +130,7 @@ class TestMultiPolicyExampleBehavior:
                 "multi-policy-container-scope-demo",
                 "StaticPolicy",
                 "static",
-                {"multi-policy-app": "app", "multi-policy-sidecar": "sidecar"},
+                {"multi-policy-app": {"app"}, "multi-policy-sidecar": {"sidecar"}},
                 {
                     "app": {
                         "requests": {"cpu": "250m", "memory": "256Mi"},
@@ -153,8 +153,8 @@ class TestMultiPolicyExampleBehavior:
                 "ProactivePolicy",
                 "proactive",
                 {
-                    "multi-policy-proactive-app": "app",
-                    "multi-policy-proactive-sidecar": "sidecar",
+                    "multi-policy-proactive-app": {"app"},
+                    "multi-policy-proactive-sidecar": {"sidecar"},
                 },
                 {
                     "app": {
@@ -181,8 +181,8 @@ class TestMultiPolicyExampleBehavior:
                 "StaticPolicy",
                 "static",
                 {
-                    "weighted-container-exclusion-default": "*",
-                    "weighted-container-exclusion-sidecar": "sidecar",
+                    "weighted-container-exclusion-default": {"*"},
+                    "weighted-container-exclusion-sidecar": {"sidecar"},
                 },
                 {
                     "app": {
@@ -199,11 +199,36 @@ class TestMultiPolicyExampleBehavior:
                     "weighted-container-exclusion-sidecar": 20,
                 },
             ),
+            (
+                EXAMPLES_ROOT / "proactivepolicy" / "weighted-container-exclusion.yaml",
+                "weighted-proactive-container-exclusion-demo",
+                "ProactivePolicy",
+                "proactive",
+                {
+                    "weighted-proactive-container-exclusion-default": {"app", "sidecar"},
+                    "weighted-proactive-container-exclusion-sidecar": {"sidecar"},
+                },
+                {
+                    "app": {
+                        "requests": {"cpu": "250m", "memory": "256Mi"},
+                        "limits": {"cpu": "500m", "memory": "512Mi"},
+                    },
+                    "sidecar": {
+                        "requests": {"cpu": "50m", "memory": "64Mi"},
+                        "limits": {"cpu": "100m", "memory": "128Mi"},
+                    },
+                },
+                {
+                    "weighted-proactive-container-exclusion-default": 10,
+                    "weighted-proactive-container-exclusion-sidecar": 20,
+                },
+            ),
         ],
         ids=[
             "staticpolicy/multi-policy-container-scope.yaml",
             "proactivepolicy/multi-policy-container-scope.yaml",
             "staticpolicy/weighted-container-exclusion.yaml",
+            "proactivepolicy/weighted-container-exclusion.yaml",
         ],
     )
     def test_multi_policy_container_scope_composes_policy_results(
@@ -285,6 +310,6 @@ class TestMultiPolicyExampleBehavior:
                     assert payload["policyNamespace"] == "default"
                     assert payload["policyKind"] == policy_kind
                     assert payload.get("policyWeight", 0) == policy_weights[policy_name]
-                    assert set(payload["containers"]) == {policy_containers[policy_name]}
+                    assert set(payload["containers"]) == policy_containers[policy_name]
         finally:
             delete_manifest_in_reverse(manifest_path, kube_context)
