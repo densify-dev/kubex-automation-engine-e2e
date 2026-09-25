@@ -113,24 +113,17 @@ class TestHPAExampleBehavior:
 
 
 class TestMultiPolicyExampleBehavior:
-    EXPECTED_RESOURCES = {
-        "app": {
-            "requests": {"cpu": "250m", "memory": "256Mi"},
-            "limits": {"cpu": "500m", "memory": "512Mi"},
-        },
-        "sidecar": {
-            "requests": {"cpu": "150m", "memory": "192Mi"},
-            "limits": {"cpu": "300m", "memory": "384Mi"},
-        },
-        "metrics": {
-            "requests": {"cpu": "25m", "memory": "32Mi"},
-            "limits": {"cpu": "50m", "memory": "64Mi"},
-        },
-    }
-
     @pytest.mark.timeout(900)
     @pytest.mark.parametrize(
-        ("manifest_path", "deployment_name", "policy_kind", "policy_prefix", "policy_containers"),
+        (
+            "manifest_path",
+            "deployment_name",
+            "policy_kind",
+            "policy_prefix",
+            "policy_containers",
+            "expected_resources",
+            "policy_weights",
+        ),
         [
             (
                 EXAMPLES_ROOT / "staticpolicy" / "multi-policy-container-scope.yaml",
@@ -138,6 +131,21 @@ class TestMultiPolicyExampleBehavior:
                 "StaticPolicy",
                 "static",
                 {"multi-policy-app": "app", "multi-policy-sidecar": "sidecar"},
+                {
+                    "app": {
+                        "requests": {"cpu": "250m", "memory": "256Mi"},
+                        "limits": {"cpu": "500m", "memory": "512Mi"},
+                    },
+                    "sidecar": {
+                        "requests": {"cpu": "150m", "memory": "192Mi"},
+                        "limits": {"cpu": "300m", "memory": "384Mi"},
+                    },
+                    "metrics": {
+                        "requests": {"cpu": "25m", "memory": "32Mi"},
+                        "limits": {"cpu": "50m", "memory": "64Mi"},
+                    },
+                },
+                {"multi-policy-app": 0, "multi-policy-sidecar": 0},
             ),
             (
                 EXAMPLES_ROOT / "proactivepolicy" / "multi-policy-container-scope.yaml",
@@ -148,11 +156,54 @@ class TestMultiPolicyExampleBehavior:
                     "multi-policy-proactive-app": "app",
                     "multi-policy-proactive-sidecar": "sidecar",
                 },
+                {
+                    "app": {
+                        "requests": {"cpu": "250m", "memory": "256Mi"},
+                        "limits": {"cpu": "500m", "memory": "512Mi"},
+                    },
+                    "sidecar": {
+                        "requests": {"cpu": "150m", "memory": "192Mi"},
+                        "limits": {"cpu": "300m", "memory": "384Mi"},
+                    },
+                    "metrics": {
+                        "requests": {"cpu": "25m", "memory": "32Mi"},
+                        "limits": {"cpu": "50m", "memory": "64Mi"},
+                    },
+                },
+                {
+                    "multi-policy-proactive-app": 0,
+                    "multi-policy-proactive-sidecar": 0,
+                },
+            ),
+            (
+                EXAMPLES_ROOT / "staticpolicy" / "weighted-container-exclusion.yaml",
+                "weighted-container-exclusion-demo",
+                "StaticPolicy",
+                "static",
+                {
+                    "weighted-container-exclusion-default": "*",
+                    "weighted-container-exclusion-sidecar": "sidecar",
+                },
+                {
+                    "app": {
+                        "requests": {"cpu": "250m", "memory": "256Mi"},
+                        "limits": {"cpu": "500m", "memory": "512Mi"},
+                    },
+                    "sidecar": {
+                        "requests": {"cpu": "50m", "memory": "64Mi"},
+                        "limits": {"cpu": "100m", "memory": "128Mi"},
+                    },
+                },
+                {
+                    "weighted-container-exclusion-default": 10,
+                    "weighted-container-exclusion-sidecar": 20,
+                },
             ),
         ],
         ids=[
             "staticpolicy/multi-policy-container-scope.yaml",
             "proactivepolicy/multi-policy-container-scope.yaml",
+            "staticpolicy/weighted-container-exclusion.yaml",
         ],
     )
     def test_multi_policy_container_scope_composes_policy_results(
@@ -162,6 +213,8 @@ class TestMultiPolicyExampleBehavior:
         policy_kind,
         policy_prefix,
         policy_containers,
+        expected_resources,
+        policy_weights,
         kube_context,
         k8s_clients,
     ):
@@ -199,7 +252,7 @@ class TestMultiPolicyExampleBehavior:
                 resources = get_pod_resources(k8s_clients.core, "default", pod.metadata.name)
                 return all(
                     resources[container][resource_type].get(resource) == value
-                    for container, expected in self.EXPECTED_RESOURCES.items()
+                    for container, expected in expected_resources.items()
                     for resource_type, values in expected.items()
                     for resource, value in values.items()
                 )
@@ -231,6 +284,7 @@ class TestMultiPolicyExampleBehavior:
                     policy_name = payload["policyName"]
                     assert payload["policyNamespace"] == "default"
                     assert payload["policyKind"] == policy_kind
+                    assert payload.get("policyWeight", 0) == policy_weights[policy_name]
                     assert set(payload["containers"]) == {policy_containers[policy_name]}
         finally:
             delete_manifest_in_reverse(manifest_path, kube_context)
