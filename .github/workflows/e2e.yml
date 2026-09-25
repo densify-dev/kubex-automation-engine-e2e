@@ -40,7 +40,7 @@ env:
 
 jobs:
   e2e:
-    name: E2E Tests (${{ matrix.kubernetes.version }})
+    name: "E2E Tests (${{ matrix.kubernetes.version }}, multi-policy: ${{ matrix.kubernetes.multi_policy_container_rightsizing_enabled }})"
     runs-on: ubuntu-latest
     timeout-minutes: 180
     strategy:
@@ -54,6 +54,7 @@ jobs:
             with_vpa: "true"
             gpu_suite: "true"
             gpu_kind_config: features/gpu/kind-config.yaml
+            multi_policy_container_rightsizing_enabled: "false"
           - version: v1.32.0
             cluster_name: e2e-132
             with_metrics_server: "true"
@@ -61,6 +62,23 @@ jobs:
             with_vpa: "false"
             gpu_suite: "true"
             gpu_kind_config: features/gpu/kind-config.yaml
+            multi_policy_container_rightsizing_enabled: "false"
+          - version: v1.35.0
+            cluster_name: e2e-135
+            with_metrics_server: "true"
+            with_keda: "true"
+            with_vpa: "true"
+            gpu_suite: "true"
+            gpu_kind_config: features/gpu/kind-config.yaml
+            multi_policy_container_rightsizing_enabled: "true"
+          - version: v1.32.0
+            cluster_name: e2e-132
+            with_metrics_server: "true"
+            with_keda: "false"
+            with_vpa: "false"
+            gpu_suite: "true"
+            gpu_kind_config: features/gpu/kind-config.yaml
+            multi_policy_container_rightsizing_enabled: "true"
     env:
       # Push/pull_request use local charts and metadata; schedule uses the latest Helm chart defaults.
       HELM_RELEASE: kubex-automation-engine
@@ -80,6 +98,7 @@ jobs:
       WITH_VPA: ${{ matrix.kubernetes.with_vpa }}
       GPU_SUITE: ${{ matrix.kubernetes.gpu_suite }}
       GPU_KIND_CONFIG: ${{ matrix.kubernetes.gpu_kind_config }}
+      MULTI_POLICY_CONTAINER_RIGHTSIZING_ENABLED: ${{ matrix.kubernetes.multi_policy_container_rightsizing_enabled }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -87,6 +106,30 @@ jobs:
       - name: Load controller image metadata
         if: github.event_name != 'schedule'
         uses: ./.github/actions/load-controller-image-metadata
+
+      - name: Show run parameters
+        env:
+          KUBERNETES_VERSION: ${{ matrix.kubernetes.version }}
+        run: |
+          printf 'Trigger: %q\n' "$GITHUB_EVENT_NAME"
+          printf 'Kubernetes version: %q\n' "$KUBERNETES_VERSION"
+          printf 'Cluster name: %q\n' "$CLUSTER_NAME"
+          printf 'Node image: %q\n' "$NODE_IMAGE"
+          printf 'Metrics server: %q\n' "$WITH_METRICS_SERVER"
+          printf 'KEDA: %q\n' "$WITH_KEDA"
+          printf 'VPA: %q\n' "$WITH_VPA"
+          printf 'GPU suite: %q\n' "$GPU_SUITE"
+          printf 'GPU kind config: %q\n' "$GPU_KIND_CONFIG"
+          printf 'Multi-policy container rightsizing: %q\n' "$MULTI_POLICY_CONTAINER_RIGHTSIZING_ENABLED"
+          printf 'Controller image repository (override or metadata): %q\n' "$CONTROLLER_IMAGE_REPOSITORY"
+          printf 'Controller image tag (override or metadata): %q\n' "$CONTROLLER_IMAGE_TAG"
+          printf 'Helm release: %q\n' "$HELM_RELEASE"
+          printf 'Helm namespace: %q\n' "$HELM_NAMESPACE"
+          printf 'Helm repo URL: %q\n' "$HELM_REPO_URL"
+          printf 'Helm CRDs chart: %q\n' "$HELM_CRDS_CHART"
+          printf 'Helm CRDs chart version: %q\n' "$HELM_CRDS_CHART_VERSION"
+          printf 'Helm controller chart: %q\n' "$HELM_CONTROLLER_CHART"
+          printf 'Helm controller chart version: %q\n' "$HELM_CONTROLLER_CHART_VERSION"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -136,3 +179,4 @@ jobs:
           WITH_METRICS_SERVER: ${{ env.WITH_METRICS_SERVER }}
           WITH_KEDA: ${{ env.WITH_KEDA }}
           WITH_VPA: ${{ env.WITH_VPA }}
+          MULTI_POLICY_CONTAINER_RIGHTSIZING_ENABLED: ${{ env.MULTI_POLICY_CONTAINER_RIGHTSIZING_ENABLED }}
