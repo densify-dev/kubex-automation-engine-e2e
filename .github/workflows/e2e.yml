@@ -40,7 +40,7 @@ env:
 
 jobs:
   e2e:
-    name: "E2E Tests (${{ matrix.kubernetes.version }})"
+    name: "E2E Tests (${{ matrix.kubernetes.version }}, multi-policy: ${{ matrix.kubernetes.multi_policy_container_rightsizing_enabled }})"
     runs-on: ubuntu-latest
     timeout-minutes: 180
     strategy:
