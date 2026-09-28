@@ -12,16 +12,42 @@ from example_utils import (
     apply_manifest,
     assert_declared_resources_exist,
     delete_manifest_in_reverse,
+    manifest_documents,
     skip_reason,
     wait_for_declared_workloads_ready,
 )
+from helpers import apply_manifest as apply_manifest_object
 from helpers import (
+    find_recommendation_annotation_key,
     get_crd,
     get_deployment_pod,
     get_deployment_resources,
     get_pod_resources,
     wait_for,
 )
+
+
+def test_find_recommendation_annotation_key_selects_policy():
+    fixed_key = "static.rightsizing.kubex.ai/desired-resource-requests"
+    first_key = "static.rightsizing.kubex.ai/hfirst-desired-resource-requests"
+    second_key = "static.rightsizing.kubex.ai/hsecond-desired-resource-requests"
+    annotations = {
+        first_key: json.dumps({"policyName": "first-policy"}),
+        second_key: json.dumps({"policyName": "second-policy"}),
+    }
+
+    assert (
+        find_recommendation_annotation_key(
+            annotations, fixed_key, policy_name="second-policy"
+        )
+        == second_key
+    )
+    assert (
+        find_recommendation_annotation_key(
+            annotations, fixed_key, policy_name="missing-policy"
+        )
+        is None
+    )
 
 
 class TestExampleBehavior:
@@ -262,12 +288,63 @@ class TestMultiPolicyExampleBehavior:
 
         def annotations_converged():
             deployment = k8s_clients.apps.read_namespaced_deployment(deployment_name, "default")
-            keys = recommendation_keys(deployment.metadata.annotations)
-            return len(keys["requests"]) == 2 and len(keys["limits"]) == 2
+            annotations = deployment.metadata.annotations or {}
+            keys = recommendation_keys(annotations)
+            return (
+                len(keys["requests"]) == 2
+                and len(keys["limits"]) == 2
+                and f"{annotation_prefix}/desired-resource-requests" not in annotations
+                and f"{annotation_prefix}/desired-resource-limits" not in annotations
+                and all(
+                    find_recommendation_annotation_key(
+                        annotations,
+                        f"{annotation_prefix}/desired-resource-{usage}",
+                        policy_name=policy_name,
+                    )
+                    is not None
+                    for usage in ("requests", "limits")
+                    for policy_name in policy_containers
+                )
+            )
 
         try:
-            apply_manifest(manifest_path, kube_context)
+            manifest_docs = manifest_documents(manifest_path)
+            for doc in manifest_docs:
+                if doc["kind"] == "Deployment":
+                    doc["spec"]["replicas"] = 0
+                apply_manifest_object(doc, kube_context)
             assert_declared_resources_exist(manifest_path, kube_context)
+            wait_for(
+                annotations_converged,
+                timeout=180,
+                message=f"{policy_kind} multi-policy deployment annotations",
+            )
+
+            deployment = k8s_clients.apps.read_namespaced_deployment(deployment_name, "default")
+            annotations = deployment.metadata.annotations or {}
+            keys = recommendation_keys(annotations)
+            assert len(keys["requests"]) == 2
+            assert len(keys["limits"]) == 2
+            assert f"{annotation_prefix}/desired-resource-requests" not in annotations
+            assert f"{annotation_prefix}/desired-resource-limits" not in annotations
+
+            for usage in ("requests", "limits"):
+                fixed_key = f"{annotation_prefix}/desired-resource-{usage}"
+                for policy_name, containers in policy_containers.items():
+                    key = find_recommendation_annotation_key(
+                        annotations, fixed_key, policy_name=policy_name
+                    )
+                    assert key is not None
+                    payload = json.loads(annotations[key])
+                    assert payload["policyName"] == policy_name
+                    assert payload["policyNamespace"] == "default"
+                    assert payload["policyKind"] == policy_kind
+                    assert payload.get("policyWeight", 0) == policy_weights[policy_name]
+                    assert set(payload["containers"]) == containers
+
+            k8s_clients.apps.patch_namespaced_deployment(
+                deployment_name, "default", {"spec": {"replicas": 1}}
+            )
             wait_for_declared_workloads_ready(manifest_path, k8s_clients)
 
             def live_pod_converged():
@@ -287,29 +364,5 @@ class TestMultiPolicyExampleBehavior:
                 timeout=600,
                 message=f"{policy_kind} multi-policy pod resources",
             )
-            wait_for(
-                annotations_converged,
-                timeout=180,
-                message=f"{policy_kind} multi-policy deployment annotations",
-            )
-
-            deployment = k8s_clients.apps.read_namespaced_deployment(deployment_name, "default")
-            annotations = deployment.metadata.annotations or {}
-            keys = recommendation_keys(annotations)
-            assert len(keys["requests"]) == 2
-            assert len(keys["limits"]) == 2
-            assert f"{annotation_prefix}/desired-resource-requests" not in annotations
-            assert f"{annotation_prefix}/desired-resource-limits" not in annotations
-
-            expected_policy_names = set(policy_containers)
-            for usage in ("requests", "limits"):
-                payloads = [json.loads(annotations[key]) for key in keys[usage]]
-                assert {payload.get("policyName") for payload in payloads} == expected_policy_names
-                for payload in payloads:
-                    policy_name = payload["policyName"]
-                    assert payload["policyNamespace"] == "default"
-                    assert payload["policyKind"] == policy_kind
-                    assert payload.get("policyWeight", 0) == policy_weights[policy_name]
-                    assert set(payload["containers"]) == policy_containers[policy_name]
         finally:
             delete_manifest_in_reverse(manifest_path, kube_context)

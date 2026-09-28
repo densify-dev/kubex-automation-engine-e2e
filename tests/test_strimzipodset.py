@@ -125,10 +125,14 @@ def _wait_for_owned_pod_annotation(k8s_clients, test_namespace: str, name: str) 
 
 
 def _annotation_payload(
-    annotations: dict[str, str] | None, annotation_key: str = STATIC_POLICY_ANNOTATION
+    annotations: dict[str, str] | None,
+    policy_name: str,
+    annotation_key: str = STATIC_POLICY_ANNOTATION,
 ) -> dict:
     annotations = annotations or {}
-    key = find_recommendation_annotation_key(annotations, annotation_key)
+    key = find_recommendation_annotation_key(
+        annotations, annotation_key, policy_name=policy_name
+    )
     assert key is not None
     return json.loads(annotations[key])
 
@@ -213,19 +217,23 @@ def test_static_policy_applies_to_strimzipodset(
 
         sps = get_strimzipodset(k8s_clients.custom, test_namespace, strimzipodset_name, version=strimzi_version)
         workload_annotations = sps.get("metadata", {}).get("annotations", {})
-        workload_payload = _annotation_payload(workload_annotations)
+        workload_payload = _annotation_payload(workload_annotations, policy_name)
         assert workload_payload["containers"]["*"]["cpu"] == "200m"
         assert workload_payload["containers"]["*"]["memory"] == "256Mi"
-        limits_payload = _annotation_payload(workload_annotations, STATIC_POLICY_LIMITS_ANNOTATION)
+        limits_payload = _annotation_payload(
+            workload_annotations, policy_name, STATIC_POLICY_LIMITS_ANNOTATION
+        )
         assert limits_payload["containers"]["*"]["cpu"] == "400m"
         assert limits_payload["containers"]["*"]["memory"] == "512Mi"
 
         pod = get_strimzipodset_pod(k8s_clients.core, test_namespace, strimzipodset_name)
         pod_annotations = pod.metadata.annotations or {}
-        pod_payload = _annotation_payload(pod_annotations)
+        pod_payload = _annotation_payload(pod_annotations, policy_name)
         assert pod_payload["containers"]["*"]["cpu"] == "200m"
         assert pod_payload["containers"]["*"]["memory"] == "256Mi"
-        pod_limits_payload = _annotation_payload(pod_annotations, STATIC_POLICY_LIMITS_ANNOTATION)
+        pod_limits_payload = _annotation_payload(
+            pod_annotations, policy_name, STATIC_POLICY_LIMITS_ANNOTATION
+        )
         assert pod_limits_payload["containers"]["*"]["cpu"] == "400m"
         assert pod_limits_payload["containers"]["*"]["memory"] == "512Mi"
     finally:
@@ -350,19 +358,23 @@ def test_strimzipodset_multi_container(
 
         sps = get_strimzipodset(k8s_clients.custom, test_namespace, sps_name, version=strimzi_version)
         workload_annotations = sps.get("metadata", {}).get("annotations", {})
-        workload_payload = _annotation_payload(workload_annotations)
+        workload_payload = _annotation_payload(workload_annotations, policy_name)
         assert workload_payload["containers"]["*"]["cpu"] == "250m"
         assert workload_payload["containers"]["*"]["memory"] == "256Mi"
-        limits_payload = _annotation_payload(workload_annotations, STATIC_POLICY_LIMITS_ANNOTATION)
+        limits_payload = _annotation_payload(
+            workload_annotations, policy_name, STATIC_POLICY_LIMITS_ANNOTATION
+        )
         assert limits_payload["containers"]["*"]["cpu"] == "450m"
         assert limits_payload["containers"]["*"]["memory"] == "512Mi"
 
         pod = get_strimzipodset_pod(k8s_clients.core, test_namespace, sps_name)
         pod_annotations = pod.metadata.annotations or {}
-        pod_payload = _annotation_payload(pod_annotations)
+        pod_payload = _annotation_payload(pod_annotations, policy_name)
         assert pod_payload["containers"]["*"]["cpu"] == "250m"
         assert pod_payload["containers"]["*"]["memory"] == "256Mi"
-        pod_limits_payload = _annotation_payload(pod_annotations, STATIC_POLICY_LIMITS_ANNOTATION)
+        pod_limits_payload = _annotation_payload(
+            pod_annotations, policy_name, STATIC_POLICY_LIMITS_ANNOTATION
+        )
         assert pod_limits_payload["containers"]["*"]["cpu"] == "450m"
         assert pod_limits_payload["containers"]["*"]["memory"] == "512Mi"
     finally:

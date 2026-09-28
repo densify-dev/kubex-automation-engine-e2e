@@ -440,7 +440,7 @@ class TestNodeAllocatableAdmissionGap:
             deployment = k8s_clients.apps.read_namespaced_deployment(self.DEPLOYMENT, test_namespace)
             annotations = deployment.metadata.annotations or {}
             annotation_key = find_recommendation_annotation_key(
-                annotations, STATIC_POLICY_ANNOTATION
+                annotations, STATIC_POLICY_ANNOTATION, policy_name=self.POLICY_NAME
             )
             raw = annotations.get(annotation_key, "") if annotation_key else ""
             return '"cpu":"80"' in raw and '"memory":"200Gi"' in raw
