@@ -111,6 +111,7 @@ This guide covers:
 | **[Object Patches](./docs/Object-Patches.md)** | Apply JSON Merge Patch and selector-aware add, remove, or replace operations to arbitrary objects |
 | **[Rollback Backoff](./docs/Rollback-Backoff.md)** | Customer-facing guide to rollback retry windows, turn progression, and terminal outcomes |
 | **[GPU Sharing with KAI](./docs/GPU-Sharing-with-KAI.md)** | Configure KAI-backed GPU sharing, reactive rightsizing, and early consolidation |
+| **[vLLM Optimization](./docs/Vllm-Optimization.md)** | Run bounded `--max-num-batched-tokens` trials for one serving workload |
 | **[Apply Updates](./docs/Getting-Started.md#apply-configuration-updates)** | Re-run `helm upgrade` after configuration changes |
 
 ## Advanced Topics

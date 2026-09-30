@@ -18,7 +18,6 @@ from helpers import (
     VERSION,
     create_deployment,
     delete_deployment,
-    find_recommendation_annotation_key,
     get_pod_resources,
     static_policy_manifest,
     wait_for,
@@ -227,11 +226,9 @@ class TestStrategySchedulingBehavior:
         def deployment_has_static_policy_annotation():
             try:
                 dep = k8s_clients.apps.read_namespaced_deployment(self.DEPLOYMENT, self.NAMESPACE)
-                return (
-                    find_recommendation_annotation_key(
-                        dep.metadata.annotations, STATIC_POLICY_ANNOTATION
-                    )
-                    is not None
+                return bool(
+                    dep.metadata.annotations
+                    and STATIC_POLICY_ANNOTATION in dep.metadata.annotations
                 )
             except ApiException:
                 return False
@@ -242,7 +239,7 @@ class TestStrategySchedulingBehavior:
         # ("automation-webhook.kubex.ai/pod-rightsizing-info") is only written by
         # the webhook at pod admission time and will never appear on a pod that was
         # admitted before the policy existed.  The Deployment-level annotation
-        # The static-policy desired-resource-requests annotation is written by
+        # "static.rightsizing.kubex.ai/desired-resource-requests" is written by
         # policy_reconciler as soon as the StaticPolicy is reconciled and global
         # config is ready (including the admission webhook probe).  The 180 s
         # budget covers: controller leader-election (~30 s), global-config reconcile

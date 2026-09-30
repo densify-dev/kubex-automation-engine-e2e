@@ -1,0 +1,561 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: vllmoptimizationpolicies.rightsizing.kubex.ai
+spec:
+  group: rightsizing.kubex.ai
+  names:
+    kind: VllmOptimizationPolicy
+    listKind: VllmOptimizationPolicyList
+    plural: vllmoptimizationpolicies
+    singular: vllmoptimizationpolicy
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: VllmOptimizationPolicy controls bounded vLLM batch-token trials
+          for one workload.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of VllmOptimizationPolicy.
+            properties:
+              optimizations:
+                description: optimizations configures the vLLM tuning blocks.
+                properties:
+                  batchScheduling:
+                    description: batchScheduling tunes --max-num-batched-tokens.
+                    properties:
+                      cooldown:
+                        description: cooldown is the minimum time between trial changes.
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be greater than 0 seconds
+                          rule: duration(self) > duration('0s')
+                      evaluationWindow:
+                        description: evaluationWindow is the duration used to evaluate
+                          each trial.
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be greater than 0 seconds
+                          rule: duration(self) > duration('0s')
+                      initialObservationWindow:
+                        description: initialObservationWindow is the baseline measurement
+                          duration.
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be greater than 0 seconds
+                          rule: duration(self) > duration('0s')
+                      maxBatchedTokens:
+                        description: maxBatchedTokens is the highest value the controller
+                          may apply.
+                        format: int64
+                        minimum: 2
+                        type: integer
+                      maxP95InterTokenLatency:
+                        description: maxP95InterTokenLatency is the maximum allowed
+                          p95 inter-token latency.
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be greater than 0 seconds
+                          rule: duration(self) > duration('0s')
+                      maxP95TTFT:
+                        description: maxP95TTFT is the maximum allowed p95 time to
+                          first token.
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be greater than 0 seconds
+                          rule: duration(self) > duration('0s')
+                      minBatchedTokens:
+                        description: minBatchedTokens is the lowest value the controller
+                          may apply.
+                        format: int64
+                        minimum: 1
+                        type: integer
+                      minFinishedRequests:
+                        description: minFinishedRequests is the minimum number of
+                          completed requests required in each window.
+                        format: int64
+                        minimum: 1
+                        type: integer
+                      stepTokens:
+                        description: stepTokens is the maximum change between adjacent
+                          trial values.
+                        format: int64
+                        minimum: 1
+                        type: integer
+                    required:
+                    - cooldown
+                    - evaluationWindow
+                    - initialObservationWindow
+                    - maxBatchedTokens
+                    - maxP95InterTokenLatency
+                    - maxP95TTFT
+                    - minBatchedTokens
+                    - minFinishedRequests
+                    - stepTokens
+                    type: object
+                    x-kubernetes-validations:
+                    - message: minBatchedTokens must be less than maxBatchedTokens
+                      rule: self.minBatchedTokens < self.maxBatchedTokens
+                required:
+                - batchScheduling
+                type: object
+              prometheus:
+                default: {}
+                description: |-
+                  prometheus selects metrics and scrape labels. URL and timeout come from GlobalConfiguration.
+                  The empty-object default also applies nested metric and label defaults when this block is omitted.
+                properties:
+                  containerLabel:
+                    description: containerLabel scopes metric queries to a container
+                      when the scrape includes that label.
+                    pattern: ^[a-zA-Z_][a-zA-Z0-9_]*$
+                    type: string
+                  finishedRequestsCounter:
+                    default: vllm:request_success_total
+                    description: finishedRequestsCounter is a Prometheus counter for
+                      completed requests.
+                    pattern: ^[a-zA-Z_:][a-zA-Z0-9_:]*$
+                    type: string
+                  generatedTokensCounter:
+                    default: vllm:generation_tokens_total
+                    description: generatedTokensCounter is a Prometheus counter for
+                      generated tokens.
+                    pattern: ^[a-zA-Z_:][a-zA-Z0-9_:]*$
+                    type: string
+                  interTokenLatencyHistogram:
+                    default: vllm:inter_token_latency_seconds
+                    description: interTokenLatencyHistogram is a classic Prometheus
+                      histogram family.
+                    pattern: ^[a-zA-Z_:][a-zA-Z0-9_:]*$
+                    type: string
+                  namespaceLabel:
+                    default: namespace
+                    description: namespaceLabel is the namespace label used to scope
+                      metric queries.
+                    pattern: ^[a-zA-Z_][a-zA-Z0-9_]*$
+                    type: string
+                  podLabel:
+                    default: pod
+                    description: podLabel is the pod label used to scope metric queries.
+                    pattern: ^[a-zA-Z_][a-zA-Z0-9_]*$
+                    type: string
+                  timeToFirstTokenHistogram:
+                    default: vllm:time_to_first_token_seconds
+                    description: timeToFirstTokenHistogram is a classic Prometheus
+                      histogram family.
+                    pattern: ^[a-zA-Z_:][a-zA-Z0-9_:]*$
+                    type: string
+                type: object
+              target:
+                description: target identifies the exact workload and cannot change
+                  after creation.
+                properties:
+                  apiVersion:
+                    description: apiVersion is the target workload API version.
+                    type: string
+                  container:
+                    description: container identifies the vLLM serving container.
+                      Omit only when exactly one serving container can be identified.
+                    minLength: 1
+                    type: string
+                  kind:
+                    description: kind is the target workload kind.
+                    type: string
+                  name:
+                    description: name is the target workload name.
+                    minLength: 1
+                    type: string
+                  namespace:
+                    description: namespace is the target workload namespace.
+                    minLength: 1
+                    type: string
+                required:
+                - apiVersion
+                - kind
+                - name
+                - namespace
+                type: object
+                x-kubernetes-validations:
+                - message: target is immutable
+                  rule: self == oldSelf
+                - message: target must be an apps/v1 Deployment or kubeai.org/v1 Model
+                  rule: (self.apiVersion == 'apps/v1' && self.kind == 'Deployment')
+                    || (self.apiVersion == 'kubeai.org/v1' && self.kind == 'Model')
+            required:
+            - optimizations
+            - target
+            type: object
+          status:
+            description: status reports observed tuning state.
+            properties:
+              baseline:
+                description: baseline is the measurement collected before any argument
+                  changes.
+                properties:
+                  finishedRequests:
+                    description: finishedRequests is the total number of completed
+                      requests in the window.
+                    format: int64
+                    type: integer
+                  generatedTokensPerSecondMilli:
+                    description: generatedTokensPerSecondMilli is generated tokens
+                      per second scaled by 1000.
+                    format: int64
+                    type: integer
+                  observedAt:
+                    description: observedAt is when the window was measured.
+                    format: date-time
+                    type: string
+                  p95InterTokenLatency:
+                    description: p95InterTokenLatency is the aggregate p95 latency
+                      across the ready pods.
+                    type: string
+                  p95TimeToFirstToken:
+                    description: p95TimeToFirstToken is the aggregate p95 latency
+                      across the ready pods.
+                    type: string
+                  windowDuration:
+                    description: windowDuration is the exact measurement window length.
+                    type: string
+                required:
+                - finishedRequests
+                - generatedTokensPerSecondMilli
+                - observedAt
+                - p95InterTokenLatency
+                - p95TimeToFirstToken
+                - windowDuration
+                type: object
+              cleanupChildDeleteRequested:
+                description: cleanupChildDeleteRequested records that argument convergence
+                  completed before child deletion.
+                type: boolean
+              cleanupNeedsReplacement:
+                description: cleanupNeedsReplacement records whether cleanup started
+                  while pods had non-original arguments.
+                type: boolean
+              cleanupPreviousPodUIDs:
+                description: cleanupPreviousPodUIDs are the pods that must be replaced
+                  before cleanup completes.
+                items:
+                  description: |-
+                    UID is a type that holds unique ID values, including UUIDs.  Because we
+                    don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                    intent and helps make sure that UIDs and names do not get conflated.
+                  type: string
+                type: array
+                x-kubernetes-list-type: set
+              cleanupStarted:
+                description: cleanupStarted records that the finalizer began restoring
+                  the original argument.
+                type: boolean
+              conditions:
+                description: conditions represent the current policy state.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              conflictCleanupPending:
+                description: conflictCleanupPending records that a conflicting external
+                  policy requires removing the child policy.
+                type: boolean
+              containerName:
+                description: containerName is the serving container selected from
+                  the target's pods.
+                type: string
+              currentMeasurement:
+                description: currentMeasurement is the last measurement for the selected
+                  value.
+                properties:
+                  finishedRequests:
+                    description: finishedRequests is the total number of completed
+                      requests in the window.
+                    format: int64
+                    type: integer
+                  generatedTokensPerSecondMilli:
+                    description: generatedTokensPerSecondMilli is generated tokens
+                      per second scaled by 1000.
+                    format: int64
+                    type: integer
+                  observedAt:
+                    description: observedAt is when the window was measured.
+                    format: date-time
+                    type: string
+                  p95InterTokenLatency:
+                    description: p95InterTokenLatency is the aggregate p95 latency
+                      across the ready pods.
+                    type: string
+                  p95TimeToFirstToken:
+                    description: p95TimeToFirstToken is the aggregate p95 latency
+                      across the ready pods.
+                    type: string
+                  windowDuration:
+                    description: windowDuration is the exact measurement window length.
+                    type: string
+                required:
+                - finishedRequests
+                - generatedTokensPerSecondMilli
+                - observedAt
+                - p95InterTokenLatency
+                - p95TimeToFirstToken
+                - windowDuration
+                type: object
+              lastDecisionTime:
+                description: lastDecisionTime is when the controller last accepted
+                  or rejected a candidate.
+                format: date-time
+                type: string
+              observationPodUIDs:
+                description: observationPodUIDs records the pods that must remain
+                  stable during the baseline window.
+                items:
+                  description: |-
+                    UID is a type that holds unique ID values, including UUIDs.  Because we
+                    don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                    intent and helps make sure that UIDs and names do not get conflated.
+                  type: string
+                type: array
+                x-kubernetes-list-type: set
+              observationStartedAt:
+                description: observationStartedAt begins the untouched baseline window.
+                format: date-time
+                type: string
+              observedGeneration:
+                description: observedGeneration is the latest resource generation
+                  processed by the controller.
+                format: int64
+                type: integer
+              originalBatchedTokens:
+                description: originalBatchedTokens is the explicit value found on
+                  all ready pods before tuning. Nil means absent.
+                type: string
+              outcome:
+                description: outcome is the result of reconciliation. An omitted outcome
+                  means reconciliation is pending.
+                enum:
+                - Success
+                - Failure
+                type: string
+              phase:
+                description: phase describes the optimization lifecycle stage.
+                enum:
+                - Observing
+                - Tuning
+                - Holding
+                - Ready
+                - Cleaning
+                type: string
+              reason:
+                description: reason contains human-readable detail about the current
+                  outcome.
+                type: string
+              selectedBatchedTokens:
+                description: selectedBatchedTokens is the last trial value accepted
+                  by the policy.
+                format: int64
+                type: integer
+              trial:
+                description: trial records the active candidate and its rollout state.
+                properties:
+                  baseline:
+                    description: baseline is the stable measurement this trial is
+                      compared against.
+                    properties:
+                      finishedRequests:
+                        description: finishedRequests is the total number of completed
+                          requests in the window.
+                        format: int64
+                        type: integer
+                      generatedTokensPerSecondMilli:
+                        description: generatedTokensPerSecondMilli is generated tokens
+                          per second scaled by 1000.
+                        format: int64
+                        type: integer
+                      observedAt:
+                        description: observedAt is when the window was measured.
+                        format: date-time
+                        type: string
+                      p95InterTokenLatency:
+                        description: p95InterTokenLatency is the aggregate p95 latency
+                          across the ready pods.
+                        type: string
+                      p95TimeToFirstToken:
+                        description: p95TimeToFirstToken is the aggregate p95 latency
+                          across the ready pods.
+                        type: string
+                      windowDuration:
+                        description: windowDuration is the exact measurement window
+                          length.
+                        type: string
+                    required:
+                    - finishedRequests
+                    - generatedTokensPerSecondMilli
+                    - observedAt
+                    - p95InterTokenLatency
+                    - p95TimeToFirstToken
+                    - windowDuration
+                    type: object
+                  phase:
+                    default: Evaluating
+                    description: phase is Evaluating or RollingBack.
+                    enum:
+                    - Evaluating
+                    - RollingBack
+                    type: string
+                  previousPodUIDs:
+                    description: previousPodUIDs identifies pods that must be replaced
+                      before evaluation.
+                    items:
+                      description: |-
+                        UID is a type that holds unique ID values, including UUIDs.  Because we
+                        don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                        intent and helps make sure that UIDs and names do not get conflated.
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                  priorValue:
+                    description: priorValue is the last known-good value. An omitted
+                      value means the original argument was absent.
+                    format: int64
+                    type: integer
+                  readyAt:
+                    description: readyAt begins the evaluation window for a stable
+                      set of replacement pods.
+                    format: date-time
+                    type: string
+                  readyPodUIDs:
+                    description: readyPodUIDs records the replacement pods that must
+                      remain stable during evaluation.
+                    items:
+                      description: |-
+                        UID is a type that holds unique ID values, including UUIDs.  Because we
+                        don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                        intent and helps make sure that UIDs and names do not get conflated.
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                  reason:
+                    description: reason explains why a trial is being rolled back.
+                    type: string
+                  startedAt:
+                    description: startedAt is when the policy began applying this
+                      trial.
+                    format: date-time
+                    type: string
+                  stopAfterRollback:
+                    description: stopAfterRollback holds the policy instead of trying
+                      another candidate.
+                    type: boolean
+                  value:
+                    description: value is the trial --max-num-batched-tokens value.
+                    format: int64
+                    type: integer
+                required:
+                - baseline
+                - startedAt
+                - value
+                type: object
+              triedBatchedTokens:
+                description: triedBatchedTokens prevents rejected candidates from
+                  being retried.
+                items:
+                  format: int64
+                  type: integer
+                type: array
+                x-kubernetes-list-type: set
+              tuningPaused:
+                description: tuningPaused prevents another trial after an unmeasurable
+                  or unsafe rollback.
+                type: boolean
+              workloadGeneration:
+                description: workloadGeneration prevents tuning against measurements
+                  from an older workload spec.
+                format: int64
+                type: integer
+              workloadUID:
+                description: workloadUID prevents a recreated workload from inheriting
+                  old tuning state.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

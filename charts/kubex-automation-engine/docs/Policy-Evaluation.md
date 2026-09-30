@@ -37,9 +37,7 @@ spec:
     priority: 70
 ```
 
-Higher priority values win. Within the same priority, the policy with the highest weight wins. For a resource, an exact container target wins over the wildcard target `"*"`. If those values are equal, the older policy wins only when both recommendations come from the same policy kind. The annotation key breaks all remaining ties, with the lexically smaller key winning. `ContainerArgsPolicy` uses this same selection order; its default priority is 100 and only one matching argument policy is selected.
-
-Creation timestamps are added only to per-policy resource recommendations when multi-policy container rightsizing is enabled. Fixed-key resource recommendations and pod runtime hook recommendations keep their existing payload format.
+Higher priority values win. Within the same priority, the policy with the highest weight wins. If weights are also equal, the most recently created policy wins. `ContainerArgsPolicy` uses this same selection order; its default priority is 100 and only one matching argument policy is selected.
 
 ### Priority Field
 
@@ -124,22 +122,14 @@ And both match the same workload:
 
 Winner: `ProactivePolicy` (equal policy-type priority, so individual policy weight breaks the tie: 100 > 50)
 
-**Example 4 - Same policy kind, equal priority and equal weight:**
+**Example 4 - Equal priority and equal weight (creation-time tiebreaker):**
 
-If priorities, weights, and container targets are equal, selection uses creation time for recommendations from the same policy kind. The older policy wins. Legacy payloads without a timestamp rank as older than timestamped payloads.
+If priorities and weights are both equal, selection falls back to creation time (based on `metadata.creationTimestamp`): the most recently created policy wins.
 
-- `StaticPolicy` named `policy-a` with `spec.weight: 80`, created at 10:00
-- `StaticPolicy` named `policy-b` with `spec.weight: 80`, created at 11:00
+- `StaticPolicy` with `spec.weight: 80`, created at 10:00
+- `ProactivePolicy` with `spec.weight: 80`, created at 11:00
 
-Winner: `policy-a` because it has the older creation time. Recommendations from different policy kinds use the annotation key instead of comparing creation times.
-
-## Multi-policy composition
-
-PolicyEvaluation selects each container, request or limit, and resource independently. Ranking is policy-type priority, policy weight, exact container target over `"*"`, same-kind older creation time, then the lexically smaller annotation key. This can combine CPU, memory, and GPU values from different policies in one plan.
-
-The controller executes the selected actions only when they share an allowed method. One scheduling-window rejection blocks the full controller plan until the earliest next allowed time. Admission uses the same selected resources and safety checks but does not evaluate scheduling windows.
-
-Combined requests and limits are validated without clamping. A request above a limit blocks the plan. Selected GPU actions also must agree on KAI mode, target container, allocation, and queue behavior.
+Winner: `ProactivePolicy` (equal priority, equal weight — most recently created policy wins)
 
 ## Verification
 
