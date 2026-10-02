@@ -1,19 +1,8 @@
 # vLLM optimization policy
 
-`VllmOptimizationPolicy` runs bounded trials of `--max-num-batched-tokens` for one `apps/v1` Deployment or KubeAI Model. It does not change GPU fractions, KV-cache sizing, or other vLLM arguments. This is experimental. No throughput gain has been measured by this implementation.
+`VllmOptimizationPolicy` experimentally tunes `--max-num-batched-tokens` for one Deployment or KubeAI Model. It compares complete policy-controlled configurations and replaces pods when applying a trial. It does not change GPU allocation, replica count, KV-cache size, or other vLLM arguments. Pod disruption during trials is expected.
 
-## Requirements
-
-- Prometheus must scrape the target pods' vLLM counters and classic histogram buckets. The controller needs namespace and pod labels on every returned series. Missing series or labels put the policy in `Holding`; it will not broaden queries.
-- Configure the Prometheus URL and request timeout through `GlobalConfiguration`, as described in the [Global Configuration guide](./Global-Configuration.md).
-- Keep the offered load and input prompt mix fixed across windows. The controller requires both the finished-request rate and mean generated tokens per completed request to stay within 10% of baseline.
-- Verify chunked prefill for the vLLM image. Without it, `maxBatchedTokens` must accommodate the model's maximum sequence length.
-
-The metric families default to `vllm:generation_tokens_total`, `vllm:request_success_total`, `vllm:time_to_first_token_seconds`, and `vllm:inter_token_latency_seconds`. Histogram configuration names the family; queries use its `_bucket` series. Namespace and pod label names default to `namespace` and `pod`. Override these fields under `spec.prometheus` if your scrape uses different labels. Set `containerLabel` only when that label exists on every queried series.
-
-## Example
-
-Values below are examples, not controller defaults.
+## Configure a policy
 
 ```yaml
 apiVersion: rightsizing.kubex.ai/v1alpha1
@@ -22,67 +11,85 @@ metadata:
   name: serving-model
 spec:
   target:
-    apiVersion: kubeai.org/v1 # apps/v1 for a Deployment
-    kind: Model
+    apiVersion: apps/v1
+    kind: Deployment
     namespace: serving
     name: my-model
     container: vllm
-  optimizations:
-    batchScheduling:
-      minBatchedTokens: 2048
-      maxBatchedTokens: 8192
-      stepTokens: 1024
-      initialObservationWindow: 30m
-      evaluationWindow: 15m
-      cooldown: 30m
-      minFinishedRequests: 100
-      maxP95TTFT: 2s
-      maxP95InterTokenLatency: 100ms
+  objective:
+    throughput:
+      weight: 70
+      maxRegressionPercent: 3
+    p95TTFT:
+      weight: 20
+      maxRegressionPercent: 10
+    p95InterTokenLatency:
+      weight: 10
+      maxRegressionPercent: 5
+    minScoreGain: 2
+  constraints:
+    maxP95TTFT: 2s
+    maxP95InterTokenLatency: 100ms
+  evaluation:
+    baselineWindow: 30m
+    trialWindow: 15m
+    cooldown: 30m
+    minFinishedRequests: 100
+  adaptation:
+    monitorInterval: 5m
+    stableFor: 15m
+    rescanInterval: 6h
+    trafficChangeThresholdPercent: 20
+  trafficComparison:
+    tolerancePercent: 10
+    minBackloggedFraction: 0.8
+  parameters:
+    maxNumBatchedTokens:
+      min: 2048
+      max: 8192
+      step: 1024
 ```
 
-Set `target.container` when the pod has more than one identifiable vLLM container. The target, including its container selection, cannot be changed after creation. A change to the workload spec generation puts the policy in `Holding`; create a new policy after the workload is stable.
+The target, latency limits, evaluation settings, and at least one parameter range are required. The target, including its container, is immutable. `maxNumBatchedTokens` is the only supported parameter today. Keep its bounds within values valid for the model and vLLM configuration. Without chunked prefill, the batch-token limit must accommodate the model's maximum sequence length.
 
-## Status and upgrades
+## Defaults and metrics
 
-Batch-specific state lives under `status.optimizations.batchScheduling`. Workload identity and policy-wide conditions remain at the status root. For example:
+Defaults come from the CRD schema:
 
-```yaml
-status:
-  observedGeneration: 4
-  outcome: Success
-  workloadUID: 9c2f...
-  workloadGeneration: 7
-  containerName: vllm
-  conditions:
-    - type: Progressing
-      status: "True"
-      reason: ObservationWindow
-      message: collecting an untouched baseline window
-  optimizations:
-    batchScheduling:
-      phase: Observing
-      conditions:
-        - type: Progressing
-          status: "True"
-          reason: ObservationWindow
-          message: collecting an untouched baseline window
-      observationStartedAt: "2026-01-01T00:00:00Z"
-      observationPodUIDs: [pod-uid]
-      originalBatchedTokens: "4096"
-```
+| Setting | Default |
+| --- | ---: |
+| Objective weights, throughput / p95 TTFT / p95 inter-token latency | `100 / 0 / 0` |
+| `minScoreGain` | `2` |
+| `monitorInterval` / `stableFor` / `rescanInterval` | `5m / 15m / 6h` |
+| `trafficChangeThresholdPercent` | `20` |
+| `tolerancePercent` / `minBackloggedFraction` | `10 / 0.8` |
 
-Root `Ready` is true when every configured optimization is ready and no shared prerequisite blocks the policy. `Progressing` is true during observation, tuning, rollback, or cleanup. `Held` is true when a shared prerequisite or an optimization blocks progress. A blocked rollback or cleanup can set both `Held` and `Progressing`.
+Omitted `maxRegressionPercent` means no relative regression cap; an explicit `0` forbids regression. Weights are normalized during scoring, so they do not need to total 100. The optional `spec.prometheus` block defaults to these vLLM metric families:
 
-The status layout changed incompatibly from the earlier flat fields. Before upgrading, save each policy spec, then delete the policies with the old controller running. Wait for argument restoration, owned child-policy deletion, and finalizer removal. Upgrade the controller and CRD only after those policies are gone, then recreate them from the saved specs. Do not clear status or remove finalizers manually.
+- Counters: `vllm:generation_tokens_total`, `vllm:request_success_total`.
+- Histograms: `vllm:time_to_first_token_seconds`, `vllm:inter_token_latency_seconds`, `vllm:request_prompt_tokens`, `vllm:request_generation_tokens`.
+- Gauges: `vllm:num_requests_running`, `vllm:num_requests_waiting`.
 
-## What the controller does
+Histogram settings name classic Prometheus families; queries use `_bucket`, `_sum`, and `_count`. Override metric family and label names under `spec.prometheus`. The default scope labels are `namespace` and `pod`. Every returned series must include both labels. Configure the Prometheus URL and request timeout in `GlobalConfiguration`, as described in the [Global Configuration guide](./Global-Configuration.md). Missing metrics or scope labels make the policy wait rather than query unscoped data.
 
-It waits for ready pods and records an untouched baseline before changing anything. KubeAI Models must expose a desired replica count and matching total and ready status counts. The baseline window restarts if the ready pod set changes. It captures `--max-num-batched-tokens` only when every ready pod agrees. An omitted argument stays omitted in status; the controller does not guess vLLM's effective default.
+## How trials are scored
 
-If the argument was absent, the first trial uses `minBatchedTokens`. Otherwise, it tests adjacent values within the configured bounds. A value is kept only if generated tokens per second improve, both configured p95 limits pass, enough requests complete, and request rate and mean generated tokens per request remain comparable. Cooldown applies between decisions. The evaluation window restarts if the replacement pod set changes. A rejected value is not retried. If changed bounds exclude the selected value, the policy holds; an active trial outside new bounds is rolled back.
+The controller compares each candidate with a fresh measurement of the selected configuration. Throughput contributes `ln(candidate / reference)`; latency contributes `ln(reference / candidate)`. It multiplies each value by its objective weight, normalizes by the total weight, then scales the score by 100. A candidate must meet `minScoreGain`, pass absolute latency limits, fit the regression budgets, and use comparable traffic. If the selected configuration violates a hard latency limit, a candidate that restores compliance can be accepted without score gain. Other constraints and regression budgets still apply.
 
-The controller applies changes through an owned, narrowly scoped `ContainerArgsPolicy` with pod replacement enabled. If another `ContainerArgsPolicy` already controls the same argument, it holds instead of competing by weight. If a conflict appears mid-trial, it removes its child policy and pauses rollback until the conflict is removed or scoped away. Optimization-specific conditions report the batch-scheduling phase and reason; root conditions summarize the policy. A Warning event is emitted when the policy enters a new held state.
+Regression budgets use the fixed measurement from the start of the search. This stops several small regressions from accumulating past the configured budget. A new search captures a new reference.
 
-A rejected trial restores the last known-good value. When the policy is deleted, the controller restores the original explicit value, or removes the argument if it was absent. It waits for replacement pods to converge before deleting the child policy and removing its target label. A competing `ContainerArgsPolicy` pauses cleanup, leaving the finalizer in place until you remove that policy or scope it away. The Helm pre-delete hook also waits for this restoration. Do not remove the finalizer manually while a restore is in progress.
+Traffic comparison uses mean prompt/output lengths, completed-request rate, running/waiting request gauges, and the fraction of the window with waiting requests. When the waiting fraction meets `minBackloggedFraction`, completed-request rate need not stay equal because a higher completion rate can be the improvement. Below that threshold, the controller treats traffic as demand-limited, requires comparable request rates, and omits throughput from the score while keeping the original weight denominator. A material change in prompt/output mix or backlog eligibility defers candidate scoring. These metrics are demand proxies, not proof of saturation or identical requests. Run controlled tests before relying on the comparison.
 
-A successful trial only shows an improvement for the measured windows. Benchmark a pinned vLLM image and model at fixed load, then run a single-GPU test before treating the result as a production optimization.
+## Monitoring and status
+
+After a search settles, the controller measures the selected configuration again and uses that as the monitoring reference. It starts a new search after a sustained traffic change, sustained latency-limit violation, periodic rescan deadline, or policy change. Invalid observations and missed monitoring checks reset sustained-change detection. Candidate changes respect cooldown; a required rollback does not.
+
+`status.phase` is policy-wide. `Monitoring` means the policy is settled and will keep checking, not that it has stopped adapting. Root `Ready=True` means the selected configuration has a valid measurement and meets its constraints. `status.selectedConfiguration` and `status.originalConfiguration` are authoritative complete argument snapshots. `status.parameters` is a derived summary, and `status.lastDecision` retains only the latest candidate outcome.
+
+## Rollback, deletion, and upgrade
+
+A rejected trial restores the prior complete configuration. Deleting the policy restores the original explicit argument, or removes it if the argument was originally absent. Wait for replacement pods and finalizer removal before considering cleanup complete. Do not remove the finalizer manually.
+
+The status and spec changed incompatibly from the previous experimental API. Before upgrading, save policy specs, delete the policies with the old controller running, and wait for argument restoration, owned `ContainerArgsPolicy` deletion, and finalizer removal. Upgrade the controller and CRD only after cleanup finishes, then translate and recreate the saved policies. Do not clear status or finalizers by hand.
+
+The tuner measures performance at a fixed allocation. It does not prove that fewer GPUs or replicas are safe, and it does not claim a cost reduction.
