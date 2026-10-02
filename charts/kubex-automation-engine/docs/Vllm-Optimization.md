@@ -92,6 +92,25 @@ Lifecycle events appear on the `VllmOptimizationPolicy`, not the target workload
 kubectl describe vllmoptimizationpolicy <name>
 ```
 
+## Controller settings metrics
+
+The existing controller `/metrics` endpoint exposes the gauge `automation_controller_vllm_optimization_max_num_batched_tokens` through the metrics Service. Labels are `policy`, `target_namespace`, `target_kind`, `target_name`, `container`, and `configuration`. The container label uses the resolved `status.containerName`.
+
+`configuration="selected"` is the retained setting; `configuration="candidate"` is the active trial setting. Values come from cached `status.parameters.maxNumBatchedTokens`. Unknown or absent argument values produce no series, and the controller never invents vLLM defaults. Candidate series disappear after acceptance or during rollback. All series disappear when a policy is deleting or deleted. Cache-read failures surface as collection errors.
+
+For dashboards, deduplicate controller replicas with:
+
+```promql
+max by (
+  policy, target_namespace, target_kind,
+  target_name, container, configuration
+) (
+  automation_controller_vllm_optimization_max_num_batched_tokens
+)
+```
+
+These metrics describe controller settings, not proof that every pod has completed rollout. Cache propagation can briefly differ between controller replicas.
+
 ## Rollback, deletion, and upgrade
 
 A rejected trial restores the prior complete configuration. Deleting the policy restores the original explicit argument, or removes it if the argument was originally absent. Wait for replacement pods and finalizer removal before considering cleanup complete. Do not remove the finalizer manually.
