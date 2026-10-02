@@ -237,8 +237,9 @@ spec:
                         minimum: 1
                         type: integer
                       step:
-                        description: step is the maximum change between adjacent trial
-                          values.
+                        description: |-
+                          step is the maximum change between adjacent in-range trial values.
+                          Entering the range from an out-of-range selection uses the nearest boundary, regardless of step.
                         format: int64
                         minimum: 1
                         type: integer
@@ -548,6 +549,41 @@ spec:
                 - p95InterTokenLatency
                 - p95TimeToFirstToken
                 - windowDuration
+                type: object
+              declaredConfiguration:
+                description: |-
+                  declaredConfiguration captures controlled arguments from the workload spec, separately from runtime tuning.
+                  Nil means not captured; a Remove operation means the argument was declared absent.
+                properties:
+                  arguments:
+                    description: arguments lists the argument operations that make
+                      up this configuration.
+                    items:
+                      description: ContainerArgsPolicyArgument describes one named
+                        container argument operation.
+                      properties:
+                        name:
+                          description: name is the literal option name, such as --flag
+                            or -f.
+                          minLength: 2
+                          pattern: ^--?[^\s=]+$
+                          type: string
+                        operation:
+                          default: AddOrUpdate
+                          description: operation controls whether the option is added/updated
+                            or removed.
+                          enum:
+                          - AddOrUpdate
+                          - Remove
+                          type: string
+                        value:
+                          description: value is optional. Omitted value means a valueless
+                            flag; an explicit empty value is preserved.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
                 type: object
               initialMeasurement:
                 description: initialMeasurement is the historical measurement collected
@@ -996,8 +1032,8 @@ spec:
                 format: int64
                 type: integer
               originalConfiguration:
-                description: originalConfiguration preserves the arguments found before
-                  tuning.
+                description: originalConfiguration preserves the latest original arguments
+                  for restoration.
                 properties:
                   arguments:
                     description: arguments lists the argument operations that make
@@ -1269,6 +1305,10 @@ spec:
                 description: reason contains human-readable detail about the current
                   outcome.
                 type: string
+              rebaselinePending:
+                description: rebaselinePending waits for the retained configuration
+                  to converge before starting fresh measurements.
+                type: boolean
               search:
                 description: search tracks the current adaptive search.
                 properties:
