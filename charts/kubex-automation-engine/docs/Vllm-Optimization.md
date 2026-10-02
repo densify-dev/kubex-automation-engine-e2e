@@ -86,6 +86,12 @@ After a search settles, the controller measures the selected configuration again
 
 `status.phase` is policy-wide. `Monitoring` means the policy is settled and will keep checking, not that it has stopped adapting. Root `Ready=True` means the selected configuration has a valid measurement and meets its constraints. `status.selectedConfiguration` and `status.originalConfiguration` are authoritative complete argument snapshots. `status.parameters` is a derived summary, and `status.lastDecision` retains only the latest candidate outcome.
 
+Lifecycle events appear on the `VllmOptimizationPolicy`, not the target workload. Normal events describe search triggers, baseline collection, candidate preparation and evaluation, acceptance, rejection or deferral, rollback, monitoring entry, and deletion cleanup. Messages include controlled argument values and score gain when available. Restoration of an originally absent argument is reported as removal, not as a guessed vLLM default. Warning events report holds, unavailable measurements, policy conflicts, and rollout failures. Unchanged waits and holds do not repeat, and routine monitoring polls emit no events. `CleanupComplete` follows successful cleanup finalizer removal.
+
+```sh
+kubectl describe vllmoptimizationpolicy <name>
+```
+
 ## Rollback, deletion, and upgrade
 
 A rejected trial restores the prior complete configuration. Deleting the policy restores the original explicit argument, or removes it if the argument was originally absent. Wait for replacement pods and finalizer removal before considering cleanup complete. Do not remove the finalizer manually.
