@@ -216,7 +216,9 @@ Only one matching `ContainerArgsPolicy` is selected using PolicyEvaluation type 
 
 `replaceExistingPods` defaults to `false`, so admission mutation affects new pods only. Set it to `true` to let PolicyEvaluation request eviction when effective managed arguments drift; the controller does not patch workload templates or evict pods directly. This can disrupt workloads and should be enabled only with deliberate disruption controls.
 
-When a selected `ContainerArgsPolicy` hook has no resolved `AutomationStrategy`, PolicyEvaluation implicitly enables eviction and retries PodDisruptionBudget-blocked evictions. It requeues those retries every 30 seconds. A resolved strategy's `podEviction` and `safetyChecks.resizeRetryInterval` settings remain authoritative.
+When a selected `ContainerArgsPolicy` hook has no resolved `AutomationStrategy`, PolicyEvaluation enables eviction and retries PodDisruptionBudget-blocked evictions every 30 seconds. It also requires all owner pods to be Ready and nonterminating, and respects the workload's unavailable-pod budget. These checks default on only for standalone hooks. A resolved strategy's `podEviction` and `safetyChecks` settings, including disabled checks and retry intervals, remain authoritative.
+
+For KubeAI `Model` owners, the controller uses the current `spec.replicas` as the desired pod count and allows one unavailable pod at a time. It waits until the desired number of pods are present and Ready before requesting another eviction. If `spec.replicas` is not set yet, the controller blocks eviction and retries instead of guessing from autoscaling bounds or observed pods. Autoscaling changes to `spec.replicas` immediately change the count used by these checks. A single-replica Model is unavailable while its pod is replaced because this rollout does not add surge capacity.
 
 KAI vLLM tuning runs after runtime hooks and changes `--gpu-memory-utilization`. Conflicting KAI and ContainerArgsPolicy values may cause repeated replacement requests.
 
