@@ -11,6 +11,7 @@ For CR-specific field references and examples, see:
 - [Proactive Policies](./Proactive-Policies.md)
 - [Cluster Proactive Policies](./Cluster-Proactive-Policies.md)
 - [Static Policies](./Static-Policies.md)
+- [Multi-Policy Container Rightsizing](./Multi-Policy-Container-Rightsizing.md)
 - [Cluster Compaction Policies](./Cluster-Compaction-Policies.md)
 - [Rollback Policies](./Rollback-Policies.md)
 
@@ -80,6 +81,7 @@ Rollback policies are also fully supported by the controller and must be managed
 | `scope[].namespaces` | `ClusterProactivePolicy.spec.scope.namespaceSelector` | Namespace include or exclude rules. |
 | `scope[].podLabels` | `ClusterProactivePolicy.spec.scope.labelSelector` | Converted into `matchLabels` or `matchExpressions`. |
 | `scope[].weight` | `ClusterProactivePolicy.spec.weight` | Higher weight wins within the same policy type. |
+| `scope[].containers` | `ClusterProactivePolicy.spec.scope.containers` | Exact container names. Empty means all automatable containers. |
 | `policy.policies.<name>.allowedPodOwners` | `ClusterProactivePolicy.spec.scope.workloadTypes` | Supported values: `Deployment`, `StatefulSet`, `DaemonSet`, `CronJob`, `Rollout`, `Job`, `AnalysisRun`, `StrimziPodSet` (opt-in), `Model`. |
 | `policy.policies.<name>.safetyChecks.maxAnalysisAgeDays` | `ClusterProactivePolicy.spec.safetyChecks.maxAnalysisAgeDays` | Per-policy value wins over top-level `policy.safetyChecks.maxAnalysisAgeDays`. |
 | `policy.safetyChecks.maxAnalysisAgeDays` | `ClusterProactivePolicy.spec.safetyChecks.maxAnalysisAgeDays` | Backward-compatible fallback when not set per policy. |
@@ -216,9 +218,7 @@ Only one matching `ContainerArgsPolicy` is selected using PolicyEvaluation type 
 
 `replaceExistingPods` defaults to `false`, so admission mutation affects new pods only. Set it to `true` to let PolicyEvaluation request eviction when effective managed arguments drift; the controller does not patch workload templates or evict pods directly. This can disrupt workloads and should be enabled only with deliberate disruption controls.
 
-When a selected `ContainerArgsPolicy` hook has no resolved `AutomationStrategy`, PolicyEvaluation enables eviction and retries PodDisruptionBudget-blocked evictions every 30 seconds. It also requires all owner pods to be Ready and nonterminating, and respects the workload's unavailable-pod budget. These checks default on only for standalone hooks. A resolved strategy's `podEviction` and `safetyChecks` settings, including disabled checks and retry intervals, remain authoritative.
-
-For KubeAI `Model` owners, the controller uses the current `spec.replicas` as the desired pod count and allows one unavailable pod at a time. It waits until the desired number of pods are present and Ready before requesting another eviction. If `spec.replicas` is not set yet, the controller blocks eviction and retries instead of guessing from autoscaling bounds or observed pods. Autoscaling changes to `spec.replicas` immediately change the count used by these checks. A single-replica Model is unavailable while its pod is replaced because this rollout does not add surge capacity.
+When a selected `ContainerArgsPolicy` hook has no resolved `AutomationStrategy`, PolicyEvaluation implicitly enables eviction and retries PodDisruptionBudget-blocked evictions. It requeues those retries every 30 seconds. A resolved strategy's `podEviction` and `safetyChecks.resizeRetryInterval` settings remain authoritative.
 
 KAI vLLM tuning runs after runtime hooks and changes `--gpu-memory-utilization`. Conflicting KAI and ContainerArgsPolicy values may cause repeated replacement requests.
 
@@ -226,19 +226,18 @@ Proposal sync supports `ContainerArgsPolicy` as a cluster-scoped proposal kind. 
 
 ## Scope Design Guidance
 
-- Prefer mutually exclusive scopes so winner selection stays predictable.
-- Use `weight` deliberately when multiple cluster proactive policies may match.
+- Prefer mutually exclusive scopes when multi-policy rightsizing is disabled. When enabled, overlapping same-kind resource policies can contribute to separate container/resource targets. See [Multi-Policy Container Rightsizing](./Multi-Policy-Container-Rightsizing.md).
+- Use `weight` when policies can recommend the same target.
+- Enable `globalConfiguration.multiPolicyContainerRightsizingEnabled` when same-kind policies need to contribute independently. By default, one policy of each kind contributes per workload.
 - Start with narrow namespace and label selectors before widening scope.
 - Exclude system and platform namespaces from broad proactive automation.
 - Use static policies when exact requests and limits matter more than recommendation-driven tuning.
 
 ## Precedence And Overlap
 
-When more than one policy matches, the controller resolves a winner using this order:
+With the default fixed-key behavior, one resource policy of each kind contributes per workload. When `globalConfiguration.multiPolicyContainerRightsizingEnabled` is true, same-kind policies can contribute independently and `PolicyEvaluation` selects a candidate for each container, request or limit, and resource. It ranks candidates by policy-type priority, weight, exact container target over `"*"`, older creation time for equal-ranked policies of the same kind, then the lexically smaller annotation key. See [Multi-Policy Container Rightsizing](./Multi-Policy-Container-Rightsizing.md).
 
-1. **Policy-type precedence** (static vs. proactive)
-2. **Weight** (higher wins)
-3. **Creation time** (newer wins if weights are equal)
+`ContainerArgsPolicy` remains a single selected runtime hook; its policies do not merge.
 
 ### Policy Type Precedence
 

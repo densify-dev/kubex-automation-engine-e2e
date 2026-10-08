@@ -55,6 +55,7 @@ class BootstrapConfig:
     cluster_name_value: str | None = None
     secondary_cluster_enabled: bool = False
     primary_cluster_name: str | None = None
+    multi_policy_container_rightsizing_enabled: bool = False
     kubeai_chart_version: str | None = DEFAULT_KUBEAI_CHART_VERSION
     kubex_username: str = "dummy"
     kubex_epassword: str | None = None
@@ -914,7 +915,12 @@ def _controller_values(config: BootstrapConfig) -> dict:
         "webhook": {"certManager": {"enabled": False}},
         "controllerManager": {},
         "defaultAutomationStrategy": {"enabled": False},
-        "globalConfiguration": {"recommendationReloadInterval": "1m"},
+        "globalConfiguration": {
+            "recommendationReloadInterval": "1m",
+            "multiPolicyContainerRightsizingEnabled": (
+                config.multi_policy_container_rightsizing_enabled
+            ),
+        },
         "compactionScheduler": {"enabled": True},
         "compactionDescheduler": {"enabled": True},
     }
@@ -1107,6 +1113,11 @@ def parse_args() -> BootstrapConfig:
     parser.add_argument("--kubex-cluster-name")
     parser.add_argument("--secondary-cluster-enabled", action="store_true")
     parser.add_argument("--primary-cluster-name")
+    parser.add_argument(
+        "--multi-policy-container-rightsizing-enabled",
+        action="store_true",
+        help="Enable per-policy container rightsizing recommendation keys",
+    )
     parser.add_argument("--kind-node-image", default="kindest/node:v1.35.0")
     parser.add_argument("--kind-config")
     parser.add_argument("--load-kind-images", action="store_true")
@@ -1148,6 +1159,7 @@ def parse_args() -> BootstrapConfig:
         cluster_name_value=args.kubex_cluster_name,
         secondary_cluster_enabled=args.secondary_cluster_enabled,
         primary_cluster_name=args.primary_cluster_name,
+        multi_policy_container_rightsizing_enabled=args.multi_policy_container_rightsizing_enabled,
         install_gpu_suite=args.gpu_suite,
         install_kubeai=args.gpu_suite or args.install_kubeai,
         gpu_kind_config=args.gpu_kind_config,
