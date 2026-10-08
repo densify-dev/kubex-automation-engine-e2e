@@ -92,16 +92,6 @@ This directory has example bundles:
     - Includes sample `Model`; when KubeAI creates model-owned pods, recommendations anchor on `Model` and flow to those pods.
     - Requires KubeAI CRD installed in cluster.
 
-21) `multi-policy-container-scope.yaml`
-    - Uses one AutomationStrategy and two StaticPolicies against one three-container Deployment.
-    - Each policy scopes to a different container and uses `resources.containers."*"`.
-    - Requires `GlobalConfiguration.spec.multiPolicyContainerRightsizingEnabled: true`; the unscoped `metrics` container keeps its initial resources.
-
-22) `weighted-container-exclusion.yaml`
-    - Uses a lower-weight wildcard StaticPolicy and a higher-weight `sidecar` policy with a disabled AutomationStrategy.
-    - The higher-weight policy emits overlapping recommendations, but its CPU and memory actions are all disabled, so `sidecar` keeps its original resources while the wildcard policy resizes `app`.
-    - Requires `GlobalConfiguration.spec.multiPolicyContainerRightsizingEnabled: true`.
-
 Apply examples:
 
 ```sh
@@ -112,8 +102,6 @@ kubectl apply -f examples/staticpolicy/per-container.yaml
 kubectl apply -f examples/staticpolicy/with-resource-quota.yaml
 kubectl apply -f examples/staticpolicy/multi-container-filtered.yaml
 kubectl apply -f examples/staticpolicy/multi-container.yaml
-kubectl apply -f examples/staticpolicy/multi-policy-container-scope.yaml
-kubectl apply -f examples/staticpolicy/weighted-container-exclusion.yaml
 kubectl apply -f examples/staticpolicy/enablement-directions.yaml
 kubectl apply -f examples/staticpolicy/with-pdb-multi-replica.yaml
 kubectl apply -f examples/staticpolicy/same-order-weight-precedence.yaml
@@ -129,66 +117,7 @@ kubectl apply -f examples/staticpolicy/with-skip-containers.yaml
 kubectl apply -f examples/staticpolicy/model.yaml
 ```
 
-The `multi-policy-container-scope.yaml` example requires:
-
-```text
-GlobalConfiguration.spec.multiPolicyContainerRightsizingEnabled: true
-```
-
-The example does not include a `GlobalConfiguration` because Helm manages the cluster singleton. Record the current value, enable the flag by patching the existing object, and apply the example:
-
-```sh
-previous_multi_policy_flag="$(kubectl get globalconfiguration global-config -o jsonpath='{.spec.multiPolicyContainerRightsizingEnabled}')"
-test -n "$previous_multi_policy_flag" || previous_multi_policy_flag=false
-kubectl patch globalconfiguration global-config --type=merge \
-  -p '{"spec":{"multiPolicyContainerRightsizingEnabled":true}}'
-kubectl apply -f examples/staticpolicy/multi-policy-container-scope.yaml
-```
-
-After reconciliation, the Deployment should have these values:
-
-| Container | Requests | Limits |
-| --- | --- | --- |
-| `app` | `cpu: 250m`, `memory: 256Mi` | `cpu: 500m`, `memory: 512Mi` |
-| `sidecar` | `cpu: 150m`, `memory: 192Mi` | `cpu: 300m`, `memory: 384Mi` |
-| `metrics` | `cpu: 25m`, `memory: 32Mi` | `cpu: 50m`, `memory: 64Mi` |
-
-`metrics` is outside both policy scopes, so its initial values stay unchanged. Inspect the resources with:
-
-```sh
-kubectl get deployment multi-policy-container-scope-demo -n default \
-  -o jsonpath='{range .spec.template.spec.containers[*]}{.name}: requests={.resources.requests} limits={.resources.limits}{"\n"}{end}'
-```
-
-With the flag enabled, the Deployment has separate hashed annotation keys for each policy. Each key starts with `static.rightsizing.kubex.ai/h` and ends with either `-desired-resource-requests` or `-desired-resource-limits`:
-
-```sh
-kubectl get deployment multi-policy-container-scope-demo -n default -o yaml \
-  | grep -E 'static\.rightsizing\.kubex\.ai/h.*desired-resource-(requests|limits)'
-```
-
-Clean up the example, then restore the value recorded before the example. If the commands run in separate shells, replace `$previous_multi_policy_flag` with the recorded `true` or `false` value:
-
-```sh
-kubectl delete -f examples/staticpolicy/multi-policy-container-scope.yaml
-kubectl patch globalconfiguration global-config --type=merge \
-  -p "{\"spec\":{\"multiPolicyContainerRightsizingEnabled\":${previous_multi_policy_flag}}}"
-```
-
 Then inspect workloads with the matching labels (e.g., `kubectl get deploy -n default -o yaml`) to see desired request/limit annotations and the resolved rule metadata.
-
-The `weighted-container-exclusion.yaml` example uses the same global configuration flag. Its policies recommend these values:
-
-| Container | Requests | Limits |
-| --- | --- | --- |
-| `app` | `cpu: 250m`, `memory: 256Mi` | `cpu: 500m`, `memory: 512Mi` |
-| `sidecar` | `cpu: 50m`, `memory: 64Mi` | `cpu: 100m`, `memory: 128Mi` |
-
-The wildcard policy recommends `250m`/`256Mi` requests and `500m`/`512Mi` limits for every container. The higher-weight `sidecar` policy recommends `300m`/`384Mi` requests and `600m`/`768Mi` limits, but its strategy disables downsize, upsize, and set-from-unspecified for CPU and memory requests and limits. `app` therefore receives the wildcard policy values, while `sidecar` remains unchanged.
-
-The higher-weight policy must emit recommendations that overlap the lower-weight policy. A disabled AutomationStrategy is not a deny rule by itself. Policy type priority is evaluated before weight, so weight only decides between policies with the same type.
-
-Both policies write separate request and limit recommendation annotations when `multiPolicyContainerRightsizingEnabled` is true. Record and restore the global configuration value as shown above when applying this example.
 
 For the KEDA example, verify the KEDA-managed HPA exists:
 

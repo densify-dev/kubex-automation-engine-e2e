@@ -1,0 +1,2015 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: vllmoptimizationpolicies.rightsizing.kubex.ai
+spec:
+  group: rightsizing.kubex.ai
+  names:
+    kind: VllmOptimizationPolicy
+    listKind: VllmOptimizationPolicyList
+    plural: vllmoptimizationpolicies
+    singular: vllmoptimizationpolicy
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: VllmOptimizationPolicy controls adaptive vLLM configuration optimization
+          for one workload.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of VllmOptimizationPolicy.
+            properties:
+              adaptation:
+                default: {}
+                description: adaptation defines monitoring and rescan behavior.
+                properties:
+                  monitorInterval:
+                    default: 5m
+                    description: monitorInterval is the cadence for checking the selected
+                      configuration.
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be greater than 0 seconds
+                      rule: duration(self) > duration('0s')
+                  rescanInterval:
+                    default: 6h
+                    description: rescanInterval is the maximum time between optimization
+                      searches.
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be greater than 0 seconds
+                      rule: duration(self) > duration('0s')
+                  stableFor:
+                    default: 15m
+                    description: stableFor is the duration a traffic change or violation
+                      must persist before a new search.
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be greater than 0 seconds
+                      rule: duration(self) > duration('0s')
+                  trafficChangeThresholdPercent:
+                    default: 20
+                    description: trafficChangeThresholdPercent is the relative change
+                      that triggers traffic adaptation.
+                    type: number
+                    x-kubernetes-validations:
+                    - message: trafficChangeThresholdPercent must be greater than
+                        zero
+                      rule: self > 0
+                type: object
+                x-kubernetes-validations:
+                - message: stableFor must be at least monitorInterval
+                  rule: '!has(self.stableFor) || !has(self.monitorInterval) || duration(self.stableFor)
+                    >= duration(self.monitorInterval)'
+              constraints:
+                description: constraints defines absolute latency limits.
+                properties:
+                  maxP95InterTokenLatency:
+                    description: maxP95InterTokenLatency is the maximum allowed p95
+                      inter-token latency.
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be greater than 0 seconds
+                      rule: duration(self) > duration('0s')
+                  maxP95TTFT:
+                    description: maxP95TTFT is the maximum allowed p95 time to first
+                      token.
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be greater than 0 seconds
+                      rule: duration(self) > duration('0s')
+                required:
+                - maxP95InterTokenLatency
+                - maxP95TTFT
+                type: object
+              evaluation:
+                description: evaluation defines measurement windows and minimum sample
+                  sizes.
+                properties:
+                  baselineWindow:
+                    description: baselineWindow is the duration used to measure the
+                      selected configuration before a search.
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be greater than 0 seconds
+                      rule: duration(self) > duration('0s')
+                  cooldown:
+                    description: cooldown is the minimum time between candidate changes.
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be greater than 0 seconds
+                      rule: duration(self) > duration('0s')
+                  maxTrialsPerSearch:
+                    default: 12
+                    description: maxTrialsPerSearch limits candidate attempts, including
+                      failed and deferred trials.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  minFinishedRequests:
+                    description: minFinishedRequests is the minimum number of completed
+                      requests required in a measurement window.
+                    format: int64
+                    minimum: 1
+                    type: integer
+                  trialWindow:
+                    description: trialWindow is the duration used to measure each
+                      candidate or monitor the selected configuration.
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be greater than 0 seconds
+                      rule: duration(self) > duration('0s')
+                required:
+                - baselineWindow
+                - cooldown
+                - minFinishedRequests
+                - trialWindow
+                type: object
+              objective:
+                default: {}
+                description: objective defines the weighted score and regression budgets.
+                properties:
+                  minScoreGain:
+                    default: 2
+                    description: minScoreGain is the minimum weighted score improvement
+                      required to accept a candidate.
+                    type: number
+                    x-kubernetes-validations:
+                    - message: minScoreGain must be greater than zero
+                      rule: self > 0
+                  p95InterTokenLatency:
+                    default:
+                      weight: 0
+                    description: p95InterTokenLatency scores the 95th percentile inter-token
+                      latency.
+                    properties:
+                      maxRegressionPercent:
+                        description: |-
+                          maxRegressionPercent is the largest allowed relative regression. Omit it to disable the cap.
+                          An explicit zero forbids any regression.
+                        minimum: 0
+                        type: number
+                      weight:
+                        description: weight controls the metric's share of the weighted
+                          score.
+                        format: int32
+                        minimum: 0
+                        type: integer
+                    required:
+                    - weight
+                    type: object
+                  p95TTFT:
+                    default:
+                      weight: 0
+                    description: p95TTFT scores the 95th percentile time to first
+                      token.
+                    properties:
+                      maxRegressionPercent:
+                        description: |-
+                          maxRegressionPercent is the largest allowed relative regression. Omit it to disable the cap.
+                          An explicit zero forbids any regression.
+                        minimum: 0
+                        type: number
+                      weight:
+                        description: weight controls the metric's share of the weighted
+                          score.
+                        format: int32
+                        minimum: 0
+                        type: integer
+                    required:
+                    - weight
+                    type: object
+                  throughput:
+                    default:
+                      weight: 100
+                    description: throughput scores generated-token throughput.
+                    properties:
+                      maxRegressionPercent:
+                        description: |-
+                          maxRegressionPercent is the largest allowed relative regression. Omit it to disable the cap.
+                          An explicit zero forbids any regression.
+                        minimum: 0
+                        type: number
+                      weight:
+                        description: weight controls the metric's share of the weighted
+                          score.
+                        format: int32
+                        minimum: 0
+                        type: integer
+                    required:
+                    - weight
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: at least one objective weight must be greater than zero
+                  rule: '!has(self.throughput) || !has(self.p95TTFT) || !has(self.p95InterTokenLatency)
+                    || self.throughput.weight + self.p95TTFT.weight + self.p95InterTokenLatency.weight
+                    > 0'
+              parameters:
+                description: parameters defines the supported search spaces.
+                properties:
+                  maxNumBatchedTokens:
+                    description: maxNumBatchedTokens defines the search range for
+                      --max-num-batched-tokens.
+                    properties:
+                      max:
+                        description: max is the highest value the controller may apply.
+                        format: int64
+                        minimum: 2
+                        type: integer
+                      min:
+                        description: min is the lowest value the controller may apply.
+                        format: int64
+                        minimum: 1
+                        type: integer
+                      step:
+                        description: |-
+                          step is the maximum change between adjacent in-range trial values.
+                          Entering the range from an out-of-range selection uses the nearest boundary, regardless of step.
+                        format: int64
+                        minimum: 1
+                        type: integer
+                    required:
+                    - max
+                    - min
+                    - step
+                    type: object
+                    x-kubernetes-validations:
+                    - message: min must be less than max
+                      rule: self.min < self.max
+                  maxNumSeqs:
+                    description: maxNumSeqs defines the search range for --max-num-seqs.
+                    properties:
+                      max:
+                        description: max is the highest value the controller may apply.
+                        format: int64
+                        minimum: 2
+                        type: integer
+                      min:
+                        description: min is the lowest value the controller may apply.
+                        format: int64
+                        minimum: 1
+                        type: integer
+                      step:
+                        description: |-
+                          step is the maximum change between adjacent in-range trial values.
+                          Entering the range from an out-of-range selection uses the nearest boundary, regardless of step.
+                        format: int64
+                        minimum: 1
+                        type: integer
+                    required:
+                    - max
+                    - min
+                    - step
+                    type: object
+                    x-kubernetes-validations:
+                    - message: min must be less than max
+                      rule: self.min < self.max
+                type: object
+                x-kubernetes-validations:
+                - message: at least one supported parameter is required
+                  rule: has(self.maxNumBatchedTokens) || has(self.maxNumSeqs)
+              prometheus:
+                default: {}
+                description: |-
+                  prometheus selects metric families and scrape labels. URL and timeout come from GlobalConfiguration.
+                  The empty-object default also applies nested metric and label defaults when this block is omitted.
+                properties:
+                  containerLabel:
+                    description: containerLabel scopes metric queries to a container
+                      when the scrape includes that label.
+                    pattern: ^[a-zA-Z_][a-zA-Z0-9_]*$
+                    type: string
+                  finishedRequestsCounter:
+                    default: vllm:request_success_total
+                    description: finishedRequestsCounter is a Prometheus counter for
+                      completed requests.
+                    pattern: ^[a-zA-Z_:][a-zA-Z0-9_:]*$
+                    type: string
+                  generatedTokensCounter:
+                    default: vllm:generation_tokens_total
+                    description: generatedTokensCounter is a Prometheus counter for
+                      generated tokens.
+                    pattern: ^[a-zA-Z_:][a-zA-Z0-9_:]*$
+                    type: string
+                  interTokenLatencyHistogram:
+                    default: vllm:inter_token_latency_seconds
+                    description: interTokenLatencyHistogram is a classic Prometheus
+                      histogram family.
+                    pattern: ^[a-zA-Z_:][a-zA-Z0-9_:]*$
+                    type: string
+                  namespaceLabel:
+                    default: namespace
+                    description: namespaceLabel is the namespace label used to scope
+                      metric queries.
+                    pattern: ^[a-zA-Z_][a-zA-Z0-9_]*$
+                    type: string
+                  podLabel:
+                    default: pod
+                    description: podLabel is the pod label used to scope metric queries.
+                    pattern: ^[a-zA-Z_][a-zA-Z0-9_]*$
+                    type: string
+                  requestGenerationTokensHistogram:
+                    default: vllm:request_generation_tokens
+                    description: requestGenerationTokensHistogram is a classic histogram
+                      family for generated-token counts.
+                    pattern: ^[a-zA-Z_:][a-zA-Z0-9_:]*$
+                    type: string
+                  requestPromptTokensHistogram:
+                    default: vllm:request_prompt_tokens
+                    description: requestPromptTokensHistogram is a classic histogram
+                      family for prompt-token counts.
+                    pattern: ^[a-zA-Z_:][a-zA-Z0-9_:]*$
+                    type: string
+                  runningRequestsGauge:
+                    default: vllm:num_requests_running
+                    description: runningRequestsGauge is the Prometheus gauge family
+                      for running requests.
+                    pattern: ^[a-zA-Z_:][a-zA-Z0-9_:]*$
+                    type: string
+                  timeToFirstTokenHistogram:
+                    default: vllm:time_to_first_token_seconds
+                    description: timeToFirstTokenHistogram is a classic Prometheus
+                      histogram family.
+                    pattern: ^[a-zA-Z_:][a-zA-Z0-9_:]*$
+                    type: string
+                  waitingRequestsGauge:
+                    default: vllm:num_requests_waiting
+                    description: waitingRequestsGauge is the Prometheus gauge family
+                      for waiting requests.
+                    pattern: ^[a-zA-Z_:][a-zA-Z0-9_:]*$
+                    type: string
+                type: object
+              target:
+                description: target identifies the exact workload and cannot change
+                  after creation.
+                properties:
+                  apiVersion:
+                    description: apiVersion is the target workload API version.
+                    type: string
+                  container:
+                    description: container identifies the vLLM serving container.
+                    minLength: 1
+                    type: string
+                  kind:
+                    description: kind is the target workload kind.
+                    type: string
+                  name:
+                    description: name is the target workload name.
+                    minLength: 1
+                    type: string
+                  namespace:
+                    description: namespace is the target workload namespace.
+                    minLength: 1
+                    type: string
+                required:
+                - apiVersion
+                - kind
+                - name
+                - namespace
+                type: object
+                x-kubernetes-validations:
+                - message: target is immutable
+                  rule: self == oldSelf
+                - message: target must be an apps/v1 Deployment or kubeai.org/v1 Model
+                  rule: (self.apiVersion == 'apps/v1' && self.kind == 'Deployment')
+                    || (self.apiVersion == 'kubeai.org/v1' && self.kind == 'Model')
+              trafficComparison:
+                default: {}
+                description: trafficComparison defines how traffic windows are compared.
+                properties:
+                  minBackloggedFraction:
+                    default: 0.8
+                    description: minBackloggedFraction is the minimum waiting-request
+                      fraction considered sufficiently backlogged.
+                    type: number
+                    x-kubernetes-validations:
+                    - message: minBackloggedFraction must be greater than zero and
+                        at most one
+                      rule: self > 0 && self <= 1
+                  tolerancePercent:
+                    default: 10
+                    description: tolerancePercent is the allowed relative change in
+                      demand-limited completed-request rate and request lengths.
+                    maximum: 100
+                    minimum: 0
+                    type: number
+                type: object
+            required:
+            - adaptation
+            - constraints
+            - evaluation
+            - objective
+            - parameters
+            - target
+            - trafficComparison
+            type: object
+          status:
+            description: status reports observed optimization state.
+            properties:
+              cleanup:
+                description: cleanup tracks restoration and child-policy deletion.
+                properties:
+                  childDeleteRequested:
+                    description: childDeleteRequested records that the child policy
+                      should be deleted.
+                    type: boolean
+                  needsReplacement:
+                    description: needsReplacement records whether cleanup must replace
+                      pods.
+                    type: boolean
+                  previousPodUIDs:
+                    description: previousPodUIDs identifies pods that must be replaced
+                      before cleanup completes.
+                    items:
+                      description: |-
+                        UID is a type that holds unique ID values, including UUIDs.  Because we
+                        don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                        intent and helps make sure that UIDs and names do not get conflated.
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                  started:
+                    description: started records whether finalizer cleanup has begun.
+                    type: boolean
+                type: object
+              conditions:
+                description: conditions summarize the policy state.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              containerName:
+                description: containerName is the serving container selected from
+                  the target's pods.
+                type: string
+              currentMeasurement:
+                description: currentMeasurement is the latest valid measurement for
+                  the selected configuration.
+                properties:
+                  backloggedFraction:
+                    description: backloggedFraction is the fraction of the window
+                      with waiting requests.
+                    type: number
+                  finishedRequests:
+                    description: finishedRequests is the total number of completed
+                      requests in the window.
+                    format: int64
+                    type: integer
+                  generatedTokensPerSecondMilli:
+                    description: generatedTokensPerSecondMilli is generated tokens
+                      per second scaled by 1000.
+                    format: int64
+                    type: integer
+                  meanOutputTokens:
+                    description: meanOutputTokens is the mean generated length in
+                      the window.
+                    type: number
+                  meanPromptTokens:
+                    description: meanPromptTokens is the mean prompt length in the
+                      window.
+                    type: number
+                  meanRunningRequests:
+                    description: meanRunningRequests is the mean number of running
+                      requests in the window.
+                    type: number
+                  meanWaitingRequests:
+                    description: meanWaitingRequests is the mean number of waiting
+                      requests in the window.
+                    type: number
+                  observedAt:
+                    description: observedAt is when the window was measured.
+                    format: date-time
+                    type: string
+                  p95InterTokenLatency:
+                    description: p95InterTokenLatency is the aggregate p95 latency
+                      across the ready pods.
+                    type: string
+                  p95TimeToFirstToken:
+                    description: p95TimeToFirstToken is the aggregate p95 latency
+                      across the ready pods.
+                    type: string
+                  podUIDs:
+                    description: podUIDs identifies the pods included in this measurement.
+                    items:
+                      description: |-
+                        UID is a type that holds unique ID values, including UUIDs.  Because we
+                        don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                        intent and helps make sure that UIDs and names do not get conflated.
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                  windowDuration:
+                    description: windowDuration is the exact measurement window length.
+                    type: string
+                required:
+                - finishedRequests
+                - generatedTokensPerSecondMilli
+                - observedAt
+                - p95InterTokenLatency
+                - p95TimeToFirstToken
+                - windowDuration
+                type: object
+              declaredConfiguration:
+                description: |-
+                  declaredConfiguration captures controlled arguments from the workload spec, separately from runtime tuning.
+                  Nil means not captured; a Remove operation means the argument was declared absent.
+                properties:
+                  arguments:
+                    description: arguments lists the argument operations that make
+                      up this configuration.
+                    items:
+                      description: ContainerArgsPolicyArgument describes one named
+                        container argument operation.
+                      properties:
+                        name:
+                          description: name is the literal option name, such as --flag
+                            or -f.
+                          minLength: 2
+                          pattern: ^--?[^\s=]+$
+                          type: string
+                        operation:
+                          default: AddOrUpdate
+                          description: operation controls whether the option is added/updated
+                            or removed.
+                          enum:
+                          - AddOrUpdate
+                          - Remove
+                          type: string
+                        value:
+                          description: value is optional. Omitted value means a valueless
+                            flag; an explicit empty value is preserved.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                type: object
+              initialMeasurement:
+                description: initialMeasurement is the historical measurement collected
+                  before tuning.
+                properties:
+                  backloggedFraction:
+                    description: backloggedFraction is the fraction of the window
+                      with waiting requests.
+                    type: number
+                  finishedRequests:
+                    description: finishedRequests is the total number of completed
+                      requests in the window.
+                    format: int64
+                    type: integer
+                  generatedTokensPerSecondMilli:
+                    description: generatedTokensPerSecondMilli is generated tokens
+                      per second scaled by 1000.
+                    format: int64
+                    type: integer
+                  meanOutputTokens:
+                    description: meanOutputTokens is the mean generated length in
+                      the window.
+                    type: number
+                  meanPromptTokens:
+                    description: meanPromptTokens is the mean prompt length in the
+                      window.
+                    type: number
+                  meanRunningRequests:
+                    description: meanRunningRequests is the mean number of running
+                      requests in the window.
+                    type: number
+                  meanWaitingRequests:
+                    description: meanWaitingRequests is the mean number of waiting
+                      requests in the window.
+                    type: number
+                  observedAt:
+                    description: observedAt is when the window was measured.
+                    format: date-time
+                    type: string
+                  p95InterTokenLatency:
+                    description: p95InterTokenLatency is the aggregate p95 latency
+                      across the ready pods.
+                    type: string
+                  p95TimeToFirstToken:
+                    description: p95TimeToFirstToken is the aggregate p95 latency
+                      across the ready pods.
+                    type: string
+                  podUIDs:
+                    description: podUIDs identifies the pods included in this measurement.
+                    items:
+                      description: |-
+                        UID is a type that holds unique ID values, including UUIDs.  Because we
+                        don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                        intent and helps make sure that UIDs and names do not get conflated.
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                  windowDuration:
+                    description: windowDuration is the exact measurement window length.
+                    type: string
+                required:
+                - finishedRequests
+                - generatedTokensPerSecondMilli
+                - observedAt
+                - p95InterTokenLatency
+                - p95TimeToFirstToken
+                - windowDuration
+                type: object
+              lastDecision:
+                description: lastDecision records the latest candidate outcome.
+                properties:
+                  baselineMeasurement:
+                    description: baselineMeasurement is the fresh selected-configuration
+                      measurement.
+                    properties:
+                      backloggedFraction:
+                        description: backloggedFraction is the fraction of the window
+                          with waiting requests.
+                        type: number
+                      finishedRequests:
+                        description: finishedRequests is the total number of completed
+                          requests in the window.
+                        format: int64
+                        type: integer
+                      generatedTokensPerSecondMilli:
+                        description: generatedTokensPerSecondMilli is generated tokens
+                          per second scaled by 1000.
+                        format: int64
+                        type: integer
+                      meanOutputTokens:
+                        description: meanOutputTokens is the mean generated length
+                          in the window.
+                        type: number
+                      meanPromptTokens:
+                        description: meanPromptTokens is the mean prompt length in
+                          the window.
+                        type: number
+                      meanRunningRequests:
+                        description: meanRunningRequests is the mean number of running
+                          requests in the window.
+                        type: number
+                      meanWaitingRequests:
+                        description: meanWaitingRequests is the mean number of waiting
+                          requests in the window.
+                        type: number
+                      observedAt:
+                        description: observedAt is when the window was measured.
+                        format: date-time
+                        type: string
+                      p95InterTokenLatency:
+                        description: p95InterTokenLatency is the aggregate p95 latency
+                          across the ready pods.
+                        type: string
+                      p95TimeToFirstToken:
+                        description: p95TimeToFirstToken is the aggregate p95 latency
+                          across the ready pods.
+                        type: string
+                      podUIDs:
+                        description: podUIDs identifies the pods included in this
+                          measurement.
+                        items:
+                          description: |-
+                            UID is a type that holds unique ID values, including UUIDs.  Because we
+                            don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                            intent and helps make sure that UIDs and names do not get conflated.
+                          type: string
+                        type: array
+                        x-kubernetes-list-type: set
+                      windowDuration:
+                        description: windowDuration is the exact measurement window
+                          length.
+                        type: string
+                    required:
+                    - finishedRequests
+                    - generatedTokensPerSecondMilli
+                    - observedAt
+                    - p95InterTokenLatency
+                    - p95TimeToFirstToken
+                    - windowDuration
+                    type: object
+                  candidateConfiguration:
+                    description: candidateConfiguration is the complete evaluated
+                      configuration.
+                    properties:
+                      arguments:
+                        description: arguments lists the argument operations that
+                          make up this configuration.
+                        items:
+                          description: ContainerArgsPolicyArgument describes one named
+                            container argument operation.
+                          properties:
+                            name:
+                              description: name is the literal option name, such as
+                                --flag or -f.
+                              minLength: 2
+                              pattern: ^--?[^\s=]+$
+                              type: string
+                            operation:
+                              default: AddOrUpdate
+                              description: operation controls whether the option is
+                                added/updated or removed.
+                              enum:
+                              - AddOrUpdate
+                              - Remove
+                              type: string
+                            value:
+                              description: value is optional. Omitted value means
+                                a valueless flag; an explicit empty value is preserved.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                    type: object
+                  candidateMeasurement:
+                    description: candidateMeasurement is the candidate measurement.
+                    properties:
+                      backloggedFraction:
+                        description: backloggedFraction is the fraction of the window
+                          with waiting requests.
+                        type: number
+                      finishedRequests:
+                        description: finishedRequests is the total number of completed
+                          requests in the window.
+                        format: int64
+                        type: integer
+                      generatedTokensPerSecondMilli:
+                        description: generatedTokensPerSecondMilli is generated tokens
+                          per second scaled by 1000.
+                        format: int64
+                        type: integer
+                      meanOutputTokens:
+                        description: meanOutputTokens is the mean generated length
+                          in the window.
+                        type: number
+                      meanPromptTokens:
+                        description: meanPromptTokens is the mean prompt length in
+                          the window.
+                        type: number
+                      meanRunningRequests:
+                        description: meanRunningRequests is the mean number of running
+                          requests in the window.
+                        type: number
+                      meanWaitingRequests:
+                        description: meanWaitingRequests is the mean number of waiting
+                          requests in the window.
+                        type: number
+                      observedAt:
+                        description: observedAt is when the window was measured.
+                        format: date-time
+                        type: string
+                      p95InterTokenLatency:
+                        description: p95InterTokenLatency is the aggregate p95 latency
+                          across the ready pods.
+                        type: string
+                      p95TimeToFirstToken:
+                        description: p95TimeToFirstToken is the aggregate p95 latency
+                          across the ready pods.
+                        type: string
+                      podUIDs:
+                        description: podUIDs identifies the pods included in this
+                          measurement.
+                        items:
+                          description: |-
+                            UID is a type that holds unique ID values, including UUIDs.  Because we
+                            don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                            intent and helps make sure that UIDs and names do not get conflated.
+                          type: string
+                        type: array
+                        x-kubernetes-list-type: set
+                      windowDuration:
+                        description: windowDuration is the exact measurement window
+                          length.
+                        type: string
+                    required:
+                    - finishedRequests
+                    - generatedTokensPerSecondMilli
+                    - observedAt
+                    - p95InterTokenLatency
+                    - p95TimeToFirstToken
+                    - windowDuration
+                    type: object
+                  outcome:
+                    description: outcome is the decision result.
+                    type: string
+                  policyGeneration:
+                    description: policyGeneration is the policy generation used for
+                      the decision.
+                    format: int64
+                    type: integer
+                  reason:
+                    description: reason explains the decision.
+                    type: string
+                  referenceMeasurement:
+                    description: referenceMeasurement is the fixed search-reference
+                      measurement.
+                    properties:
+                      backloggedFraction:
+                        description: backloggedFraction is the fraction of the window
+                          with waiting requests.
+                        type: number
+                      finishedRequests:
+                        description: finishedRequests is the total number of completed
+                          requests in the window.
+                        format: int64
+                        type: integer
+                      generatedTokensPerSecondMilli:
+                        description: generatedTokensPerSecondMilli is generated tokens
+                          per second scaled by 1000.
+                        format: int64
+                        type: integer
+                      meanOutputTokens:
+                        description: meanOutputTokens is the mean generated length
+                          in the window.
+                        type: number
+                      meanPromptTokens:
+                        description: meanPromptTokens is the mean prompt length in
+                          the window.
+                        type: number
+                      meanRunningRequests:
+                        description: meanRunningRequests is the mean number of running
+                          requests in the window.
+                        type: number
+                      meanWaitingRequests:
+                        description: meanWaitingRequests is the mean number of waiting
+                          requests in the window.
+                        type: number
+                      observedAt:
+                        description: observedAt is when the window was measured.
+                        format: date-time
+                        type: string
+                      p95InterTokenLatency:
+                        description: p95InterTokenLatency is the aggregate p95 latency
+                          across the ready pods.
+                        type: string
+                      p95TimeToFirstToken:
+                        description: p95TimeToFirstToken is the aggregate p95 latency
+                          across the ready pods.
+                        type: string
+                      podUIDs:
+                        description: podUIDs identifies the pods included in this
+                          measurement.
+                        items:
+                          description: |-
+                            UID is a type that holds unique ID values, including UUIDs.  Because we
+                            don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                            intent and helps make sure that UIDs and names do not get conflated.
+                          type: string
+                        type: array
+                        x-kubernetes-list-type: set
+                      windowDuration:
+                        description: windowDuration is the exact measurement window
+                          length.
+                        type: string
+                    required:
+                    - finishedRequests
+                    - generatedTokensPerSecondMilli
+                    - observedAt
+                    - p95InterTokenLatency
+                    - p95TimeToFirstToken
+                    - windowDuration
+                    type: object
+                  scoreGain:
+                    description: scoreGain is the weighted score improvement, when
+                      scoring was possible.
+                    type: number
+                  scoredMetrics:
+                    description: scoredMetrics lists the metrics included in the score.
+                    items:
+                      type: string
+                    type: array
+                  time:
+                    description: time is when the decision was made.
+                    format: date-time
+                    type: string
+                type: object
+              monitoring:
+                description: monitoring tracks the settled configuration between searches.
+                properties:
+                  breachHandled:
+                    description: breachHandled records whether the current hard-limit
+                      breach has already been handled.
+                    type: boolean
+                  lastCheck:
+                    description: lastCheck is when monitoring last checked the selected
+                      configuration.
+                    format: date-time
+                    type: string
+                  pendingSince:
+                    description: pendingSince is when the pending trigger was first
+                      observed.
+                    format: date-time
+                    type: string
+                  pendingTrigger:
+                    description: pendingTrigger is a trigger currently accumulating
+                      stable time.
+                    type: string
+                  podUIDs:
+                    description: podUIDs identifies the pods included in the monitoring
+                      reference.
+                    items:
+                      description: |-
+                        UID is a type that holds unique ID values, including UUIDs.  Because we
+                        don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                        intent and helps make sure that UIDs and names do not get conflated.
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                  referenceMeasurement:
+                    description: referenceMeasurement is the settled measurement used
+                      for monitoring comparisons.
+                    properties:
+                      backloggedFraction:
+                        description: backloggedFraction is the fraction of the window
+                          with waiting requests.
+                        type: number
+                      finishedRequests:
+                        description: finishedRequests is the total number of completed
+                          requests in the window.
+                        format: int64
+                        type: integer
+                      generatedTokensPerSecondMilli:
+                        description: generatedTokensPerSecondMilli is generated tokens
+                          per second scaled by 1000.
+                        format: int64
+                        type: integer
+                      meanOutputTokens:
+                        description: meanOutputTokens is the mean generated length
+                          in the window.
+                        type: number
+                      meanPromptTokens:
+                        description: meanPromptTokens is the mean prompt length in
+                          the window.
+                        type: number
+                      meanRunningRequests:
+                        description: meanRunningRequests is the mean number of running
+                          requests in the window.
+                        type: number
+                      meanWaitingRequests:
+                        description: meanWaitingRequests is the mean number of waiting
+                          requests in the window.
+                        type: number
+                      observedAt:
+                        description: observedAt is when the window was measured.
+                        format: date-time
+                        type: string
+                      p95InterTokenLatency:
+                        description: p95InterTokenLatency is the aggregate p95 latency
+                          across the ready pods.
+                        type: string
+                      p95TimeToFirstToken:
+                        description: p95TimeToFirstToken is the aggregate p95 latency
+                          across the ready pods.
+                        type: string
+                      podUIDs:
+                        description: podUIDs identifies the pods included in this
+                          measurement.
+                        items:
+                          description: |-
+                            UID is a type that holds unique ID values, including UUIDs.  Because we
+                            don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                            intent and helps make sure that UIDs and names do not get conflated.
+                          type: string
+                        type: array
+                        x-kubernetes-list-type: set
+                      windowDuration:
+                        description: windowDuration is the exact measurement window
+                          length.
+                        type: string
+                    required:
+                    - finishedRequests
+                    - generatedTokensPerSecondMilli
+                    - observedAt
+                    - p95InterTokenLatency
+                    - p95TimeToFirstToken
+                    - windowDuration
+                    type: object
+                  startedAt:
+                    description: startedAt is when the current monitoring period began.
+                    format: date-time
+                    type: string
+                type: object
+              observedGeneration:
+                description: observedGeneration is the latest resource generation
+                  processed by the controller.
+                format: int64
+                type: integer
+              originalConfiguration:
+                description: originalConfiguration preserves the latest original arguments
+                  for restoration.
+                properties:
+                  arguments:
+                    description: arguments lists the argument operations that make
+                      up this configuration.
+                    items:
+                      description: ContainerArgsPolicyArgument describes one named
+                        container argument operation.
+                      properties:
+                        name:
+                          description: name is the literal option name, such as --flag
+                            or -f.
+                          minLength: 2
+                          pattern: ^--?[^\s=]+$
+                          type: string
+                        operation:
+                          default: AddOrUpdate
+                          description: operation controls whether the option is added/updated
+                            or removed.
+                          enum:
+                          - AddOrUpdate
+                          - Remove
+                          type: string
+                        value:
+                          description: value is optional. Omitted value means a valueless
+                            flag; an explicit empty value is preserved.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                type: object
+              outcome:
+                description: outcome is the result of reconciliation. An omitted outcome
+                  means reconciliation is pending.
+                enum:
+                - Success
+                - Failure
+                type: string
+              parameters:
+                description: parameters contains derived parameter-level summaries.
+                properties:
+                  maxNumBatchedTokens:
+                    description: maxNumBatchedTokens summarizes the batch-token search
+                      state.
+                    properties:
+                      candidateValue:
+                        description: candidateValue is the value in the active plan.
+                        format: int64
+                        type: integer
+                      originalValue:
+                        description: originalValue is the explicit argument value
+                          observed before tuning. Nil means it was absent.
+                        format: int64
+                        type: integer
+                      planningReason:
+                        description: planningReason explains how the current candidate
+                          was chosen.
+                        type: string
+                      selectedValue:
+                        description: selectedValue is the value in the retained configuration.
+                        format: int64
+                        type: integer
+                      triedValues:
+                        description: triedValues lists values tried during the current
+                          search.
+                        items:
+                          format: int64
+                          type: integer
+                        type: array
+                    type: object
+                  maxNumSeqs:
+                    description: maxNumSeqs summarizes the sequence search state.
+                    properties:
+                      candidateValue:
+                        description: candidateValue is the value in the active plan.
+                        format: int64
+                        type: integer
+                      originalValue:
+                        description: originalValue is the explicit argument value
+                          observed before tuning. Nil means it was absent.
+                        format: int64
+                        type: integer
+                      planningReason:
+                        description: planningReason explains how the current candidate
+                          was chosen.
+                        type: string
+                      selectedValue:
+                        description: selectedValue is the value in the retained configuration.
+                        format: int64
+                        type: integer
+                      triedValues:
+                        description: triedValues lists values tried during the current
+                          search.
+                        items:
+                          format: int64
+                          type: integer
+                        type: array
+                    type: object
+                type: object
+              phase:
+                description: phase describes the policy lifecycle stage.
+                enum:
+                - Observing
+                - Tuning
+                - Monitoring
+                - Holding
+                - Cleaning
+                type: string
+              plan:
+                description: plan records the pending complete-configuration transition.
+                properties:
+                  baselineMeasurement:
+                    description: baselineMeasurement is the measurement used to evaluate
+                      the candidate.
+                    properties:
+                      backloggedFraction:
+                        description: backloggedFraction is the fraction of the window
+                          with waiting requests.
+                        type: number
+                      finishedRequests:
+                        description: finishedRequests is the total number of completed
+                          requests in the window.
+                        format: int64
+                        type: integer
+                      generatedTokensPerSecondMilli:
+                        description: generatedTokensPerSecondMilli is generated tokens
+                          per second scaled by 1000.
+                        format: int64
+                        type: integer
+                      meanOutputTokens:
+                        description: meanOutputTokens is the mean generated length
+                          in the window.
+                        type: number
+                      meanPromptTokens:
+                        description: meanPromptTokens is the mean prompt length in
+                          the window.
+                        type: number
+                      meanRunningRequests:
+                        description: meanRunningRequests is the mean number of running
+                          requests in the window.
+                        type: number
+                      meanWaitingRequests:
+                        description: meanWaitingRequests is the mean number of waiting
+                          requests in the window.
+                        type: number
+                      observedAt:
+                        description: observedAt is when the window was measured.
+                        format: date-time
+                        type: string
+                      p95InterTokenLatency:
+                        description: p95InterTokenLatency is the aggregate p95 latency
+                          across the ready pods.
+                        type: string
+                      p95TimeToFirstToken:
+                        description: p95TimeToFirstToken is the aggregate p95 latency
+                          across the ready pods.
+                        type: string
+                      podUIDs:
+                        description: podUIDs identifies the pods included in this
+                          measurement.
+                        items:
+                          description: |-
+                            UID is a type that holds unique ID values, including UUIDs.  Because we
+                            don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                            intent and helps make sure that UIDs and names do not get conflated.
+                          type: string
+                        type: array
+                        x-kubernetes-list-type: set
+                      windowDuration:
+                        description: windowDuration is the exact measurement window
+                          length.
+                        type: string
+                    required:
+                    - finishedRequests
+                    - generatedTokensPerSecondMilli
+                    - observedAt
+                    - p95InterTokenLatency
+                    - p95TimeToFirstToken
+                    - windowDuration
+                    type: object
+                  candidateConfiguration:
+                    description: candidateConfiguration is the complete configuration
+                      to apply.
+                    properties:
+                      arguments:
+                        description: arguments lists the argument operations that
+                          make up this configuration.
+                        items:
+                          description: ContainerArgsPolicyArgument describes one named
+                            container argument operation.
+                          properties:
+                            name:
+                              description: name is the literal option name, such as
+                                --flag or -f.
+                              minLength: 2
+                              pattern: ^--?[^\s=]+$
+                              type: string
+                            operation:
+                              default: AddOrUpdate
+                              description: operation controls whether the option is
+                                added/updated or removed.
+                              enum:
+                              - AddOrUpdate
+                              - Remove
+                              type: string
+                            value:
+                              description: value is optional. Omitted value means
+                                a valueless flag; an explicit empty value is preserved.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                    type: object
+                  createdAt:
+                    description: createdAt is when the plan was created.
+                    format: date-time
+                    type: string
+                  phase:
+                    description: phase is Applying, Evaluating, or RollingBack.
+                    enum:
+                    - Applying
+                    - Evaluating
+                    - RollingBack
+                    type: string
+                  policyGeneration:
+                    description: policyGeneration is the policy generation used to
+                      create this plan.
+                    format: int64
+                    type: integer
+                  previousPodUIDs:
+                    description: previousPodUIDs identifies pods that must be replaced
+                      before evaluation.
+                    items:
+                      description: |-
+                        UID is a type that holds unique ID values, including UUIDs.  Because we
+                        don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                        intent and helps make sure that UIDs and names do not get conflated.
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                  priorConfiguration:
+                    description: priorConfiguration is the complete configuration
+                      to restore on rejection.
+                    properties:
+                      arguments:
+                        description: arguments lists the argument operations that
+                          make up this configuration.
+                        items:
+                          description: ContainerArgsPolicyArgument describes one named
+                            container argument operation.
+                          properties:
+                            name:
+                              description: name is the literal option name, such as
+                                --flag or -f.
+                              minLength: 2
+                              pattern: ^--?[^\s=]+$
+                              type: string
+                            operation:
+                              default: AddOrUpdate
+                              description: operation controls whether the option is
+                                added/updated or removed.
+                              enum:
+                              - AddOrUpdate
+                              - Remove
+                              type: string
+                            value:
+                              description: value is optional. Omitted value means
+                                a valueless flag; an explicit empty value is preserved.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                    type: object
+                  readyAt:
+                    description: readyAt is when the replacement pods became ready.
+                    format: date-time
+                    type: string
+                  readyPodUIDs:
+                    description: readyPodUIDs identifies replacement pods that have
+                      converged.
+                    items:
+                      description: |-
+                        UID is a type that holds unique ID values, including UUIDs.  Because we
+                        don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                        intent and helps make sure that UIDs and names do not get conflated.
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                  reason:
+                    description: reason explains why this configuration transition
+                      was planned.
+                    type: string
+                type: object
+              reason:
+                description: reason contains human-readable detail about the current
+                  outcome.
+                type: string
+              rebaselinePending:
+                description: rebaselinePending waits for the retained configuration
+                  to converge before starting fresh measurements.
+                type: boolean
+              search:
+                description: search tracks the current adaptive search.
+                properties:
+                  attempts:
+                    description: attempts counts persisted candidate plans, including
+                      retries of deferred trials.
+                    format: int32
+                    type: integer
+                  completedAt:
+                    description: completedAt is when the search finished.
+                    format: date-time
+                    type: string
+                  completion:
+                    description: completion preserves the retained configuration and
+                      its comparison to the fixed reference.
+                    properties:
+                      comparisonReason:
+                        description: comparisonReason explains an unavailable score
+                          or a completed comparison.
+                        type: string
+                      configuration:
+                        description: configuration is the retained complete configuration.
+                        properties:
+                          arguments:
+                            description: arguments lists the argument operations that
+                              make up this configuration.
+                            items:
+                              description: ContainerArgsPolicyArgument describes one
+                                named container argument operation.
+                              properties:
+                                name:
+                                  description: name is the literal option name, such
+                                    as --flag or -f.
+                                  minLength: 2
+                                  pattern: ^--?[^\s=]+$
+                                  type: string
+                                operation:
+                                  default: AddOrUpdate
+                                  description: operation controls whether the option
+                                    is added/updated or removed.
+                                  enum:
+                                  - AddOrUpdate
+                                  - Remove
+                                  type: string
+                                value:
+                                  description: value is optional. Omitted value means
+                                    a valueless flag; an explicit empty value is preserved.
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            type: array
+                        type: object
+                      measurement:
+                        description: measurement is the final selected-configuration
+                          measurement.
+                        properties:
+                          backloggedFraction:
+                            description: backloggedFraction is the fraction of the
+                              window with waiting requests.
+                            type: number
+                          finishedRequests:
+                            description: finishedRequests is the total number of completed
+                              requests in the window.
+                            format: int64
+                            type: integer
+                          generatedTokensPerSecondMilli:
+                            description: generatedTokensPerSecondMilli is generated
+                              tokens per second scaled by 1000.
+                            format: int64
+                            type: integer
+                          meanOutputTokens:
+                            description: meanOutputTokens is the mean generated length
+                              in the window.
+                            type: number
+                          meanPromptTokens:
+                            description: meanPromptTokens is the mean prompt length
+                              in the window.
+                            type: number
+                          meanRunningRequests:
+                            description: meanRunningRequests is the mean number of
+                              running requests in the window.
+                            type: number
+                          meanWaitingRequests:
+                            description: meanWaitingRequests is the mean number of
+                              waiting requests in the window.
+                            type: number
+                          observedAt:
+                            description: observedAt is when the window was measured.
+                            format: date-time
+                            type: string
+                          p95InterTokenLatency:
+                            description: p95InterTokenLatency is the aggregate p95
+                              latency across the ready pods.
+                            type: string
+                          p95TimeToFirstToken:
+                            description: p95TimeToFirstToken is the aggregate p95
+                              latency across the ready pods.
+                            type: string
+                          podUIDs:
+                            description: podUIDs identifies the pods included in this
+                              measurement.
+                            items:
+                              description: |-
+                                UID is a type that holds unique ID values, including UUIDs.  Because we
+                                don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                                intent and helps make sure that UIDs and names do not get conflated.
+                              type: string
+                            type: array
+                            x-kubernetes-list-type: set
+                          windowDuration:
+                            description: windowDuration is the exact measurement window
+                              length.
+                            type: string
+                        required:
+                        - finishedRequests
+                        - generatedTokensPerSecondMilli
+                        - observedAt
+                        - p95InterTokenLatency
+                        - p95TimeToFirstToken
+                        - windowDuration
+                        type: object
+                      reason:
+                        description: reason explains why the search completed.
+                        type: string
+                      recoveryProgress:
+                        description: recoveryProgress reports reduced hard-limit violation,
+                          independently of the objective score.
+                        type: boolean
+                      scoreGain:
+                        description: scoreGain compares measurement directly to the
+                          fixed search reference.
+                        type: number
+                      scoredMetrics:
+                        description: scoredMetrics identifies the objective metrics
+                          used in scoreGain.
+                        items:
+                          type: string
+                        type: array
+                    required:
+                    - comparisonReason
+                    - configuration
+                    - measurement
+                    - reason
+                    type: object
+                  observationPodUIDs:
+                    description: observationPodUIDs identifies the pods that must
+                      remain stable during observation.
+                    items:
+                      description: |-
+                        UID is a type that holds unique ID values, including UUIDs.  Because we
+                        don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                        intent and helps make sure that UIDs and names do not get conflated.
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                  observationStartedAt:
+                    description: observationStartedAt begins the current observation
+                      window.
+                    format: date-time
+                    type: string
+                  policyGeneration:
+                    description: policyGeneration is the policy generation used for
+                      this search.
+                    format: int64
+                    type: integer
+                  referenceConfiguration:
+                    description: referenceConfiguration is the fixed configuration
+                      used for regression comparisons.
+                    properties:
+                      arguments:
+                        description: arguments lists the argument operations that
+                          make up this configuration.
+                        items:
+                          description: ContainerArgsPolicyArgument describes one named
+                            container argument operation.
+                          properties:
+                            name:
+                              description: name is the literal option name, such as
+                                --flag or -f.
+                              minLength: 2
+                              pattern: ^--?[^\s=]+$
+                              type: string
+                            operation:
+                              default: AddOrUpdate
+                              description: operation controls whether the option is
+                                added/updated or removed.
+                              enum:
+                              - AddOrUpdate
+                              - Remove
+                              type: string
+                            value:
+                              description: value is optional. Omitted value means
+                                a valueless flag; an explicit empty value is preserved.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                    type: object
+                  referenceMeasurement:
+                    description: referenceMeasurement is the fixed measurement used
+                      for regression comparisons.
+                    properties:
+                      backloggedFraction:
+                        description: backloggedFraction is the fraction of the window
+                          with waiting requests.
+                        type: number
+                      finishedRequests:
+                        description: finishedRequests is the total number of completed
+                          requests in the window.
+                        format: int64
+                        type: integer
+                      generatedTokensPerSecondMilli:
+                        description: generatedTokensPerSecondMilli is generated tokens
+                          per second scaled by 1000.
+                        format: int64
+                        type: integer
+                      meanOutputTokens:
+                        description: meanOutputTokens is the mean generated length
+                          in the window.
+                        type: number
+                      meanPromptTokens:
+                        description: meanPromptTokens is the mean prompt length in
+                          the window.
+                        type: number
+                      meanRunningRequests:
+                        description: meanRunningRequests is the mean number of running
+                          requests in the window.
+                        type: number
+                      meanWaitingRequests:
+                        description: meanWaitingRequests is the mean number of waiting
+                          requests in the window.
+                        type: number
+                      observedAt:
+                        description: observedAt is when the window was measured.
+                        format: date-time
+                        type: string
+                      p95InterTokenLatency:
+                        description: p95InterTokenLatency is the aggregate p95 latency
+                          across the ready pods.
+                        type: string
+                      p95TimeToFirstToken:
+                        description: p95TimeToFirstToken is the aggregate p95 latency
+                          across the ready pods.
+                        type: string
+                      podUIDs:
+                        description: podUIDs identifies the pods included in this
+                          measurement.
+                        items:
+                          description: |-
+                            UID is a type that holds unique ID values, including UUIDs.  Because we
+                            don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                            intent and helps make sure that UIDs and names do not get conflated.
+                          type: string
+                        type: array
+                        x-kubernetes-list-type: set
+                      windowDuration:
+                        description: windowDuration is the exact measurement window
+                          length.
+                        type: string
+                    required:
+                    - finishedRequests
+                    - generatedTokensPerSecondMilli
+                    - observedAt
+                    - p95InterTokenLatency
+                    - p95TimeToFirstToken
+                    - windowDuration
+                    type: object
+                  startedAt:
+                    description: startedAt is when the search began.
+                    format: date-time
+                    type: string
+                  trialResults:
+                    description: trialResults retains outcomes for this search, bounded
+                      by maxTrialsPerSearch.
+                    items:
+                      description: VllmOptimizationDecision records the latest candidate
+                        outcome.
+                      properties:
+                        baselineMeasurement:
+                          description: baselineMeasurement is the fresh selected-configuration
+                            measurement.
+                          properties:
+                            backloggedFraction:
+                              description: backloggedFraction is the fraction of the
+                                window with waiting requests.
+                              type: number
+                            finishedRequests:
+                              description: finishedRequests is the total number of
+                                completed requests in the window.
+                              format: int64
+                              type: integer
+                            generatedTokensPerSecondMilli:
+                              description: generatedTokensPerSecondMilli is generated
+                                tokens per second scaled by 1000.
+                              format: int64
+                              type: integer
+                            meanOutputTokens:
+                              description: meanOutputTokens is the mean generated
+                                length in the window.
+                              type: number
+                            meanPromptTokens:
+                              description: meanPromptTokens is the mean prompt length
+                                in the window.
+                              type: number
+                            meanRunningRequests:
+                              description: meanRunningRequests is the mean number
+                                of running requests in the window.
+                              type: number
+                            meanWaitingRequests:
+                              description: meanWaitingRequests is the mean number
+                                of waiting requests in the window.
+                              type: number
+                            observedAt:
+                              description: observedAt is when the window was measured.
+                              format: date-time
+                              type: string
+                            p95InterTokenLatency:
+                              description: p95InterTokenLatency is the aggregate p95
+                                latency across the ready pods.
+                              type: string
+                            p95TimeToFirstToken:
+                              description: p95TimeToFirstToken is the aggregate p95
+                                latency across the ready pods.
+                              type: string
+                            podUIDs:
+                              description: podUIDs identifies the pods included in
+                                this measurement.
+                              items:
+                                description: |-
+                                  UID is a type that holds unique ID values, including UUIDs.  Because we
+                                  don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                                  intent and helps make sure that UIDs and names do not get conflated.
+                                type: string
+                              type: array
+                              x-kubernetes-list-type: set
+                            windowDuration:
+                              description: windowDuration is the exact measurement
+                                window length.
+                              type: string
+                          required:
+                          - finishedRequests
+                          - generatedTokensPerSecondMilli
+                          - observedAt
+                          - p95InterTokenLatency
+                          - p95TimeToFirstToken
+                          - windowDuration
+                          type: object
+                        candidateConfiguration:
+                          description: candidateConfiguration is the complete evaluated
+                            configuration.
+                          properties:
+                            arguments:
+                              description: arguments lists the argument operations
+                                that make up this configuration.
+                              items:
+                                description: ContainerArgsPolicyArgument describes
+                                  one named container argument operation.
+                                properties:
+                                  name:
+                                    description: name is the literal option name,
+                                      such as --flag or -f.
+                                    minLength: 2
+                                    pattern: ^--?[^\s=]+$
+                                    type: string
+                                  operation:
+                                    default: AddOrUpdate
+                                    description: operation controls whether the option
+                                      is added/updated or removed.
+                                    enum:
+                                    - AddOrUpdate
+                                    - Remove
+                                    type: string
+                                  value:
+                                    description: value is optional. Omitted value
+                                      means a valueless flag; an explicit empty value
+                                      is preserved.
+                                    type: string
+                                required:
+                                - name
+                                type: object
+                              type: array
+                          type: object
+                        candidateMeasurement:
+                          description: candidateMeasurement is the candidate measurement.
+                          properties:
+                            backloggedFraction:
+                              description: backloggedFraction is the fraction of the
+                                window with waiting requests.
+                              type: number
+                            finishedRequests:
+                              description: finishedRequests is the total number of
+                                completed requests in the window.
+                              format: int64
+                              type: integer
+                            generatedTokensPerSecondMilli:
+                              description: generatedTokensPerSecondMilli is generated
+                                tokens per second scaled by 1000.
+                              format: int64
+                              type: integer
+                            meanOutputTokens:
+                              description: meanOutputTokens is the mean generated
+                                length in the window.
+                              type: number
+                            meanPromptTokens:
+                              description: meanPromptTokens is the mean prompt length
+                                in the window.
+                              type: number
+                            meanRunningRequests:
+                              description: meanRunningRequests is the mean number
+                                of running requests in the window.
+                              type: number
+                            meanWaitingRequests:
+                              description: meanWaitingRequests is the mean number
+                                of waiting requests in the window.
+                              type: number
+                            observedAt:
+                              description: observedAt is when the window was measured.
+                              format: date-time
+                              type: string
+                            p95InterTokenLatency:
+                              description: p95InterTokenLatency is the aggregate p95
+                                latency across the ready pods.
+                              type: string
+                            p95TimeToFirstToken:
+                              description: p95TimeToFirstToken is the aggregate p95
+                                latency across the ready pods.
+                              type: string
+                            podUIDs:
+                              description: podUIDs identifies the pods included in
+                                this measurement.
+                              items:
+                                description: |-
+                                  UID is a type that holds unique ID values, including UUIDs.  Because we
+                                  don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                                  intent and helps make sure that UIDs and names do not get conflated.
+                                type: string
+                              type: array
+                              x-kubernetes-list-type: set
+                            windowDuration:
+                              description: windowDuration is the exact measurement
+                                window length.
+                              type: string
+                          required:
+                          - finishedRequests
+                          - generatedTokensPerSecondMilli
+                          - observedAt
+                          - p95InterTokenLatency
+                          - p95TimeToFirstToken
+                          - windowDuration
+                          type: object
+                        outcome:
+                          description: outcome is the decision result.
+                          type: string
+                        policyGeneration:
+                          description: policyGeneration is the policy generation used
+                            for the decision.
+                          format: int64
+                          type: integer
+                        reason:
+                          description: reason explains the decision.
+                          type: string
+                        referenceMeasurement:
+                          description: referenceMeasurement is the fixed search-reference
+                            measurement.
+                          properties:
+                            backloggedFraction:
+                              description: backloggedFraction is the fraction of the
+                                window with waiting requests.
+                              type: number
+                            finishedRequests:
+                              description: finishedRequests is the total number of
+                                completed requests in the window.
+                              format: int64
+                              type: integer
+                            generatedTokensPerSecondMilli:
+                              description: generatedTokensPerSecondMilli is generated
+                                tokens per second scaled by 1000.
+                              format: int64
+                              type: integer
+                            meanOutputTokens:
+                              description: meanOutputTokens is the mean generated
+                                length in the window.
+                              type: number
+                            meanPromptTokens:
+                              description: meanPromptTokens is the mean prompt length
+                                in the window.
+                              type: number
+                            meanRunningRequests:
+                              description: meanRunningRequests is the mean number
+                                of running requests in the window.
+                              type: number
+                            meanWaitingRequests:
+                              description: meanWaitingRequests is the mean number
+                                of waiting requests in the window.
+                              type: number
+                            observedAt:
+                              description: observedAt is when the window was measured.
+                              format: date-time
+                              type: string
+                            p95InterTokenLatency:
+                              description: p95InterTokenLatency is the aggregate p95
+                                latency across the ready pods.
+                              type: string
+                            p95TimeToFirstToken:
+                              description: p95TimeToFirstToken is the aggregate p95
+                                latency across the ready pods.
+                              type: string
+                            podUIDs:
+                              description: podUIDs identifies the pods included in
+                                this measurement.
+                              items:
+                                description: |-
+                                  UID is a type that holds unique ID values, including UUIDs.  Because we
+                                  don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                                  intent and helps make sure that UIDs and names do not get conflated.
+                                type: string
+                              type: array
+                              x-kubernetes-list-type: set
+                            windowDuration:
+                              description: windowDuration is the exact measurement
+                                window length.
+                              type: string
+                          required:
+                          - finishedRequests
+                          - generatedTokensPerSecondMilli
+                          - observedAt
+                          - p95InterTokenLatency
+                          - p95TimeToFirstToken
+                          - windowDuration
+                          type: object
+                        scoreGain:
+                          description: scoreGain is the weighted score improvement,
+                            when scoring was possible.
+                          type: number
+                        scoredMetrics:
+                          description: scoredMetrics lists the metrics included in
+                            the score.
+                          items:
+                            type: string
+                          type: array
+                        time:
+                          description: time is when the decision was made.
+                          format: date-time
+                          type: string
+                      type: object
+                    type: array
+                  triedConfigurations:
+                    description: triedConfigurations records complete configurations
+                      already evaluated in this search.
+                    items:
+                      description: VllmConfiguration contains all policy-controlled
+                        container arguments.
+                      properties:
+                        arguments:
+                          description: arguments lists the argument operations that
+                            make up this configuration.
+                          items:
+                            description: ContainerArgsPolicyArgument describes one
+                              named container argument operation.
+                            properties:
+                              name:
+                                description: name is the literal option name, such
+                                  as --flag or -f.
+                                minLength: 2
+                                pattern: ^--?[^\s=]+$
+                                type: string
+                              operation:
+                                default: AddOrUpdate
+                                description: operation controls whether the option
+                                  is added/updated or removed.
+                                enum:
+                                - AddOrUpdate
+                                - Remove
+                                type: string
+                              value:
+                                description: value is optional. Omitted value means
+                                  a valueless flag; an explicit empty value is preserved.
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          type: array
+                      type: object
+                    type: array
+                  trigger:
+                    description: trigger explains why the search started.
+                    type: string
+                type: object
+              selectedConfiguration:
+                description: selectedConfiguration is the complete configuration currently
+                  retained by the policy.
+                properties:
+                  arguments:
+                    description: arguments lists the argument operations that make
+                      up this configuration.
+                    items:
+                      description: ContainerArgsPolicyArgument describes one named
+                        container argument operation.
+                      properties:
+                        name:
+                          description: name is the literal option name, such as --flag
+                            or -f.
+                          minLength: 2
+                          pattern: ^--?[^\s=]+$
+                          type: string
+                        operation:
+                          default: AddOrUpdate
+                          description: operation controls whether the option is added/updated
+                            or removed.
+                          enum:
+                          - AddOrUpdate
+                          - Remove
+                          type: string
+                        value:
+                          description: value is optional. Omitted value means a valueless
+                            flag; an explicit empty value is preserved.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                type: object
+              workloadGeneration:
+                description: workloadGeneration prevents tuning against measurements
+                  from an older workload spec.
+                format: int64
+                type: integer
+              workloadUID:
+                description: workloadUID prevents a recreated workload from inheriting
+                  old tuning state.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

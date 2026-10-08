@@ -372,9 +372,6 @@
     "globalConfiguration": {
       "type": "object",
       "properties": {
-        "multiPolicyContainerRightsizingEnabled": {
-          "type": "boolean"
-        },
         "webhookHealth": {
           "type": "object",
           "properties": {
@@ -446,16 +443,6 @@
           },
           "weight": {
             "type": "integer"
-          },
-          "containers": {
-            "type": "array",
-            "uniqueItems": true,
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 63,
-              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
-            }
           },
           "namespaces": {
             "type": "object",

@@ -22,7 +22,6 @@ spec:
   
   # Behavior configuration
   automationEnabled: {{ .Values.globalConfiguration.automationEnabled }}
-  multiPolicyContainerRightsizingEnabled: {{ .Values.globalConfiguration.multiPolicyContainerRightsizingEnabled }}
   proposalSyncEnabled: {{ .Values.globalConfiguration.proposalSyncEnabled }}
   suppressFetchRecommendations: {{ .Values.globalConfiguration.suppressFetchRecommendations }}
   respectKubexAutomation: {{ .Values.globalConfiguration.respectKubexAutomation }}
