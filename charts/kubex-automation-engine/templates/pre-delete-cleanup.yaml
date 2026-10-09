@@ -1,18 +1,9 @@
 {{- /*
 pre-delete-cleanup.yaml
 
-Helm pre-delete hook that removes finalizers from every chart-owned custom
-resource created by this release (identified by the app.kubernetes.io/instance label).
-
-Removing the finalizer allows Helm to delete those CRs immediately as part of the
-normal "helm delete" resource teardown without waiting for the now-shutting-down
-controller to process them.
-
-Note: because the finalizer is removed before the controller runs its cleanup logic,
-any Kubex annotations placed on workloads by these policies will NOT be removed.
-This is an acceptable trade-off for a clean uninstall. If annotation cleanup is
-required, delete the policy CRs manually before running "helm delete" so the
-running controller can clean up first.
+Helm pre-delete hook that clears finalizers from chart-owned custom resources.
+VllmOptimizationPolicies are deleted normally and the hook waits for their controller
+finalizers to restore workloads before uninstalling the controller.
 */}}
 {{- $cleanupImageTag := .Values.cleanup.image.tag | default .Values.image.tag -}}
 ---
@@ -64,6 +55,14 @@ rules:
   - get
   - list
   - patch
+- apiGroups:
+  - rightsizing.kubex.ai
+  resources:
+  - vllmoptimizationpolicies
+  verbs:
+  - get
+  - list
+  - delete
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -96,6 +95,7 @@ metadata:
     "helm.sh/hook-weight": "0"
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
 spec:
+  activeDeadlineSeconds: 330
   ttlSecondsAfterFinished: 300
   template:
     metadata:
@@ -131,4 +131,9 @@ spec:
         - name: HELM_RELEASE_NAME
           value: {{ .Release.Name }}
         resources:
-          {{- toYaml .Values.cleanup.resources | nindent 10 }}
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
