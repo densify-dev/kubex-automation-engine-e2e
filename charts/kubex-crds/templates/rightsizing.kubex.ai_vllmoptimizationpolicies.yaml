@@ -385,12 +385,20 @@ spec:
                         minimum: 1
                         type: integer
                       sizingBasis:
-                        description: sizingBasis selects the token length used to
-                          estimate per-sequence cache blocks.
+                        description: sizingBasis selects observed cache usage or native
+                          engine capacity for sequence sizing.
                         enum:
-                        - ObservedMean
-                        - MaxModelLen
+                        - ObservedCacheUsage
+                        - NativeCapacity
                         type: string
+                      targetCacheUtilization:
+                        description: targetCacheUtilization is the desired cache usage
+                          fraction for ObservedCacheUsage only.
+                        exclusiveMaximum: true
+                        exclusiveMinimum: true
+                        maximum: 1
+                        minimum: 0
+                        type: number
                     required:
                     - max
                     - min
@@ -399,6 +407,10 @@ spec:
                     x-kubernetes-validations:
                     - message: min must be less than or equal to max
                       rule: self.min <= self.max
+                    - message: targetCacheUtilization is required for ObservedCacheUsage
+                      rule: self.sizingBasis != 'ObservedCacheUsage' || has(self.targetCacheUtilization)
+                    - message: targetCacheUtilization is disallowed for NativeCapacity
+                      rule: self.sizingBasis != 'NativeCapacity' || !has(self.targetCacheUtilization)
                 type: object
                 x-kubernetes-validations:
                 - message: at least one supported parameter is required
@@ -454,6 +466,12 @@ spec:
                     default: vllm:inter_token_latency_seconds
                     description: interTokenLatencyHistogram is a classic Prometheus
                       histogram family.
+                    pattern: ^[a-zA-Z_:][a-zA-Z0-9_:]*$
+                    type: string
+                  kvCacheUsageGauge:
+                    default: vllm:kv_cache_usage_perc
+                    description: kvCacheUsageGauge is the Prometheus gauge family
+                      for the KV cache usage fraction.
                     pattern: ^[a-zA-Z_:][a-zA-Z0-9_:]*$
                     type: string
                   namespaceLabel:
@@ -734,20 +752,44 @@ spec:
                       description: VllmPodMeasurement stores formula inputs for one
                         serving pod.
                       properties:
-                        blockSize:
-                          description: blockSize is the number of tokens in each KV
-                            cache block.
-                          format: int64
-                          type: integer
+                        engines:
+                          description: engines stores formula inputs for each engine
+                            in this pod.
+                          items:
+                            description: VllmEngineMeasurement stores formula inputs
+                              for one serving engine.
+                            properties:
+                              engine:
+                                description: engine identifies the serving engine
+                                  within its pod.
+                                type: string
+                              formulaInputError:
+                                description: formulaInputError explains why this engine's
+                                  formula inputs could not be used.
+                                type: string
+                              meanCacheUsage:
+                                description: meanCacheUsage is the mean KV cache usage
+                                  fraction for this engine.
+                                type: number
+                              meanRunningRequests:
+                                description: meanRunningRequests is the mean number
+                                  of requests running on this engine.
+                                type: number
+                              nativeConcurrency:
+                                description: nativeConcurrency is the engine's reported
+                                  native sequence capacity.
+                                type: number
+                            required:
+                            - engine
+                            type: object
+                          type: array
+                          x-kubernetes-list-map-keys:
+                          - engine
+                          x-kubernetes-list-type: map
                         formulaInputError:
                           description: formulaInputError explains why this pod's formula
                             inputs could not be used.
                           type: string
-                        maxModelLen:
-                          description: maxModelLen is the explicitly configured maximum
-                            context length for this pod.
-                          format: int64
-                          type: integer
                         meanOutputTokens:
                           description: meanOutputTokens is the mean generated length
                             observed for this pod.
@@ -756,11 +798,6 @@ spec:
                           description: meanPromptTokens is the mean prompt length
                             observed for this pod.
                           type: number
-                        numGPUBlocks:
-                          description: numGPUBlocks is the number of available KV
-                            cache blocks reported by vLLM.
-                          format: int64
-                          type: integer
                         pod:
                           description: pod identifies the serving pod.
                           type: string
@@ -893,20 +930,44 @@ spec:
                       description: VllmPodMeasurement stores formula inputs for one
                         serving pod.
                       properties:
-                        blockSize:
-                          description: blockSize is the number of tokens in each KV
-                            cache block.
-                          format: int64
-                          type: integer
+                        engines:
+                          description: engines stores formula inputs for each engine
+                            in this pod.
+                          items:
+                            description: VllmEngineMeasurement stores formula inputs
+                              for one serving engine.
+                            properties:
+                              engine:
+                                description: engine identifies the serving engine
+                                  within its pod.
+                                type: string
+                              formulaInputError:
+                                description: formulaInputError explains why this engine's
+                                  formula inputs could not be used.
+                                type: string
+                              meanCacheUsage:
+                                description: meanCacheUsage is the mean KV cache usage
+                                  fraction for this engine.
+                                type: number
+                              meanRunningRequests:
+                                description: meanRunningRequests is the mean number
+                                  of requests running on this engine.
+                                type: number
+                              nativeConcurrency:
+                                description: nativeConcurrency is the engine's reported
+                                  native sequence capacity.
+                                type: number
+                            required:
+                            - engine
+                            type: object
+                          type: array
+                          x-kubernetes-list-map-keys:
+                          - engine
+                          x-kubernetes-list-type: map
                         formulaInputError:
                           description: formulaInputError explains why this pod's formula
                             inputs could not be used.
                           type: string
-                        maxModelLen:
-                          description: maxModelLen is the explicitly configured maximum
-                            context length for this pod.
-                          format: int64
-                          type: integer
                         meanOutputTokens:
                           description: meanOutputTokens is the mean generated length
                             observed for this pod.
@@ -915,11 +976,6 @@ spec:
                           description: meanPromptTokens is the mean prompt length
                             observed for this pod.
                           type: number
-                        numGPUBlocks:
-                          description: numGPUBlocks is the number of available KV
-                            cache blocks reported by vLLM.
-                          format: int64
-                          type: integer
                         pod:
                           description: pod identifies the serving pod.
                           type: string
@@ -1020,20 +1076,44 @@ spec:
                           description: VllmPodMeasurement stores formula inputs for
                             one serving pod.
                           properties:
-                            blockSize:
-                              description: blockSize is the number of tokens in each
-                                KV cache block.
-                              format: int64
-                              type: integer
+                            engines:
+                              description: engines stores formula inputs for each
+                                engine in this pod.
+                              items:
+                                description: VllmEngineMeasurement stores formula
+                                  inputs for one serving engine.
+                                properties:
+                                  engine:
+                                    description: engine identifies the serving engine
+                                      within its pod.
+                                    type: string
+                                  formulaInputError:
+                                    description: formulaInputError explains why this
+                                      engine's formula inputs could not be used.
+                                    type: string
+                                  meanCacheUsage:
+                                    description: meanCacheUsage is the mean KV cache
+                                      usage fraction for this engine.
+                                    type: number
+                                  meanRunningRequests:
+                                    description: meanRunningRequests is the mean number
+                                      of requests running on this engine.
+                                    type: number
+                                  nativeConcurrency:
+                                    description: nativeConcurrency is the engine's
+                                      reported native sequence capacity.
+                                    type: number
+                                required:
+                                - engine
+                                type: object
+                              type: array
+                              x-kubernetes-list-map-keys:
+                              - engine
+                              x-kubernetes-list-type: map
                             formulaInputError:
                               description: formulaInputError explains why this pod's
                                 formula inputs could not be used.
                               type: string
-                            maxModelLen:
-                              description: maxModelLen is the explicitly configured
-                                maximum context length for this pod.
-                              format: int64
-                              type: integer
                             meanOutputTokens:
                               description: meanOutputTokens is the mean generated
                                 length observed for this pod.
@@ -1042,11 +1122,6 @@ spec:
                               description: meanPromptTokens is the mean prompt length
                                 observed for this pod.
                               type: number
-                            numGPUBlocks:
-                              description: numGPUBlocks is the number of available
-                                KV cache blocks reported by vLLM.
-                              format: int64
-                              type: integer
                             pod:
                               description: pod identifies the serving pod.
                               type: string
@@ -1179,20 +1254,44 @@ spec:
                           description: VllmPodMeasurement stores formula inputs for
                             one serving pod.
                           properties:
-                            blockSize:
-                              description: blockSize is the number of tokens in each
-                                KV cache block.
-                              format: int64
-                              type: integer
+                            engines:
+                              description: engines stores formula inputs for each
+                                engine in this pod.
+                              items:
+                                description: VllmEngineMeasurement stores formula
+                                  inputs for one serving engine.
+                                properties:
+                                  engine:
+                                    description: engine identifies the serving engine
+                                      within its pod.
+                                    type: string
+                                  formulaInputError:
+                                    description: formulaInputError explains why this
+                                      engine's formula inputs could not be used.
+                                    type: string
+                                  meanCacheUsage:
+                                    description: meanCacheUsage is the mean KV cache
+                                      usage fraction for this engine.
+                                    type: number
+                                  meanRunningRequests:
+                                    description: meanRunningRequests is the mean number
+                                      of requests running on this engine.
+                                    type: number
+                                  nativeConcurrency:
+                                    description: nativeConcurrency is the engine's
+                                      reported native sequence capacity.
+                                    type: number
+                                required:
+                                - engine
+                                type: object
+                              type: array
+                              x-kubernetes-list-map-keys:
+                              - engine
+                              x-kubernetes-list-type: map
                             formulaInputError:
                               description: formulaInputError explains why this pod's
                                 formula inputs could not be used.
                               type: string
-                            maxModelLen:
-                              description: maxModelLen is the explicitly configured
-                                maximum context length for this pod.
-                              format: int64
-                              type: integer
                             meanOutputTokens:
                               description: meanOutputTokens is the mean generated
                                 length observed for this pod.
@@ -1201,11 +1300,6 @@ spec:
                               description: meanPromptTokens is the mean prompt length
                                 observed for this pod.
                               type: number
-                            numGPUBlocks:
-                              description: numGPUBlocks is the number of available
-                                KV cache blocks reported by vLLM.
-                              format: int64
-                              type: integer
                             pod:
                               description: pod identifies the serving pod.
                               type: string
@@ -1248,78 +1342,97 @@ spec:
                           limit, when present.
                         format: int64
                         type: integer
-                      podEstimates:
-                        description: podEstimates contains per-pod capacity calculations.
+                      engineEstimates:
+                        description: engineEstimates contains per-engine capacity
+                          calculations.
                         items:
-                          description: VllmFormulaPodEstimate records one pod's capacity
-                            estimate.
+                          description: VllmFormulaEngineEstimate records one engine's
+                            capacity estimate.
                           properties:
-                            blockSize:
-                              description: blockSize is the number of tokens in each
-                                KV cache block.
-                              format: int64
-                              type: integer
-                            blocksPerSequence:
-                              description: blocksPerSequence is the blocks required
-                                for one sequence.
-                              format: int64
-                              type: integer
-                            numGPUBlocks:
-                              description: numGPUBlocks is the number of available
-                                KV cache blocks.
-                              format: int64
-                              type: integer
+                            engine:
+                              description: engine identifies the serving engine within
+                                its pod.
+                              type: string
+                            meanCacheUsage:
+                              description: meanCacheUsage is the engine's mean KV
+                                cache usage fraction.
+                              type: number
+                            meanRunningRequests:
+                              description: meanRunningRequests is the engine's mean
+                                running-request count.
+                              type: number
+                            nativeConcurrency:
+                              description: nativeConcurrency is the engine's reported
+                                native sequence capacity.
+                              type: number
                             pod:
                               description: pod identifies the serving pod.
                               type: string
-                            reservedBlocks:
-                              description: reservedBlocks is the number of cache blocks
-                                reserved by the formula.
-                              format: int64
-                              type: integer
                             sequenceCapacity:
                               description: sequenceCapacity is the sequence capacity
-                                estimated for this pod.
+                                estimated for this engine.
                               format: int64
                               type: integer
-                            sequenceLength:
-                              description: sequenceLength is the token length used
-                                by the estimate.
-                              type: number
                           required:
-                          - blockSize
-                          - blocksPerSequence
-                          - numGPUBlocks
+                          - engine
+                          - meanCacheUsage
+                          - meanRunningRequests
+                          - nativeConcurrency
                           - pod
-                          - reservedBlocks
                           - sequenceCapacity
-                          - sequenceLength
                           type: object
                         type: array
                         x-kubernetes-list-map-keys:
                         - pod
+                        - engine
                         x-kubernetes-list-type: map
+                      max:
+                        description: max is the configured maximum sequence count.
+                        format: int64
+                        type: integer
+                      min:
+                        description: min is the configured minimum sequence count.
+                        format: int64
+                        type: integer
                       rawEstimate:
-                        description: rawEstimate is the minimum pod capacity before
+                        description: rawEstimate is the minimum engine capacity before
                           configured bounds are applied.
                         format: int64
                         type: integer
                       sizingBasis:
-                        description: sizingBasis is the token length basis used by
-                          the formula.
+                        description: sizingBasis is the capacity basis used by the
+                          formula.
                         enum:
-                        - ObservedMean
-                        - MaxModelLen
+                        - ObservedCacheUsage
+                        - NativeCapacity
                         type: string
                       target:
                         description: target is the final bounded sequence target.
                         format: int64
                         type: integer
+                      targetCacheUtilization:
+                        description: targetCacheUtilization is the desired cache usage
+                          fraction, when used.
+                        type: number
+                      windowEnd:
+                        description: windowEnd is the end of the formula input measurement
+                          window.
+                        format: date-time
+                        type: string
+                      windowStart:
+                        description: windowStart is the start of the formula input
+                          measurement window.
+                        format: date-time
+                        type: string
                     required:
-                    - podEstimates
+                    - engineEstimates
+                    - max
+                    - min
                     - rawEstimate
                     - sizingBasis
                     - target
+                    - windowEnd
+                    - windowStart
                     type: object
                   improvement:
                     description: improvement identifies the parameter evaluated by
@@ -1404,20 +1517,44 @@ spec:
                           description: VllmPodMeasurement stores formula inputs for
                             one serving pod.
                           properties:
-                            blockSize:
-                              description: blockSize is the number of tokens in each
-                                KV cache block.
-                              format: int64
-                              type: integer
+                            engines:
+                              description: engines stores formula inputs for each
+                                engine in this pod.
+                              items:
+                                description: VllmEngineMeasurement stores formula
+                                  inputs for one serving engine.
+                                properties:
+                                  engine:
+                                    description: engine identifies the serving engine
+                                      within its pod.
+                                    type: string
+                                  formulaInputError:
+                                    description: formulaInputError explains why this
+                                      engine's formula inputs could not be used.
+                                    type: string
+                                  meanCacheUsage:
+                                    description: meanCacheUsage is the mean KV cache
+                                      usage fraction for this engine.
+                                    type: number
+                                  meanRunningRequests:
+                                    description: meanRunningRequests is the mean number
+                                      of requests running on this engine.
+                                    type: number
+                                  nativeConcurrency:
+                                    description: nativeConcurrency is the engine's
+                                      reported native sequence capacity.
+                                    type: number
+                                required:
+                                - engine
+                                type: object
+                              type: array
+                              x-kubernetes-list-map-keys:
+                              - engine
+                              x-kubernetes-list-type: map
                             formulaInputError:
                               description: formulaInputError explains why this pod's
                                 formula inputs could not be used.
                               type: string
-                            maxModelLen:
-                              description: maxModelLen is the explicitly configured
-                                maximum context length for this pod.
-                              format: int64
-                              type: integer
                             meanOutputTokens:
                               description: meanOutputTokens is the mean generated
                                 length observed for this pod.
@@ -1426,11 +1563,6 @@ spec:
                               description: meanPromptTokens is the mean prompt length
                                 observed for this pod.
                               type: number
-                            numGPUBlocks:
-                              description: numGPUBlocks is the number of available
-                                KV cache blocks reported by vLLM.
-                              format: int64
-                              type: integer
                             pod:
                               description: pod identifies the serving pod.
                               type: string
@@ -1583,20 +1715,44 @@ spec:
                           description: VllmPodMeasurement stores formula inputs for
                             one serving pod.
                           properties:
-                            blockSize:
-                              description: blockSize is the number of tokens in each
-                                KV cache block.
-                              format: int64
-                              type: integer
+                            engines:
+                              description: engines stores formula inputs for each
+                                engine in this pod.
+                              items:
+                                description: VllmEngineMeasurement stores formula
+                                  inputs for one serving engine.
+                                properties:
+                                  engine:
+                                    description: engine identifies the serving engine
+                                      within its pod.
+                                    type: string
+                                  formulaInputError:
+                                    description: formulaInputError explains why this
+                                      engine's formula inputs could not be used.
+                                    type: string
+                                  meanCacheUsage:
+                                    description: meanCacheUsage is the mean KV cache
+                                      usage fraction for this engine.
+                                    type: number
+                                  meanRunningRequests:
+                                    description: meanRunningRequests is the mean number
+                                      of requests running on this engine.
+                                    type: number
+                                  nativeConcurrency:
+                                    description: nativeConcurrency is the engine's
+                                      reported native sequence capacity.
+                                    type: number
+                                required:
+                                - engine
+                                type: object
+                              type: array
+                              x-kubernetes-list-map-keys:
+                              - engine
+                              x-kubernetes-list-type: map
                             formulaInputError:
                               description: formulaInputError explains why this pod's
                                 formula inputs could not be used.
                               type: string
-                            maxModelLen:
-                              description: maxModelLen is the explicitly configured
-                                maximum context length for this pod.
-                              format: int64
-                              type: integer
                             meanOutputTokens:
                               description: meanOutputTokens is the mean generated
                                 length observed for this pod.
@@ -1605,11 +1761,6 @@ spec:
                               description: meanPromptTokens is the mean prompt length
                                 observed for this pod.
                               type: number
-                            numGPUBlocks:
-                              description: numGPUBlocks is the number of available
-                                KV cache blocks reported by vLLM.
-                              format: int64
-                              type: integer
                             pod:
                               description: pod identifies the serving pod.
                               type: string
@@ -1833,20 +1984,44 @@ spec:
                           description: VllmPodMeasurement stores formula inputs for
                             one serving pod.
                           properties:
-                            blockSize:
-                              description: blockSize is the number of tokens in each
-                                KV cache block.
-                              format: int64
-                              type: integer
+                            engines:
+                              description: engines stores formula inputs for each
+                                engine in this pod.
+                              items:
+                                description: VllmEngineMeasurement stores formula
+                                  inputs for one serving engine.
+                                properties:
+                                  engine:
+                                    description: engine identifies the serving engine
+                                      within its pod.
+                                    type: string
+                                  formulaInputError:
+                                    description: formulaInputError explains why this
+                                      engine's formula inputs could not be used.
+                                    type: string
+                                  meanCacheUsage:
+                                    description: meanCacheUsage is the mean KV cache
+                                      usage fraction for this engine.
+                                    type: number
+                                  meanRunningRequests:
+                                    description: meanRunningRequests is the mean number
+                                      of requests running on this engine.
+                                    type: number
+                                  nativeConcurrency:
+                                    description: nativeConcurrency is the engine's
+                                      reported native sequence capacity.
+                                    type: number
+                                required:
+                                - engine
+                                type: object
+                              type: array
+                              x-kubernetes-list-map-keys:
+                              - engine
+                              x-kubernetes-list-type: map
                             formulaInputError:
                               description: formulaInputError explains why this pod's
                                 formula inputs could not be used.
                               type: string
-                            maxModelLen:
-                              description: maxModelLen is the explicitly configured
-                                maximum context length for this pod.
-                              format: int64
-                              type: integer
                             meanOutputTokens:
                               description: meanOutputTokens is the mean generated
                                 length observed for this pod.
@@ -1855,11 +2030,6 @@ spec:
                               description: meanPromptTokens is the mean prompt length
                                 observed for this pod.
                               type: number
-                            numGPUBlocks:
-                              description: numGPUBlocks is the number of available
-                                KV cache blocks reported by vLLM.
-                              format: int64
-                              type: integer
                             pod:
                               description: pod identifies the serving pod.
                               type: string
@@ -1940,78 +2110,97 @@ spec:
                           limit, when present.
                         format: int64
                         type: integer
-                      podEstimates:
-                        description: podEstimates contains per-pod capacity calculations.
+                      engineEstimates:
+                        description: engineEstimates contains per-engine capacity
+                          calculations.
                         items:
-                          description: VllmFormulaPodEstimate records one pod's capacity
-                            estimate.
+                          description: VllmFormulaEngineEstimate records one engine's
+                            capacity estimate.
                           properties:
-                            blockSize:
-                              description: blockSize is the number of tokens in each
-                                KV cache block.
-                              format: int64
-                              type: integer
-                            blocksPerSequence:
-                              description: blocksPerSequence is the blocks required
-                                for one sequence.
-                              format: int64
-                              type: integer
-                            numGPUBlocks:
-                              description: numGPUBlocks is the number of available
-                                KV cache blocks.
-                              format: int64
-                              type: integer
+                            engine:
+                              description: engine identifies the serving engine within
+                                its pod.
+                              type: string
+                            meanCacheUsage:
+                              description: meanCacheUsage is the engine's mean KV
+                                cache usage fraction.
+                              type: number
+                            meanRunningRequests:
+                              description: meanRunningRequests is the engine's mean
+                                running-request count.
+                              type: number
+                            nativeConcurrency:
+                              description: nativeConcurrency is the engine's reported
+                                native sequence capacity.
+                              type: number
                             pod:
                               description: pod identifies the serving pod.
                               type: string
-                            reservedBlocks:
-                              description: reservedBlocks is the number of cache blocks
-                                reserved by the formula.
-                              format: int64
-                              type: integer
                             sequenceCapacity:
                               description: sequenceCapacity is the sequence capacity
-                                estimated for this pod.
+                                estimated for this engine.
                               format: int64
                               type: integer
-                            sequenceLength:
-                              description: sequenceLength is the token length used
-                                by the estimate.
-                              type: number
                           required:
-                          - blockSize
-                          - blocksPerSequence
-                          - numGPUBlocks
+                          - engine
+                          - meanCacheUsage
+                          - meanRunningRequests
+                          - nativeConcurrency
                           - pod
-                          - reservedBlocks
                           - sequenceCapacity
-                          - sequenceLength
                           type: object
                         type: array
                         x-kubernetes-list-map-keys:
                         - pod
+                        - engine
                         x-kubernetes-list-type: map
+                      max:
+                        description: max is the configured maximum sequence count.
+                        format: int64
+                        type: integer
+                      min:
+                        description: min is the configured minimum sequence count.
+                        format: int64
+                        type: integer
                       rawEstimate:
-                        description: rawEstimate is the minimum pod capacity before
+                        description: rawEstimate is the minimum engine capacity before
                           configured bounds are applied.
                         format: int64
                         type: integer
                       sizingBasis:
-                        description: sizingBasis is the token length basis used by
-                          the formula.
+                        description: sizingBasis is the capacity basis used by the
+                          formula.
                         enum:
-                        - ObservedMean
-                        - MaxModelLen
+                        - ObservedCacheUsage
+                        - NativeCapacity
                         type: string
                       target:
                         description: target is the final bounded sequence target.
                         format: int64
                         type: integer
+                      targetCacheUtilization:
+                        description: targetCacheUtilization is the desired cache usage
+                          fraction, when used.
+                        type: number
+                      windowEnd:
+                        description: windowEnd is the end of the formula input measurement
+                          window.
+                        format: date-time
+                        type: string
+                      windowStart:
+                        description: windowStart is the start of the formula input
+                          measurement window.
+                        format: date-time
+                        type: string
                     required:
-                    - podEstimates
+                    - engineEstimates
+                    - max
+                    - min
                     - rawEstimate
                     - sizingBasis
                     - target
+                    - windowEnd
+                    - windowStart
                     type: object
                   improvement:
                     description: improvement identifies the parameter changed by this
@@ -2230,20 +2419,45 @@ spec:
                               description: VllmPodMeasurement stores formula inputs
                                 for one serving pod.
                               properties:
-                                blockSize:
-                                  description: blockSize is the number of tokens in
-                                    each KV cache block.
-                                  format: int64
-                                  type: integer
+                                engines:
+                                  description: engines stores formula inputs for each
+                                    engine in this pod.
+                                  items:
+                                    description: VllmEngineMeasurement stores formula
+                                      inputs for one serving engine.
+                                    properties:
+                                      engine:
+                                        description: engine identifies the serving
+                                          engine within its pod.
+                                        type: string
+                                      formulaInputError:
+                                        description: formulaInputError explains why
+                                          this engine's formula inputs could not be
+                                          used.
+                                        type: string
+                                      meanCacheUsage:
+                                        description: meanCacheUsage is the mean KV
+                                          cache usage fraction for this engine.
+                                        type: number
+                                      meanRunningRequests:
+                                        description: meanRunningRequests is the mean
+                                          number of requests running on this engine.
+                                        type: number
+                                      nativeConcurrency:
+                                        description: nativeConcurrency is the engine's
+                                          reported native sequence capacity.
+                                        type: number
+                                    required:
+                                    - engine
+                                    type: object
+                                  type: array
+                                  x-kubernetes-list-map-keys:
+                                  - engine
+                                  x-kubernetes-list-type: map
                                 formulaInputError:
                                   description: formulaInputError explains why this
                                     pod's formula inputs could not be used.
                                   type: string
-                                maxModelLen:
-                                  description: maxModelLen is the explicitly configured
-                                    maximum context length for this pod.
-                                  format: int64
-                                  type: integer
                                 meanOutputTokens:
                                   description: meanOutputTokens is the mean generated
                                     length observed for this pod.
@@ -2252,11 +2466,6 @@ spec:
                                   description: meanPromptTokens is the mean prompt
                                     length observed for this pod.
                                   type: number
-                                numGPUBlocks:
-                                  description: numGPUBlocks is the number of available
-                                    KV cache blocks reported by vLLM.
-                                  format: int64
-                                  type: integer
                                 pod:
                                   description: pod identifies the serving pod.
                                   type: string
@@ -2335,79 +2544,99 @@ spec:
                                 limit, when present.
                               format: int64
                               type: integer
-                            podEstimates:
-                              description: podEstimates contains per-pod capacity
+                            engineEstimates:
+                              description: engineEstimates contains per-engine capacity
                                 calculations.
                               items:
-                                description: VllmFormulaPodEstimate records one pod's
-                                  capacity estimate.
+                                description: VllmFormulaEngineEstimate records one
+                                  engine's capacity estimate.
                                 properties:
-                                  blockSize:
-                                    description: blockSize is the number of tokens
-                                      in each KV cache block.
-                                    format: int64
-                                    type: integer
-                                  blocksPerSequence:
-                                    description: blocksPerSequence is the blocks required
-                                      for one sequence.
-                                    format: int64
-                                    type: integer
-                                  numGPUBlocks:
-                                    description: numGPUBlocks is the number of available
-                                      KV cache blocks.
-                                    format: int64
-                                    type: integer
+                                  engine:
+                                    description: engine identifies the serving engine
+                                      within its pod.
+                                    type: string
+                                  meanCacheUsage:
+                                    description: meanCacheUsage is the engine's mean
+                                      KV cache usage fraction.
+                                    type: number
+                                  meanRunningRequests:
+                                    description: meanRunningRequests is the engine's
+                                      mean running-request count.
+                                    type: number
+                                  nativeConcurrency:
+                                    description: nativeConcurrency is the engine's
+                                      reported native sequence capacity.
+                                    type: number
                                   pod:
                                     description: pod identifies the serving pod.
                                     type: string
-                                  reservedBlocks:
-                                    description: reservedBlocks is the number of cache
-                                      blocks reserved by the formula.
-                                    format: int64
-                                    type: integer
                                   sequenceCapacity:
                                     description: sequenceCapacity is the sequence
-                                      capacity estimated for this pod.
+                                      capacity estimated for this engine.
                                     format: int64
                                     type: integer
-                                  sequenceLength:
-                                    description: sequenceLength is the token length
-                                      used by the estimate.
-                                    type: number
                                 required:
-                                - blockSize
-                                - blocksPerSequence
-                                - numGPUBlocks
+                                - engine
+                                - meanCacheUsage
+                                - meanRunningRequests
+                                - nativeConcurrency
                                 - pod
-                                - reservedBlocks
                                 - sequenceCapacity
-                                - sequenceLength
                                 type: object
                               type: array
                               x-kubernetes-list-map-keys:
                               - pod
+                              - engine
                               x-kubernetes-list-type: map
+                            max:
+                              description: max is the configured maximum sequence
+                                count.
+                              format: int64
+                              type: integer
+                            min:
+                              description: min is the configured minimum sequence
+                                count.
+                              format: int64
+                              type: integer
                             rawEstimate:
-                              description: rawEstimate is the minimum pod capacity
+                              description: rawEstimate is the minimum engine capacity
                                 before configured bounds are applied.
                               format: int64
                               type: integer
                             sizingBasis:
-                              description: sizingBasis is the token length basis used
+                              description: sizingBasis is the capacity basis used
                                 by the formula.
                               enum:
-                              - ObservedMean
-                              - MaxModelLen
+                              - ObservedCacheUsage
+                              - NativeCapacity
                               type: string
                             target:
                               description: target is the final bounded sequence target.
                               format: int64
                               type: integer
+                            targetCacheUtilization:
+                              description: targetCacheUtilization is the desired cache
+                                usage fraction, when used.
+                              type: number
+                            windowEnd:
+                              description: windowEnd is the end of the formula input
+                                measurement window.
+                              format: date-time
+                              type: string
+                            windowStart:
+                              description: windowStart is the start of the formula
+                                input measurement window.
+                              format: date-time
+                              type: string
                           required:
-                          - podEstimates
+                          - engineEstimates
+                          - max
+                          - min
                           - rawEstimate
                           - sizingBasis
                           - target
+                          - windowEnd
+                          - windowStart
                           type: object
                         improvement:
                           description: improvement identifies the formula improvement.
@@ -2549,20 +2778,44 @@ spec:
                           description: VllmPodMeasurement stores formula inputs for
                             one serving pod.
                           properties:
-                            blockSize:
-                              description: blockSize is the number of tokens in each
-                                KV cache block.
-                              format: int64
-                              type: integer
+                            engines:
+                              description: engines stores formula inputs for each
+                                engine in this pod.
+                              items:
+                                description: VllmEngineMeasurement stores formula
+                                  inputs for one serving engine.
+                                properties:
+                                  engine:
+                                    description: engine identifies the serving engine
+                                      within its pod.
+                                    type: string
+                                  formulaInputError:
+                                    description: formulaInputError explains why this
+                                      engine's formula inputs could not be used.
+                                    type: string
+                                  meanCacheUsage:
+                                    description: meanCacheUsage is the mean KV cache
+                                      usage fraction for this engine.
+                                    type: number
+                                  meanRunningRequests:
+                                    description: meanRunningRequests is the mean number
+                                      of requests running on this engine.
+                                    type: number
+                                  nativeConcurrency:
+                                    description: nativeConcurrency is the engine's
+                                      reported native sequence capacity.
+                                    type: number
+                                required:
+                                - engine
+                                type: object
+                              type: array
+                              x-kubernetes-list-map-keys:
+                              - engine
+                              x-kubernetes-list-type: map
                             formulaInputError:
                               description: formulaInputError explains why this pod's
                                 formula inputs could not be used.
                               type: string
-                            maxModelLen:
-                              description: maxModelLen is the explicitly configured
-                                maximum context length for this pod.
-                              format: int64
-                              type: integer
                             meanOutputTokens:
                               description: meanOutputTokens is the mean generated
                                 length observed for this pod.
@@ -2571,11 +2824,6 @@ spec:
                               description: meanPromptTokens is the mean prompt length
                                 observed for this pod.
                               type: number
-                            numGPUBlocks:
-                              description: numGPUBlocks is the number of available
-                                KV cache blocks reported by vLLM.
-                              format: int64
-                              type: integer
                             pod:
                               description: pod identifies the serving pod.
                               type: string
@@ -2692,20 +2940,46 @@ spec:
                                 description: VllmPodMeasurement stores formula inputs
                                   for one serving pod.
                                 properties:
-                                  blockSize:
-                                    description: blockSize is the number of tokens
-                                      in each KV cache block.
-                                    format: int64
-                                    type: integer
+                                  engines:
+                                    description: engines stores formula inputs for
+                                      each engine in this pod.
+                                    items:
+                                      description: VllmEngineMeasurement stores formula
+                                        inputs for one serving engine.
+                                      properties:
+                                        engine:
+                                          description: engine identifies the serving
+                                            engine within its pod.
+                                          type: string
+                                        formulaInputError:
+                                          description: formulaInputError explains
+                                            why this engine's formula inputs could
+                                            not be used.
+                                          type: string
+                                        meanCacheUsage:
+                                          description: meanCacheUsage is the mean
+                                            KV cache usage fraction for this engine.
+                                          type: number
+                                        meanRunningRequests:
+                                          description: meanRunningRequests is the
+                                            mean number of requests running on this
+                                            engine.
+                                          type: number
+                                        nativeConcurrency:
+                                          description: nativeConcurrency is the engine's
+                                            reported native sequence capacity.
+                                          type: number
+                                      required:
+                                      - engine
+                                      type: object
+                                    type: array
+                                    x-kubernetes-list-map-keys:
+                                    - engine
+                                    x-kubernetes-list-type: map
                                   formulaInputError:
                                     description: formulaInputError explains why this
                                       pod's formula inputs could not be used.
                                     type: string
-                                  maxModelLen:
-                                    description: maxModelLen is the explicitly configured
-                                      maximum context length for this pod.
-                                    format: int64
-                                    type: integer
                                   meanOutputTokens:
                                     description: meanOutputTokens is the mean generated
                                       length observed for this pod.
@@ -2714,11 +2988,6 @@ spec:
                                     description: meanPromptTokens is the mean prompt
                                       length observed for this pod.
                                     type: number
-                                  numGPUBlocks:
-                                    description: numGPUBlocks is the number of available
-                                      KV cache blocks reported by vLLM.
-                                    format: int64
-                                    type: integer
                                   pod:
                                     description: pod identifies the serving pod.
                                     type: string
@@ -2852,20 +3121,46 @@ spec:
                                 description: VllmPodMeasurement stores formula inputs
                                   for one serving pod.
                                 properties:
-                                  blockSize:
-                                    description: blockSize is the number of tokens
-                                      in each KV cache block.
-                                    format: int64
-                                    type: integer
+                                  engines:
+                                    description: engines stores formula inputs for
+                                      each engine in this pod.
+                                    items:
+                                      description: VllmEngineMeasurement stores formula
+                                        inputs for one serving engine.
+                                      properties:
+                                        engine:
+                                          description: engine identifies the serving
+                                            engine within its pod.
+                                          type: string
+                                        formulaInputError:
+                                          description: formulaInputError explains
+                                            why this engine's formula inputs could
+                                            not be used.
+                                          type: string
+                                        meanCacheUsage:
+                                          description: meanCacheUsage is the mean
+                                            KV cache usage fraction for this engine.
+                                          type: number
+                                        meanRunningRequests:
+                                          description: meanRunningRequests is the
+                                            mean number of requests running on this
+                                            engine.
+                                          type: number
+                                        nativeConcurrency:
+                                          description: nativeConcurrency is the engine's
+                                            reported native sequence capacity.
+                                          type: number
+                                      required:
+                                      - engine
+                                      type: object
+                                    type: array
+                                    x-kubernetes-list-map-keys:
+                                    - engine
+                                    x-kubernetes-list-type: map
                                   formulaInputError:
                                     description: formulaInputError explains why this
                                       pod's formula inputs could not be used.
                                     type: string
-                                  maxModelLen:
-                                    description: maxModelLen is the explicitly configured
-                                      maximum context length for this pod.
-                                    format: int64
-                                    type: integer
                                   meanOutputTokens:
                                     description: meanOutputTokens is the mean generated
                                       length observed for this pod.
@@ -2874,11 +3169,6 @@ spec:
                                     description: meanPromptTokens is the mean prompt
                                       length observed for this pod.
                                     type: number
-                                  numGPUBlocks:
-                                    description: numGPUBlocks is the number of available
-                                      KV cache blocks reported by vLLM.
-                                    format: int64
-                                    type: integer
                                   pod:
                                     description: pod identifies the serving pod.
                                     type: string
@@ -2922,79 +3212,99 @@ spec:
                                 limit, when present.
                               format: int64
                               type: integer
-                            podEstimates:
-                              description: podEstimates contains per-pod capacity
+                            engineEstimates:
+                              description: engineEstimates contains per-engine capacity
                                 calculations.
                               items:
-                                description: VllmFormulaPodEstimate records one pod's
-                                  capacity estimate.
+                                description: VllmFormulaEngineEstimate records one
+                                  engine's capacity estimate.
                                 properties:
-                                  blockSize:
-                                    description: blockSize is the number of tokens
-                                      in each KV cache block.
-                                    format: int64
-                                    type: integer
-                                  blocksPerSequence:
-                                    description: blocksPerSequence is the blocks required
-                                      for one sequence.
-                                    format: int64
-                                    type: integer
-                                  numGPUBlocks:
-                                    description: numGPUBlocks is the number of available
-                                      KV cache blocks.
-                                    format: int64
-                                    type: integer
+                                  engine:
+                                    description: engine identifies the serving engine
+                                      within its pod.
+                                    type: string
+                                  meanCacheUsage:
+                                    description: meanCacheUsage is the engine's mean
+                                      KV cache usage fraction.
+                                    type: number
+                                  meanRunningRequests:
+                                    description: meanRunningRequests is the engine's
+                                      mean running-request count.
+                                    type: number
+                                  nativeConcurrency:
+                                    description: nativeConcurrency is the engine's
+                                      reported native sequence capacity.
+                                    type: number
                                   pod:
                                     description: pod identifies the serving pod.
                                     type: string
-                                  reservedBlocks:
-                                    description: reservedBlocks is the number of cache
-                                      blocks reserved by the formula.
-                                    format: int64
-                                    type: integer
                                   sequenceCapacity:
                                     description: sequenceCapacity is the sequence
-                                      capacity estimated for this pod.
+                                      capacity estimated for this engine.
                                     format: int64
                                     type: integer
-                                  sequenceLength:
-                                    description: sequenceLength is the token length
-                                      used by the estimate.
-                                    type: number
                                 required:
-                                - blockSize
-                                - blocksPerSequence
-                                - numGPUBlocks
+                                - engine
+                                - meanCacheUsage
+                                - meanRunningRequests
+                                - nativeConcurrency
                                 - pod
-                                - reservedBlocks
                                 - sequenceCapacity
-                                - sequenceLength
                                 type: object
                               type: array
                               x-kubernetes-list-map-keys:
                               - pod
+                              - engine
                               x-kubernetes-list-type: map
+                            max:
+                              description: max is the configured maximum sequence
+                                count.
+                              format: int64
+                              type: integer
+                            min:
+                              description: min is the configured minimum sequence
+                                count.
+                              format: int64
+                              type: integer
                             rawEstimate:
-                              description: rawEstimate is the minimum pod capacity
+                              description: rawEstimate is the minimum engine capacity
                                 before configured bounds are applied.
                               format: int64
                               type: integer
                             sizingBasis:
-                              description: sizingBasis is the token length basis used
+                              description: sizingBasis is the capacity basis used
                                 by the formula.
                               enum:
-                              - ObservedMean
-                              - MaxModelLen
+                              - ObservedCacheUsage
+                              - NativeCapacity
                               type: string
                             target:
                               description: target is the final bounded sequence target.
                               format: int64
                               type: integer
+                            targetCacheUtilization:
+                              description: targetCacheUtilization is the desired cache
+                                usage fraction, when used.
+                              type: number
+                            windowEnd:
+                              description: windowEnd is the end of the formula input
+                                measurement window.
+                              format: date-time
+                              type: string
+                            windowStart:
+                              description: windowStart is the start of the formula
+                                input measurement window.
+                              format: date-time
+                              type: string
                           required:
-                          - podEstimates
+                          - engineEstimates
+                          - max
+                          - min
                           - rawEstimate
                           - sizingBasis
                           - target
+                          - windowEnd
+                          - windowStart
                           type: object
                         improvement:
                           description: improvement identifies the parameter evaluated
@@ -3079,20 +3389,46 @@ spec:
                                 description: VllmPodMeasurement stores formula inputs
                                   for one serving pod.
                                 properties:
-                                  blockSize:
-                                    description: blockSize is the number of tokens
-                                      in each KV cache block.
-                                    format: int64
-                                    type: integer
+                                  engines:
+                                    description: engines stores formula inputs for
+                                      each engine in this pod.
+                                    items:
+                                      description: VllmEngineMeasurement stores formula
+                                        inputs for one serving engine.
+                                      properties:
+                                        engine:
+                                          description: engine identifies the serving
+                                            engine within its pod.
+                                          type: string
+                                        formulaInputError:
+                                          description: formulaInputError explains
+                                            why this engine's formula inputs could
+                                            not be used.
+                                          type: string
+                                        meanCacheUsage:
+                                          description: meanCacheUsage is the mean
+                                            KV cache usage fraction for this engine.
+                                          type: number
+                                        meanRunningRequests:
+                                          description: meanRunningRequests is the
+                                            mean number of requests running on this
+                                            engine.
+                                          type: number
+                                        nativeConcurrency:
+                                          description: nativeConcurrency is the engine's
+                                            reported native sequence capacity.
+                                          type: number
+                                      required:
+                                      - engine
+                                      type: object
+                                    type: array
+                                    x-kubernetes-list-map-keys:
+                                    - engine
+                                    x-kubernetes-list-type: map
                                   formulaInputError:
                                     description: formulaInputError explains why this
                                       pod's formula inputs could not be used.
                                     type: string
-                                  maxModelLen:
-                                    description: maxModelLen is the explicitly configured
-                                      maximum context length for this pod.
-                                    format: int64
-                                    type: integer
                                   meanOutputTokens:
                                     description: meanOutputTokens is the mean generated
                                       length observed for this pod.
@@ -3101,11 +3437,6 @@ spec:
                                     description: meanPromptTokens is the mean prompt
                                       length observed for this pod.
                                     type: number
-                                  numGPUBlocks:
-                                    description: numGPUBlocks is the number of available
-                                      KV cache blocks reported by vLLM.
-                                    format: int64
-                                    type: integer
                                   pod:
                                     description: pod identifies the serving pod.
                                     type: string

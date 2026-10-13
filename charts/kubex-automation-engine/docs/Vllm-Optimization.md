@@ -2,6 +2,15 @@
 
 `VllmOptimizationPolicy` can tune `--max-num-batched-tokens`, `--max-num-seqs`, or both for one Deployment or KubeAI Model. It compares complete policy-controlled configurations and replaces pods when applying a trial. It does not change GPU allocation, replica count, KV-cache size, or other vLLM arguments. Pod disruption during trials is expected.
 
+## E2e fixture prerequisites
+
+The live optimization tests require a real NVIDIA GPU cluster and the e2e Prometheus scrape fixture. Observed and batch-only cases use pinned vLLM image `vllm/vllm-openai@sha256:014a95f21c9edf6abe0aea6b07353f96baa4ec291c427bb1176dc7c93a85845c`. Native-capacity cases use the nightly artifact pinned to `vllm/vllm-openai@sha256:8896fd7b29fc4ee7ce839f146cb4757984c476ec79d0234ffa8c995dee6e339a` to exercise newer native metadata:
+
+- Full attention uses `Qwen/Qwen2.5-0.5B-Instruct` at revision `7ae557604adf67be50417f59c2c2f167def9a775`, with the hybrid KV-cache manager disabled.
+- Hybrid uses the sliding-window/full-attention `google/gemma-2-2b-it` at revision `299a8560bedf22ed1c72a8a11e7dce4a7f9f51f8`, confirmed through the Hugging Face model API, with the hybrid manager enabled. Accept the model's gated license on Hugging Face and export `HF_TOKEN` for an account with approved access. Without `HF_TOKEN`, hybrid live cases skip. The test creates a Secret in its per-test namespace and passes `HF_TOKEN` through `secretKeyRef` only for hybrid pods. Tokens never appear in workload manifests; namespace cleanup removes the Secret.
+
+`NativeCapacity` live cases require `vllm:cache_config_info` with namespace, pod, engine, and finite positive `kv_cache_max_concurrency` labels, and gauge value `1`. The pinned image's metadata capability has not been verified on a live GPU here. If that image does not expose this metadata, the native fixture is blocked and the test fails with a capability error. Do not substitute observed sizing, infer concurrency from block counts, or add model/image identity rules to make it pass. Observed-cache and batch-only cases do not require this native metadata.
+
 ## Configure a policy
 
 ```yaml
@@ -61,7 +70,8 @@ spec:
     maxNumSeqs:
       min: 8
       max: 12
-      sizingBasis: ObservedMean
+      sizingBasis: ObservedCacheUsage
+      targetCacheUtilization: 0.8
 ```
 
 The target, latency limits, evaluation settings, and at least one formula or experiment are required. The target, including its container, is immutable. `formulaOrder` selects the `maxNumSeqs` formula; `experimentOrder` selects the `maxNumBatchedTokens` experiment. Either list may be empty, but not both. The example ranges are illustrative. Keep bounds valid for the model and vLLM configuration. Without chunked prefill, the batch-token limit must accommodate the model's maximum sequence length.
@@ -87,6 +97,8 @@ Omitted `maxRegressionPercent` means no relative regression cap; an explicit `0`
 - Counters: `vllm:generation_tokens_total`, `vllm:request_success_total`.
 - Histograms: `vllm:time_to_first_token_seconds`, `vllm:inter_token_latency_seconds`, `vllm:request_prompt_tokens`, `vllm:request_generation_tokens`.
 - Gauges: `vllm:num_requests_running`, `vllm:num_requests_waiting`.
+- Observed formula gauge: `spec.prometheus.kvCacheUsageGauge`, default `vllm:kv_cache_usage_perc`. Despite its name, this gauge is a fraction, not a value from 0 to 100.
+- Native formula metadata: `vllm:cache_config_info`, with the `kv_cache_max_concurrency` label.
 
 The default policy also requires [GPU Process Exporter](https://github.com/densify-dev/gpu-process-exporter) metrics:
 
@@ -129,9 +141,14 @@ For the `maxNumBatchedTokens` experiment, a parseable starting value outside the
 
 `formulaOrder` and `experimentOrder` are required lists. At least one must be nonempty. `formulaOrder` currently accepts `maxNumSeqs`; `experimentOrder` accepts `maxNumBatchedTokens`. The controller runs formula improvements before experiments. Use an empty list for a phase you do not need.
 
-The `maxNumSeqs` formula supports `ObservedMean` and `MaxModelLen`. `ObservedMean` uses the measured mean prompt plus output length for each ready pod. `MaxModelLen` uses an explicit `--max-model-len` argument. Formula sizing requires the verified single-engine, uniform full-attention workload. Native cache metadata does not identify every hybrid layout, so this first implementation accepts only `Qwen/Qwen2.5-0.5B-Instruct` at revision `7ae557604adf67be50417f59c2c2f167def9a775`, served by `vllm/vllm-openai@sha256:014a95f21c9edf6abe0aea6b07353f96baa4ec291c427bb1176dc7c93a85845c`. Other images or models, layout overrides, speculative decoding, and multi-engine configurations skip the formula. Batch-only optimization is not subject to this restriction.
+The `maxNumSeqs` formula has two explicit modes:
 
-The formula reads native `vllm:cache_config_info` metadata, including `engine`, `num_gpu_blocks`, and `block_size`. Each ready pod must report exactly one engine with consistent positive block metadata. Missing or invalid metadata, multiple engines, missing observed prompt/output means, or a missing explicit max model length makes that formula improvement skip; the batch-token experiment can still run. The formula reserves one null cache block per engine, computes blocks per sequence as `ceil(sequenceLength / blockSize)`, then estimates capacity as `(num_gpu_blocks - 1) // blocksPerSequence`. It takes the minimum capacity across ready pods, clamps that result to the configured `min` and `max`, and also caps it at an explicitly configured `maxNumBatchedTokens`. It does not guess vLLM defaults. `maxNumSeqs` requires `min`, `max`, and `sizingBasis`; it has no `step`.
+- `ObservedCacheUsage` computes `floor(targetCacheUtilization × meanRunningRequests / meanCacheUsage)` independently for every engine. `targetCacheUtilization` is required and must be strictly between 0 and 1. Running-request and cache-usage means come from the same measurement window and engine. This estimates capacity for the observed workload, including request lengths and prefix reuse; it is not a guarantee for a different traffic mix.
+- `NativeCapacity` computes `floor(kv_cache_max_concurrency)` for each engine from native `vllm:cache_config_info` metadata. This is vLLM's reported maximum-context concurrency, not observed average-request capacity. `targetCacheUtilization` is forbidden in this mode.
+
+The raw estimate is the minimum across every engine in every ready pod. An estimate below `min` skips the formula; the controller never raises it to imply that the minimum fits. Otherwise it caps the estimate at `max` and an explicit `maxNumBatchedTokens` value when present. It never guesses absent vLLM arguments. `maxNumSeqs` requires `min`, `max`, and `sizingBasis`; it has no `step` or default sizing basis.
+
+Formula eligibility depends on scoped, valid telemetry, not image digest, model identity, revision, or a single-engine/full-attention allowlist. Multiple engines and hybrid cache layouts use the same per-engine calculation. Missing engine labels, mismatched engine coverage, inconsistent scrape copies, or unusable inputs skip the formula rather than reconstructing cache capacity from block counts. The batch-token experiment can still run. Zero cache usage cannot support observed sizing. Prefix sharing and requests progressing through prefill and decode change the relationship between occupancy and running requests. Changed traffic can invalidate that extrapolation. Engine population coverage uses Prometheus presence at one-second resolution over the recorded baseline; it cannot detect changes between scrapes. Formula evidence records the measurement window, per-engine inputs and capacities, raw minimum, bounds, and final target.
 
 After formula improvements, `experimentOrder` runs bounded neighbor trials for `maxNumBatchedTokens` using its `min`, `max`, and `step`. These phases share the same objective, latency constraints, traffic-comparison rules, and fixed search reference. A formula is a sizing proposal, not a performance guarantee. Both formula and experiment candidates are evaluated statistically and can roll back. The policy does not need to find a winning candidate to complete a search.
 
@@ -188,6 +205,6 @@ These metrics describe controller settings, not proof that every pod has complet
 
 A rejected trial restores the prior complete configuration. Deleting the policy restores each latest original explicit argument, or removes it if that declaration was absent. User declaration edits override earlier tuning and restoration values. Wait for replacement pods and finalizer removal before considering cleanup complete. Do not remove the finalizer manually.
 
-This API replaces `parameterOrder` with required `formulaOrder` and `experimentOrder` fields, so existing policies must be recreated. Save their specs, then delete the policies while the old controller is still running. Wait for original arguments to be restored, owned `ContainerArgsPolicy` objects to be deleted, and policy finalizers to be removed. Only then upgrade the CRD and controller. Replace `parameterOrder` with `formulaOrder: [maxNumSeqs]` and `experimentOrder: [maxNumBatchedTokens]`, using an empty list for disabled improvements. Remove `parameters.maxNumSeqs.step`, choose an explicit `sizingBasis`, and recreate the policies with the translated specs. Do not clear status or finalizers by hand.
+This incompatible API replaces the old `ObservedMean` and `MaxModelLen` sizing bases with `ObservedCacheUsage` and `NativeCapacity`. Older policies using `parameterOrder` must also move to required `formulaOrder` and `experimentOrder` lists. Existing policies must be recreated. Save their specs, then delete the policies while the old controller is still running. Wait for original arguments to be restored, owned `ContainerArgsPolicy` objects to be deleted, and policy finalizers to be removed. Only then upgrade the CRD and controller. Replace `parameterOrder` with `formulaOrder: [maxNumSeqs]` and `experimentOrder: [maxNumBatchedTokens]`, using an empty list for disabled improvements. Remove `parameters.maxNumSeqs.step`. Choose `ObservedCacheUsage` with an explicit `targetCacheUtilization`, or `NativeCapacity` without that field. There is no automatic translation of old block-based sizing. Recreate the policies with the translated specs. Do not clear status or finalizers by hand.
 
 The tuner measures performance at a fixed allocation. It does not prove that fewer GPUs or replicas are safe, and it does not claim a cost reduction.

@@ -2,15 +2,18 @@
 
 import json
 import math
+import os
 import socket
 import subprocess
 import threading
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 import pytest
+import yaml
 from kubernetes.client.rest import ApiException
 
 from helpers import (
@@ -28,9 +31,13 @@ from helpers import (
 pytestmark = pytest.mark.gpu_suite
 
 IMAGE = "vllm/vllm-openai@sha256:014a95f21c9edf6abe0aea6b07353f96baa4ec291c427bb1176dc7c93a85845c"
+# Native metadata is required from the artifact, not inferred from its identity.
+NATIVE_IMAGE = "vllm/vllm-openai@sha256:8896fd7b29fc4ee7ce839f146cb4757984c476ec79d0234ffa8c995dee6e339a"
 MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 MODEL_REVISION = "7ae557604adf67be50417f59c2c2f167def9a775"
-MODEL_NAME = "qwen2-5-0-5b-e2e"
+HYBRID_MODEL = "google/gemma-2-2b-it"
+HYBRID_MODEL_REVISION = "299a8560bedf22ed1c72a8a11e7dce4a7f9f51f8"
+MODEL_NAME = "vllm-e2e"
 PROMETHEUS_URL = "http://prometheus.monitoring.svc:9090"
 BATCH_ARG = "--max-num-batched-tokens"
 SEQ_ARG = "--max-num-seqs"
@@ -48,6 +55,7 @@ HISTOGRAM_COUNT_FAMILIES = (
 GAUGE_FAMILIES = (
     "vllm:num_requests_running",
     "vllm:num_requests_waiting",
+    "vllm:kv_cache_usage_perc",
 )
 
 
@@ -62,7 +70,7 @@ class _RequestLoad:
         self.url = url
         self.stop = threading.Event()
         self.lock = threading.Lock()
-        self.repetitions = 2
+        self.repetitions = 16
         self.request_errors = 0
         self.last_error = ""
         self.executor = ThreadPoolExecutor(max_workers=workers)
@@ -80,8 +88,10 @@ class _RequestLoad:
                 {
                     "model": MODEL_NAME,
                     "prompt": "The controlled request says hello. " * repetitions,
-                    "max_tokens": 8,
+                    "max_tokens": 64,
+                    "ignore_eos": True,
                     "temperature": 0,
+                    "seed": 0,
                 }
             ).encode()
             request = urllib.request.Request(
@@ -194,6 +204,52 @@ def test_metric_values_maps_each_query_to_its_family(monkeypatch):
     assert all(" or " not in expression for expression in queries)
 
 
+def _require_native_capacity(kube_context: str, namespace: str, deployment: str) -> None:
+    selector = f'namespace="{namespace}",pod=~"{deployment}-.*"'
+    rows = prometheus_query(kube_context, "monitoring", f"vllm:cache_config_info{{{selector}}}")[
+        "data"
+    ]["result"]
+    valid = bool(rows)
+    for row in rows:
+        metric = row["metric"]
+        try:
+            concurrency = float(metric.get("kv_cache_max_concurrency", "nan"))
+            valid = valid and (
+                metric.get("namespace") == namespace
+                and bool(metric.get("pod"))
+                and bool(metric.get("engine"))
+                and math.isfinite(concurrency)
+                and concurrency > 0
+                and float(row["value"][1]) == 1
+            )
+        except (TypeError, ValueError):
+            valid = False
+    if not valid:
+        pytest.fail(
+            "NativeCapacity fixture blocked: pinned vLLM must expose scoped "
+            "vllm:cache_config_info with engine and finite positive "
+            "kv_cache_max_concurrency labels; no observed/block-count fallback. "
+            "See Vllm-Optimization.md fixture prerequisites."
+        )
+
+
+@pytest.mark.parametrize("concurrency", ["9.9", None, "nan", "0", "invalid"])
+def test_native_capacity_requires_metadata_capability(monkeypatch, concurrency):
+    metric = {"namespace": "ns", "pod": "server-0", "engine": "0"}
+    if concurrency is not None:
+        metric["kv_cache_max_concurrency"] = concurrency
+    monkeypatch.setitem(
+        globals(),
+        "prometheus_query",
+        lambda *_: {"data": {"result": [{"metric": metric, "value": [0, "1"]}]}},
+    )
+    if concurrency == "9.9":
+        _require_native_capacity("context", "ns", "server")
+    else:
+        with pytest.raises(pytest.fail.Exception, match="NativeCapacity fixture blocked"):
+            _require_native_capacity("context", "ns", "server")
+
+
 def _prompt_mean(kube_context: str, namespace: str, deployment: str) -> float | None:
     selector = f'namespace="{namespace}",pod=~"{deployment}-.*"'
     query = (
@@ -227,80 +283,101 @@ def _configuration_value(configuration: dict | None, name: str = BATCH_ARG) -> s
     return _argument_value((configuration or {}).get("arguments", []), name)
 
 
-def _formula_metadata(kube_context: str, namespace: str, deployment: str) -> dict | None:
-    selector = f'namespace="{namespace}",pod=~"{deployment}-.*"'
-    rows = prometheus_query(
-        kube_context, "monitoring", f"vllm:cache_config_info{{{selector}}}"
-    )["data"]["result"]
-    if not rows:
-        return None
-
-    by_pod = {}
-    for row in rows:
-        labels = row["metric"]
-        pod, engine = labels.get("pod"), labels.get("engine")
-        try:
-            blocks = int(labels["num_gpu_blocks"])
-            block_size = int(labels["block_size"])
-            value = float(row["value"][1])
-        except (KeyError, TypeError, ValueError):
-            return None
-        if not pod or not engine or blocks <= 0 or block_size <= 0 or value != 1:
-            return None
-        engine_metadata = by_pod.setdefault(pod, {})
-        metadata = (blocks, block_size)
-        if engine in engine_metadata and engine_metadata[engine] != metadata:
-            return None
-        engine_metadata[engine] = metadata
-    return by_pod
-
-
-def _assert_formula_evidence(policy: dict, sizing_basis: str, metadata: dict) -> None:
-    status = policy["status"]
-    plan = status["plan"]
+def _assert_formula_evidence(policy: dict, sizing_basis: str) -> None:
+    plan = policy["status"]["plan"]
     evidence = plan["formulaEvidence"]
     assert plan["stage"] == "Formula"
     assert plan["improvement"] == "maxNumSeqs"
     assert evidence["sizingBasis"] == sizing_basis
     assert evidence["batchLimit"] == 4096
-
-    measured_pods = {
-        sample["pod"]: sample
-        for sample in plan["baselineMeasurement"].get("podMeasurements", [])
+    measurement = plan["baselineMeasurement"]
+    assert evidence["windowEnd"] == measurement["observedAt"]
+    window_start = datetime.fromisoformat(evidence["windowStart"].replace("Z", "+00:00"))
+    window_end = datetime.fromisoformat(evidence["windowEnd"].replace("Z", "+00:00"))
+    assert window_end - window_start == timedelta(seconds=30)
+    measured_engines = {
+        (pod["pod"], engine["engine"]): engine
+        for pod in measurement["podMeasurements"]
+        for engine in pod["engines"]
     }
-    estimates = evidence["podEstimates"]
+    estimates = evidence["engineEstimates"]
     assert estimates
+    assert {(e["pod"], e["engine"]) for e in estimates} == set(measured_engines)
+    if sizing_basis == "ObservedCacheUsage":
+        assert evidence["targetCacheUtilization"] == 0.8
+    else:
+        assert "targetCacheUtilization" not in evidence
     capacities = []
     for estimate in estimates:
-        pod = estimate["pod"]
-        engines = metadata.get(pod, {})
-        assert len(engines) == 1, (
-            f"formula expects one vLLM engine per pod, got {engines} for {pod}"
-        )
-        num_gpu_blocks, block_size = next(iter(engines.values()))
-        assert estimate["numGPUBlocks"] == num_gpu_blocks
-        assert estimate["blockSize"] == block_size
-        assert estimate["reservedBlocks"] == 1
-
-        sequence_length = estimate["sequenceLength"]
-        if sizing_basis == "MaxModelLen":
-            assert sequence_length == 1024  # Explicit --max-model-len in the test Deployment.
+        engine = measured_engines[(estimate["pod"], estimate["engine"])]
+        if sizing_basis == "ObservedCacheUsage":
+            running, usage = engine["meanRunningRequests"], engine["meanCacheUsage"]
+            assert running > 0 and 0 < usage <= 1
+            assert math.isclose(estimate["meanRunningRequests"], running, rel_tol=1e-6)
+            assert math.isclose(estimate["meanCacheUsage"], usage, rel_tol=1e-6)
+            capacity = math.floor(0.8 * running / usage)
         else:
-            measurement = measured_pods[pod]
-            expected_length = measurement["meanPromptTokens"] + measurement["meanOutputTokens"]
-            assert math.isclose(sequence_length, expected_length, rel_tol=1e-6)
-        blocks_per_sequence = max(1, math.ceil(sequence_length / block_size))
-        assert estimate["blocksPerSequence"] == blocks_per_sequence
-        capacity = (num_gpu_blocks - 1) // blocks_per_sequence
+            native = engine["nativeConcurrency"]
+            assert math.isfinite(native) and native > 0
+            assert estimate["nativeConcurrency"] == native
+            capacity = math.floor(native)
         assert estimate["sequenceCapacity"] == capacity
         capacities.append(capacity)
 
     raw_estimate = min(capacities)
-    target = min(max(raw_estimate, 1), min(12, 4096))
+    target = min(max(raw_estimate, evidence["min"]), evidence["max"], 4096)
     assert evidence["rawEstimate"] == raw_estimate
     assert evidence["target"] == target
     assert _configuration_value(plan["candidateConfiguration"], SEQ_ARG) == str(target)
     assert _configuration_value(plan["candidateConfiguration"]) == "4096"
+
+
+@pytest.mark.parametrize("sizing_basis", ["ObservedCacheUsage", "NativeCapacity"])
+def test_formula_evidence_uses_per_engine_minimum(sizing_basis):
+    engines = [
+        {"engine": "0", "meanRunningRequests": 3, "meanCacheUsage": 0.25, "nativeConcurrency": 9.9},
+        {"engine": "1", "meanRunningRequests": 2, "meanCacheUsage": 0.3, "nativeConcurrency": 5.9},
+    ]
+    estimates = [
+        dict(engine, pod="pod", sequenceCapacity=9 if engine["engine"] == "0" else 5)
+        for engine in engines
+    ]
+    evidence = {
+        "sizingBasis": sizing_basis,
+        "batchLimit": 4096,
+        "min": 1,
+        "max": 12,
+        "windowStart": "2026-01-01T00:00:00Z",
+        "windowEnd": "2026-01-01T00:00:30Z",
+        "engineEstimates": estimates,
+        "rawEstimate": 5,
+        "target": 5,
+    }
+    if sizing_basis == "ObservedCacheUsage":
+        evidence["targetCacheUtilization"] = 0.8
+    policy = {
+        "status": {
+            "plan": {
+                "stage": "Formula",
+                "improvement": "maxNumSeqs",
+                "formulaEvidence": evidence,
+                "baselineMeasurement": {
+                    "observedAt": evidence["windowEnd"],
+                    "podMeasurements": [{"pod": "pod", "engines": engines}],
+                },
+                "candidateConfiguration": {
+                    "arguments": [
+                        {"name": SEQ_ARG, "value": "5"},
+                        {"name": BATCH_ARG, "value": "4096"},
+                    ]
+                },
+            }
+        }
+    }
+    _assert_formula_evidence(policy, sizing_basis)
+    evidence["rawEstimate"] = 9
+    with pytest.raises(AssertionError):
+        _assert_formula_evidence(policy, sizing_basis)
 
 
 def _ready_pod_with_value(
@@ -320,6 +397,7 @@ def _ready_pod_with_value(
         if container is None:
             continue
         args = container.args or []
+
         def matches(name: str, value: str) -> bool:
             return any(
                 arg == f"{name}={value}"
@@ -339,7 +417,30 @@ def _gpu_node_available(core) -> bool:
     )
 
 
-def _deployment_manifest(namespace: str, name: str, initial_sequences: str = "8") -> str:
+def _deployment_manifest(
+    namespace: str, name: str, initial_sequences: str = "8", cache_manager: str = "full",
+    image: str = IMAGE,
+) -> str:
+    model, revision = (
+        (MODEL, MODEL_REVISION)
+        if cache_manager == "full"
+        else (HYBRID_MODEL, HYBRID_MODEL_REVISION)
+    )
+    token_env = ""
+    if cache_manager == "hybrid":
+        token_env = """\
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token
+                  key: HF_TOKEN
+"""
+    cache_flag = (
+        "--disable-hybrid-kv-cache-manager"
+        if cache_manager == "full"
+        else "--no-disable-hybrid-kv-cache-manager"
+    )
     return f"""\
 apiVersion: apps/v1
 kind: Deployment
@@ -348,6 +449,7 @@ metadata:
   namespace: {namespace}
 spec:
   replicas: 1
+  progressDeadlineSeconds: 120
   strategy:
     type: Recreate
   selector:
@@ -369,13 +471,13 @@ spec:
           effect: NoSchedule
       containers:
         - name: vllm
-          image: {IMAGE}
+          image: {image}
           imagePullPolicy: IfNotPresent
           args:
             - --model
-            - {MODEL}
+            - {model}
             - --revision
-            - {MODEL_REVISION}
+            - {revision}
             - --served-model-name
             - {MODEL_NAME}
             - --dtype
@@ -386,7 +488,10 @@ spec:
             - --max-num-seqs={initial_sequences}
             - --gpu-memory-utilization=0.9
             - --enable-chunked-prefill
-          ports:
+            - --enable-prefix-caching
+            - --seed=0
+            - {cache_flag}
+{token_env}          ports:
             - name: http
               containerPort: 8000
           readinessProbe:
@@ -429,6 +534,8 @@ def _policy_manifest(name: str, namespace: str, workload: str, sizing_basis: str
         if sizing_basis
         else ""
     )
+    if sizing_basis == "ObservedCacheUsage":
+        sequence_settings += "      targetCacheUtilization: 0.8\n"
     return f"""\
 apiVersion: {GROUP}/{VERSION}
 kind: VllmOptimizationPolicy
@@ -484,6 +591,51 @@ spec:
 {sequence_settings}"""
 
 
+@pytest.mark.parametrize("cache_manager", ["full", "hybrid"])
+@pytest.mark.parametrize("sizing_basis", ["ObservedCacheUsage", "NativeCapacity"])
+def test_manifest_formula_modes_and_reproducible_flags(cache_manager, sizing_basis):
+    deployment, _ = yaml.safe_load_all(_deployment_manifest("ns", "server", "32", cache_manager))
+    container = deployment["spec"]["template"]["spec"]["containers"][0]
+    args = container["args"]
+    expected_model, expected_revision = (
+        ("Qwen/Qwen2.5-0.5B-Instruct", "7ae557604adf67be50417f59c2c2f167def9a775")
+        if cache_manager == "full"
+        else ("google/gemma-2-2b-it", "299a8560bedf22ed1c72a8a11e7dce4a7f9f51f8")
+    )
+    assert args[args.index("--model") + 1] == expected_model
+    assert args[args.index("--revision") + 1] == expected_revision
+    assert container.get("env", []) == (
+        [
+            {
+                "name": "HF_TOKEN",
+                "valueFrom": {"secretKeyRef": {"name": "hf-token", "key": "HF_TOKEN"}},
+            }
+        ]
+        if cache_manager == "hybrid"
+        else []
+    )
+    flag = (
+        "--disable-hybrid-kv-cache-manager"
+        if cache_manager == "full"
+        else "--no-disable-hybrid-kv-cache-manager"
+    )
+    assert flag in args
+    assert {"--enable-prefix-caching", "--seed=0", "--enable-chunked-prefill"}.issubset(args)
+    policy_manifest = _policy_manifest("policy", "ns", "server", sizing_basis)
+    # Formula eligibility must not depend on fixture model/image identity.
+    assert expected_model not in policy_manifest
+    assert expected_revision not in policy_manifest
+    assert IMAGE not in policy_manifest
+    settings = yaml.safe_load(policy_manifest)["spec"]["parameters"]["maxNumSeqs"]
+    assert set(settings) == (
+        {"min", "max", "sizingBasis", "targetCacheUtilization"}
+        if sizing_basis == "ObservedCacheUsage"
+        else {"min", "max", "sizingBasis"}
+    )
+    assert settings["sizingBasis"] == sizing_basis
+    assert ("targetCacheUtilization" in settings) == (sizing_basis == "ObservedCacheUsage")
+
+
 def _wait_for_policy_deletion(custom, name: str, timeout: int = 600) -> None:
     def gone() -> bool:
         try:
@@ -512,15 +664,33 @@ def _no_owned_child_policy(custom, policy_uid: str) -> bool:
 class TestVllmOptimization:
     @pytest.mark.timeout(7200)
     @pytest.mark.parametrize(
-        "sizing_basis",
-        [None, "ObservedMean", "MaxModelLen"],
-        ids=["batch-only", "observed-mean-formula-then-batch", "max-model-len-formula-then-batch"],
+        "sizing_basis,failed_rollout",
+        [(None, False), ("ObservedCacheUsage", False), ("NativeCapacity", False), (None, True)],
+        ids=["batch-only", "observed-cache", "native-capacity", "failed-rollout"],
+    )
+    @pytest.mark.parametrize(
+        "cache_manager",
+        [
+            "full",
+            pytest.param(
+                "hybrid",
+                marks=pytest.mark.skipif(
+                    not os.environ.get("HF_TOKEN"),
+                    reason=(
+                        "hybrid fixture requires HF_TOKEN with approved "
+                        "gated Gemma2 model license access"
+                    ),
+                ),
+            ),
+        ],
     )
     def test_pinned_vllm_metrics_adapt_rollback_and_delete(
-        self, kube_context, k8s_clients, sizing_basis
+        self, kube_context, k8s_clients, sizing_basis, failed_rollout, cache_manager
     ):
         if kube_context.startswith("kind-"):
-            pytest.skip("vLLM optimization requires a real GPU cluster, not Kind's fake GPU capacity")
+            pytest.skip(
+                "vLLM optimization requires a real GPU cluster, not Kind's fake GPU capacity"
+            )
         if not _gpu_node_available(k8s_clients.core):
             pytest.skip("cluster has no allocatable nvidia.com/gpu")
 
@@ -557,9 +727,22 @@ class TestVllmOptimization:
             prometheus_url_changed = True
             k8s_clients.core.create_namespace({"metadata": {"name": namespace}})
             namespace_created = True
+            if cache_manager == "hybrid":
+                k8s_clients.core.create_namespaced_secret(
+                    namespace,
+                    {
+                        "metadata": {"name": "hf-token"},
+                        "type": "Opaque",
+                        "stringData": {"HF_TOKEN": os.environ["HF_TOKEN"]},
+                    },
+                )
             _reload_prometheus(kube_context)
             apply_manifest(
-                _deployment_manifest(namespace, workload, original_sequences), kube_context
+                _deployment_manifest(
+                    namespace, workload, original_sequences, cache_manager,
+                    NATIVE_IMAGE if sizing_basis == "NativeCapacity" else IMAGE,
+                ),
+                kube_context,
             )
             wait_for_pod_ready(k8s_clients.core, namespace, f"app={workload}", timeout=1800)
 
@@ -578,6 +761,7 @@ class TestVllmOptimization:
                         )
                         and latest_values["vllm:num_requests_running"] > 0
                         and latest_values["vllm:num_requests_waiting"] > 0
+                        and 0 < latest_values["vllm:kv_cache_usage_perc"] <= 1
                     )
 
                 try:
@@ -591,32 +775,19 @@ class TestVllmOptimization:
                     raise AssertionError(
                         f"{exc}; latest inference request error: {load.last_error}"
                     ) from exc
+                if sizing_basis == "NativeCapacity":
+                    _require_native_capacity(kube_context, namespace, workload)
                 short_prompt_mean = _prompt_mean(kube_context, namespace, workload)
                 assert short_prompt_mean is not None and short_prompt_mean > 0
 
-                formula_metadata = None
-                if sizing_basis:
-                    formula_metadata = _formula_metadata(kube_context, namespace, workload)
-                    if not formula_metadata:
-                        pytest.fail("pinned vLLM image has no usable vllm:cache_config_info metadata")
-                    ready_pods = [
-                        pod
-                        for pod in k8s_clients.core.list_namespaced_pod(
-                            namespace, label_selector=f"app={workload}"
-                        ).items
-                        if any(
-                            status.name == "vllm" and status.ready
-                            for status in (pod.status.container_statuses or [])
-                        )
-                    ]
-                    if any(pod.metadata.name not in formula_metadata for pod in ready_pods):
-                        pytest.fail("cache_config_info is missing for a ready vLLM pod")
-                    if any(len(engines) != 1 for engines in formula_metadata.values()):
-                        pytest.fail("pinned workload must report exactly one vLLM engine per pod")
-
-                apply_manifest(
-                    _policy_manifest(policy_name, namespace, workload, sizing_basis), kube_context
-                )
+                manifest = _policy_manifest(policy_name, namespace, workload, sizing_basis)
+                if failed_rollout:
+                    # vLLM rejects batch tokens below max-num-seqs, forcing startup failure.
+                    manifest = manifest.replace(
+                        "min: 4096\n      max: 5120\n      step: 1024",
+                        "min: 1\n      max: 2\n      step: 1",
+                    )
+                apply_manifest(manifest, kube_context)
                 created_policy = True
                 policy_uid = get_crd(k8s_clients.custom, "vllmoptimizationpolicies", policy_name)[
                     "metadata"
@@ -635,7 +806,7 @@ class TestVllmOptimization:
                         timeout=2400,
                         message="maxNumSeqs formula candidate evaluation",
                     )
-                    _assert_formula_evidence(formula_trial, sizing_basis, formula_metadata)
+                    _assert_formula_evidence(formula_trial, sizing_basis)
                     formula_target = _configuration_value(
                         formula_trial["status"]["plan"]["candidateConfiguration"], SEQ_ARG
                     )
@@ -664,7 +835,8 @@ class TestVllmOptimization:
                     lambda policy: (
                         policy.get("status", {}).get("search", {}).get("stage") == "Experiment"
                         and policy.get("status", {}).get("plan", {}).get("stage") == "Experiment"
-                        and policy["status"]["plan"].get("phase") == "Evaluating"
+                        and policy["status"]["plan"].get("phase")
+                        == ("RollingBack" if failed_rollout else "Evaluating")
                         and policy["status"]["plan"].get("improvement") == "maxNumBatchedTokens"
                     ),
                     timeout=2400,
@@ -673,9 +845,38 @@ class TestVllmOptimization:
                 experiment_configuration = experiment_trial["status"]["plan"][
                     "candidateConfiguration"
                 ]
-                assert _configuration_value(experiment_configuration) == "5120"
+                assert _configuration_value(experiment_configuration) == (
+                    "2" if failed_rollout else "5120"
+                )
+                if failed_rollout:
+                    decision = experiment_trial["status"]["lastDecision"]
+                    assert decision["outcome"] == "Failed"
+                    assert "RolloutFailed" in decision["reason"]
+                    wait_for(
+                        lambda: _ready_pod_with_value(
+                            k8s_clients.core, namespace, workload, "4096", original_sequences
+                        ),
+                        timeout=1200,
+                        interval=5,
+                        message="failed rollout restores prior arguments",
+                    )
+                    k8s_clients.custom.delete_cluster_custom_object(
+                        GROUP, VERSION, "vllmoptimizationpolicies", policy_name
+                    )
+                    _wait_for_policy_deletion(k8s_clients.custom, policy_name)
+                    wait_for(
+                        lambda: _no_owned_child_policy(k8s_clients.custom, policy_uid),
+                        timeout=180,
+                        interval=5,
+                        message="failed rollout child-policy cleanup",
+                    )
+                    created_policy = False
+                    return
                 if sizing_basis:
-                    assert _configuration_value(experiment_configuration, SEQ_ARG) == original_sequences
+                    assert (
+                        _configuration_value(experiment_configuration, SEQ_ARG)
+                        == original_sequences
+                    )
                 wait_for(
                     lambda: _ready_pod_with_value(
                         k8s_clients.core, namespace, workload, "5120", original_sequences
@@ -719,15 +920,16 @@ class TestVllmOptimization:
                     assert stages and all(stage == "Experiment" for stage in stages)
                 assert _configuration_value(status.get("selectedConfiguration")) == "4096"
                 if sizing_basis:
-                    assert _configuration_value(
-                        status.get("selectedConfiguration"), SEQ_ARG
-                    ) == original_sequences
+                    assert (
+                        _configuration_value(status.get("selectedConfiguration"), SEQ_ARG)
+                        == original_sequences
+                    )
                 assert _ready_pod_with_value(
                     k8s_clients.core, namespace, workload, "4096", original_sequences
                 )
                 first_search_started = status["search"]["startedAt"]
 
-                load.set_prompt_mix(32)
+                load.set_prompt_mix(96)
                 prompt_mean = {"value": None}
 
                 def prompt_mix_changed() -> bool:
@@ -771,9 +973,7 @@ class TestVllmOptimization:
                 candidate = active["status"]["plan"]["candidateConfiguration"]
                 expected_batch = "4096" if sizing_basis else "5120"
                 expected_sequences = (
-                    _configuration_value(candidate, SEQ_ARG)
-                    if sizing_basis
-                    else original_sequences
+                    _configuration_value(candidate, SEQ_ARG) if sizing_basis else original_sequences
                 )
                 assert _configuration_value(candidate) == expected_batch
                 wait_for(
@@ -815,6 +1015,17 @@ class TestVllmOptimization:
                         if exc.status != 404:
                             raise
                     _wait_for_policy_deletion(k8s_clients.custom, policy_name)
+                    wait_for(
+                        lambda: (
+                            _ready_pod_with_value(
+                                k8s_clients.core, namespace, workload, "4096", original_sequences
+                            )
+                            and _no_owned_child_policy(k8s_clients.custom, policy_uid)
+                        ),
+                        timeout=1200,
+                        interval=5,
+                        message="failure-path argument restoration and child cleanup",
+                    )
                     created_policy = False
             finally:
                 if prometheus_url_changed:
