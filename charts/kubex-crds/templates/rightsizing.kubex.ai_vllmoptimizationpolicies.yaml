@@ -565,8 +565,12 @@ spec:
                       rule: self > 0 && self <= 1
                   tolerancePercent:
                     default: 10
-                    description: tolerancePercent is the allowed relative change in
-                      demand-limited completed-request rate and request lengths.
+                    description: |-
+                      tolerancePercent is the allowed relative change in request lengths and demand-limited completed-request rate.
+                      A demand-limited candidate with a strictly higher completed-request rate is also comparable when
+                      meanRunningRequests + meanWaitingRequests stays within this tolerance, even if backlog eligibility changes.
+                      The exception must pass against both the fresh baseline and fixed search reference, using exact window durations.
+                      Concurrency is a demand proxy, not proof of identical traffic.
                     maximum: 100
                     minimum: 0
                     type: number
