@@ -122,8 +122,9 @@ spec:
                       rule: duration(self) > duration('0s')
                   maxTrialsPerSearch:
                     default: 12
-                    description: maxTrialsPerSearch limits candidate attempts, including
-                      failed and deferred trials.
+                    description: |-
+                      maxTrialsPerSearch limits candidate attempts before the final formula pass, including failed and deferred trials.
+                      The final formula pass allows up to len(formulaOrder) additional attempts.
                     format: int32
                     minimum: 1
                     type: integer
@@ -1611,11 +1612,12 @@ spec:
                       type: string
                     type: array
                   stage:
-                    description: stage identifies whether the decision came from a
-                      formula or experiment improvement.
+                    description: stage identifies whether the decision came from an
+                      initial formula, experiment, or final formula improvement.
                     enum:
                     - Formula
                     - Experiment
+                    - FinalFormula
                     type: string
                   time:
                     description: time is when the decision was made.
@@ -2290,11 +2292,12 @@ spec:
                       was planned.
                     type: string
                   stage:
-                    description: stage identifies whether this plan runs a formula
-                      or experiment improvement.
+                    description: stage identifies whether this plan runs an initial
+                      formula, experiment, or final formula improvement.
                     enum:
                     - Formula
                     - Experiment
+                    - FinalFormula
                     type: string
                 type: object
               reason:
@@ -2309,8 +2312,9 @@ spec:
                 description: search tracks the current adaptive search.
                 properties:
                   attempts:
-                    description: attempts counts persisted candidate plans, including
-                      retries of deferred trials.
+                    description: |-
+                      attempts counts persisted candidate plans, including retries of deferred trials and final formula plans.
+                      The total allowance is maxTrialsPerSearch + len(formulaOrder).
                     format: int32
                     type: integer
                   completedAt:
@@ -2527,6 +2531,10 @@ spec:
                     - measurement
                     - reason
                     type: object
+                  experimentCompletionReason:
+                    description: experimentCompletionReason preserves why experiments
+                      ended through the final formula pass.
+                    type: string
                   formulaCursor:
                     description: formulaCursor is the next entry in formulaOrder to
                       process.
@@ -2654,6 +2662,13 @@ spec:
                           type: string
                         reason:
                           description: reason explains the outcome.
+                          type: string
+                        stage:
+                          description: stage identifies the initial or final formula
+                            pass. Older results may omit it.
+                          enum:
+                          - Formula
+                          - FinalFormula
                           type: string
                       required:
                       - improvement
@@ -2863,10 +2878,12 @@ spec:
                     - windowDuration
                     type: object
                   stage:
-                    description: stage is the active formula or experiment phase.
+                    description: stage is the active initial formula, experiment,
+                      or final formula phase.
                     enum:
                     - Formula
                     - Experiment
+                    - FinalFormula
                     type: string
                   startedAt:
                     description: startedAt is when the search began.
@@ -2874,7 +2891,7 @@ spec:
                     type: string
                   trialResults:
                     description: trialResults retains outcomes for this search, bounded
-                      by maxTrialsPerSearch.
+                      by maxTrialsPerSearch + len(formulaOrder).
                     items:
                       description: VllmOptimizationDecision records the latest candidate
                         outcome.
@@ -3487,10 +3504,12 @@ spec:
                           type: array
                         stage:
                           description: stage identifies whether the decision came
-                            from a formula or experiment improvement.
+                            from an initial formula, experiment, or final formula
+                            improvement.
                           enum:
                           - Formula
                           - Experiment
+                          - FinalFormula
                           type: string
                         time:
                           description: time is when the decision was made.

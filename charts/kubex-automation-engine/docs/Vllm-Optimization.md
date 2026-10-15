@@ -141,7 +141,7 @@ For the `maxNumBatchedTokens` experiment, a parseable starting value outside the
 
 ## Formula and experiment phases
 
-`formulaOrder` and `experimentOrder` are required lists. At least one must be nonempty. `formulaOrder` currently accepts `maxNumSeqs`; `experimentOrder` accepts `maxNumBatchedTokens`. The controller runs formula improvements before experiments. Use an empty list for a phase you do not need.
+`formulaOrder` and `experimentOrder` are required lists. At least one must be nonempty. `formulaOrder` currently accepts `maxNumSeqs`; `experimentOrder` accepts `maxNumBatchedTokens`. Combined policies run Initial formulas → Experiments → Final formulas → Monitoring. The final pass runs once in `formulaOrder` using fresh measurements of the retained post-experiment configuration, even if no experiment was accepted. Formula-only policies run a single formula pass; experiment-only policies run no formulas. Use an empty list for a phase you do not need.
 
 The `maxNumSeqs` formula has two explicit modes:
 
@@ -154,9 +154,9 @@ Formula eligibility depends on scoped, valid telemetry, not image digest, model 
 
 After formula improvements, `experimentOrder` runs bounded neighbor trials for `maxNumBatchedTokens` using its `min`, `max`, and `step`. These phases share the same objective, latency constraints, traffic-comparison rules, and fixed search reference. A formula is a sizing proposal, not a performance guarantee. Both formula and experiment candidates are evaluated statistically and can roll back. The policy does not need to find a winning candidate to complete a search.
 
-Each persisted formula or experiment candidate plan consumes an attempt, whether accepted, rejected, failed, or deferred. Skips consume none. A formula runs once per cycle, including after deferral; its result and cursor persist across controller restarts. Experiments begin with a fresh baseline of the retained configuration and never change sequence count. Reconciliation retries of the same plan do not count again. Deferred experimental candidates can be retried as new attempts. `maxTrialsPerSearch` defaults to 12 and must be at least one. After exhaustion, active evaluation and required rollback finish before monitoring begins. Unmet latency constraints still report failure. Traffic changes or periodic rescans can start a new search.
+Each persisted formula or experiment candidate plan consumes an attempt, whether accepted, rejected, failed, or deferred. Skipped unchanged or invalid proposals consume none. `maxTrialsPerSearch` defaults to 12 and must be at least one; it limits the initial formulas and experiments together. Combined policies then allow at most one additional candidate per formula in the final pass, beyond that limit. Each final formula gets one opportunity: acceptance, rejection, failure, or deferral consumes it without retry. A final pass does not restart experiments. Formula results and cursors persist across controller restarts. Experiments begin with a fresh baseline of the retained configuration and never change sequence count. Reconciliation retries of the same plan do not count again. Deferred experimental candidates can be retried as new attempts. Active evaluation and required rollback finish before the next phase or monitoring begins. Unmet latency constraints still report failure. Traffic changes or periodic rescans can start a new search.
 
-The batch-token experiment is bounded local search, not an exhaustive grid or a global optimum. Twelve 30-minute baselines and 15-minute trials require about nine hours of measurement alone, excluding rollouts, cooldown, and additional waits. Each candidate and rollback can disrupt serving pods.
+The batch-token experiment is bounded local search, not an exhaustive grid or a global optimum. Twelve 30-minute baselines and 15-minute trials require about nine hours of measurement alone, excluding rollouts, cooldown, and additional waits. The final formula pass adds measurement time beyond that budget and can cause additional rollouts and rollbacks. Each candidate and rollback can disrupt serving pods.
 
 ## Workload changes
 

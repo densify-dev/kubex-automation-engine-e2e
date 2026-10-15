@@ -10,6 +10,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -283,10 +284,10 @@ def _configuration_value(configuration: dict | None, name: str = BATCH_ARG) -> s
     return _argument_value((configuration or {}).get("arguments", []), name)
 
 
-def _assert_formula_evidence(policy: dict, sizing_basis: str) -> None:
+def _assert_formula_evidence(policy: dict, sizing_basis: str, stage: str = "Formula") -> None:
     plan = policy["status"]["plan"]
     evidence = plan["formulaEvidence"]
-    assert plan["stage"] == "Formula"
+    assert plan["stage"] == stage
     assert plan["improvement"] == "maxNumSeqs"
     assert evidence["sizingBasis"] == sizing_basis
     assert evidence["batchLimit"] == 4096
@@ -332,8 +333,9 @@ def _assert_formula_evidence(policy: dict, sizing_basis: str) -> None:
     assert _configuration_value(plan["candidateConfiguration"]) == "4096"
 
 
+@pytest.mark.parametrize("stage", ["Formula", "FinalFormula"])
 @pytest.mark.parametrize("sizing_basis", ["ObservedCacheUsage", "NativeCapacity"])
-def test_formula_evidence_uses_per_engine_minimum(sizing_basis):
+def test_formula_evidence_uses_per_engine_minimum(sizing_basis, stage):
     engines = [
         {"engine": "0", "meanRunningRequests": 3, "meanCacheUsage": 0.25, "nativeConcurrency": 9.9},
         {"engine": "1", "meanRunningRequests": 2, "meanCacheUsage": 0.3, "nativeConcurrency": 5.9},
@@ -358,7 +360,7 @@ def test_formula_evidence_uses_per_engine_minimum(sizing_basis):
     policy = {
         "status": {
             "plan": {
-                "stage": "Formula",
+                "stage": stage,
                 "improvement": "maxNumSeqs",
                 "formulaEvidence": evidence,
                 "baselineMeasurement": {
@@ -374,15 +376,21 @@ def test_formula_evidence_uses_per_engine_minimum(sizing_basis):
             }
         }
     }
-    _assert_formula_evidence(policy, sizing_basis)
+    _assert_formula_evidence(policy, sizing_basis, stage)
     evidence["rawEstimate"] = 9
     with pytest.raises(AssertionError):
-        _assert_formula_evidence(policy, sizing_basis)
+        _assert_formula_evidence(policy, sizing_basis, stage)
 
 
 def _ready_pod_with_value(
     core, namespace: str, deployment: str, expected: str, sequences: str | None = None
 ) -> bool:
+    return _ready_pod_time_with_value(core, namespace, deployment, expected, sequences) is not None
+
+
+def _ready_pod_time_with_value(
+    core, namespace: str, deployment: str, expected: str, sequences: str | None = None
+) -> datetime | None:
     pods = core.list_namespaced_pod(namespace, label_selector=f"app={deployment}").items
     for pod in pods:
         ready = any(
@@ -406,8 +414,34 @@ def _ready_pod_with_value(
             )
 
         if matches(BATCH_ARG, expected) and (sequences is None or matches(SEQ_ARG, sequences)):
-            return True
-    return False
+            return next(
+                condition.last_transition_time
+                for condition in pod.status.conditions
+                if condition.type == "Ready" and condition.status == "True"
+            )
+    return None
+
+
+def test_restored_pod_readiness_time_matches_prior_configuration():
+    ready_at = datetime.fromisoformat("2026-01-01T00:05:00+00:00")
+    pod = SimpleNamespace(
+        status=SimpleNamespace(
+            container_statuses=[SimpleNamespace(name="vllm", ready=True)],
+            conditions=[SimpleNamespace(type="Ready", status="True", last_transition_time=ready_at)],
+        ),
+        spec=SimpleNamespace(
+            containers=[SimpleNamespace(
+                name="vllm", args=[f"{BATCH_ARG}=4096", f"{SEQ_ARG}=32"]
+            )]
+        ),
+    )
+    core = SimpleNamespace(
+        list_namespaced_pod=lambda *_args, **_kwargs: SimpleNamespace(items=[pod])
+    )
+    assert _ready_pod_time_with_value(core, "ns", "server", "4096", "32") == ready_at
+    assert _ready_pod_time_with_value(core, "ns", "server", "5120", "32") is None
+    pod.status.container_statuses[0].ready = False
+    assert _ready_pod_time_with_value(core, "ns", "server", "4096", "32") is None
 
 
 def _gpu_node_available(core) -> bool:
@@ -896,6 +930,43 @@ class TestVllmOptimization:
                     message="batch experiment rollback",
                 )
 
+                if sizing_basis:
+                    restored_ready_at = None
+
+                    def restored_pod_ready() -> bool:
+                        nonlocal restored_ready_at
+                        restored_ready_at = _ready_pod_time_with_value(
+                            k8s_clients.core, namespace, workload, "4096", original_sequences
+                        )
+                        return restored_ready_at is not None
+
+                    wait_for(
+                        restored_pod_ready,
+                        timeout=1200,
+                        interval=5,
+                        message="batch experiment rollback restores a ready prior pod",
+                    )
+                    final_formula = _wait_for_policy(
+                        k8s_clients.custom,
+                        policy_name,
+                        lambda policy: (
+                            policy.get("status", {}).get("search", {}).get("stage")
+                            == "FinalFormula"
+                            and policy.get("status", {}).get("plan", {}).get("stage")
+                            == "FinalFormula"
+                            and policy["status"]["plan"].get("phase") == "Evaluating"
+                        ),
+                        timeout=2400,
+                        message="final maxNumSeqs formula candidate evaluation",
+                    )
+                    _assert_formula_evidence(final_formula, sizing_basis, "FinalFormula")
+                    final_window_start = datetime.fromisoformat(
+                        final_formula["status"]["plan"]["formulaEvidence"]["windowStart"].replace(
+                            "Z", "+00:00"
+                        )
+                    )
+                    assert final_window_start >= restored_ready_at
+
                 settled = _wait_for_policy(
                     k8s_clients.custom,
                     policy_name,
@@ -910,12 +981,17 @@ class TestVllmOptimization:
                 stages = [result["stage"] for result in status["search"].get("trialResults", [])]
                 if sizing_basis:
                     assert stages[0] == "Formula"
-                    assert all(stage == "Experiment" for stage in stages[1:])
+                    assert stages[-1] == "FinalFormula"
+                    assert stages[1:-1] and all(stage == "Experiment" for stage in stages[1:-1])
                     assert status["search"]["formulaCursor"] == 1
                     formula_results = status["search"]["formulaResults"]
-                    assert len(formula_results) == 1
-                    assert formula_results[0]["improvement"] == "maxNumSeqs"
-                    assert formula_results[0]["outcome"] in {"Rejected", "Deferred", "Failed"}
+                    assert [result["stage"] for result in formula_results] == [
+                        "Formula",
+                        "FinalFormula",
+                    ]
+                    for result in formula_results:
+                        assert result["improvement"] == "maxNumSeqs"
+                        assert result["outcome"] in {"Rejected", "Deferred", "Failed"}
                 else:
                     assert stages and all(stage == "Experiment" for stage in stages)
                 assert _configuration_value(status.get("selectedConfiguration")) == "4096"
