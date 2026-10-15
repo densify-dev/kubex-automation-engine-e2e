@@ -38,6 +38,15 @@ MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 MODEL_REVISION = "7ae557604adf67be50417f59c2c2f167def9a775"
 HYBRID_MODEL = "google/gemma-2-2b-it"
 HYBRID_MODEL_REVISION = "299a8560bedf22ed1c72a8a11e7dce4a7f9f51f8"
+# Immutable revisions verified through https://huggingface.co/api/models/<repo>.
+MARLIN_CHECKPOINTS = {
+    "awqMarlin": (
+        "Qwen/Qwen2.5-0.5B-Instruct-AWQ", "db09cd27ead7fee40cdee309693cf83601b9c899", "awq"
+    ),
+    "gptqMarlin": (
+        "Qwen/Qwen2.5-0.5B-Instruct-GPTQ-Int4", "c34a4a91629f09f73a285f32dbd26106b033c654", "gptq"
+    ),
+}
 MODEL_NAME = "vllm-e2e"
 PROMETHEUS_URL = "http://prometheus.monitoring.svc:9090"
 BATCH_ARG = "--max-num-batched-tokens"
@@ -694,8 +703,238 @@ def _no_owned_child_policy(custom, policy_uid: str) -> bool:
     )
 
 
+def _marlin_manifests(namespace, workload, policy_name, improvement, kubeai=False):
+    model, revision, backend = MARLIN_CHECKPOINTS[improvement]
+    deployment, service = yaml.safe_load_all(_deployment_manifest(namespace, workload))
+    pod = deployment["spec"]["template"]
+    container = pod["spec"]["containers"][0]
+    args = container["args"]
+    args[args.index("--model") + 1] = model
+    args[args.index("--revision") + 1] = revision
+    args.append(f"--quantization={backend}")
+    target = deployment
+    if kubeai:
+        # KubeAI supplies --model from spec.url and names its serving container server.
+        args = args[2:]
+        target = {
+            "apiVersion": "kubeai.org/v1",
+            "kind": "Model",
+            "metadata": {
+                "name": workload, "namespace": namespace,
+            },
+            "spec": {
+                "features": ["TextGeneration"], "url": f"hf://{model}",
+                "engine": "VLLM", "image": IMAGE, "args": args,
+                "resourceProfile": "nvidia-gpu-l4:1",
+                "minReplicas": 1, "maxReplicas": 1, "replicas": 1,
+                "autoscalingDisabled": True,
+            },
+        }
+        service["spec"]["selector"] = {"kubeai.org/model": workload}
+        service["spec"]["ports"][0]["targetPort"] = 8000
+    policy = yaml.safe_load(_policy_manifest(policy_name, namespace, workload, None))
+    policy["spec"]["target"].update({
+        "apiVersion": target["apiVersion"], "kind": target["kind"],
+        "container": "server" if kubeai else "vllm",
+    })
+    policy["spec"]["experimentOrder"] = [improvement]
+    policy["spec"]["parameters"] = {
+        improvement: {"startupTimeout": "1s" if kubeai else "10m"}
+    }
+    policy["spec"]["evaluation"]["maxTrialsPerSearch"] = 1
+    return target, service, policy
+
+
+@pytest.mark.parametrize("improvement", MARLIN_CHECKPOINTS)
+@pytest.mark.parametrize("kubeai", [False, True])
+def test_marlin_manifests_pin_checkpoint_and_backend(improvement, kubeai):
+    target, service, policy = _marlin_manifests("ns", "server", "policy", improvement, kubeai)
+    container = (
+        target["spec"] if kubeai else target["spec"]["template"]["spec"]["containers"][0]
+    )
+    model, revision, backend = MARLIN_CHECKPOINTS[improvement]
+    assert container["args"][container["args"].index("--revision") + 1] == revision
+    assert f"--quantization={backend}" in container["args"]
+    assert (target["spec"]["url"] if kubeai else container["args"][1]) == (
+        f"hf://{model}" if kubeai else model
+    )
+    assert policy["spec"]["experimentOrder"] == [improvement]
+    assert set(policy["spec"]["parameters"]) == {improvement}
+    assert policy["spec"]["parameters"][improvement]["startupTimeout"] == (
+        "1s" if kubeai else "10m"
+    )
+    assert service["spec"]["selector"] == (
+        {"kubeai.org/model": "server"} if kubeai else {"app": "server"}
+    )
+
+
 @pytest.mark.usefixtures("kind_cluster")
 class TestVllmOptimization:
+    @pytest.mark.timeout(5400)
+    @pytest.mark.parametrize(
+        "improvement,kubeai",
+        [("awqMarlin", False), ("gptqMarlin", False), ("awqMarlin", True)],
+        ids=["awq-marlin", "gptq-marlin", "kubeai-marlin-startup-timeout"],
+    )
+    def test_marlin_backend_trial_and_rollback(
+        self, kube_context, k8s_clients, improvement, kubeai
+    ):
+        if kube_context.startswith("kind-") or not _gpu_node_available(k8s_clients.core):
+            pytest.skip("Marlin trials require a real NVIDIA GPU cluster")
+        core, custom = k8s_clients.core, k8s_clients.custom
+        suffix = uuid4().hex[:8]
+        namespace, workload, name = (
+            f"marlin-e2e-{suffix}", f"marlin-server-{suffix}", f"marlin-policy-{suffix}"
+        )
+        target, service, policy = _marlin_manifests(
+            namespace, workload, name, improvement, kubeai
+        )
+        backend = MARLIN_CHECKPOINTS[improvement][2]
+        selector = f"kubeai.org/model={workload}" if kubeai else f"app={workload}"
+        serving_container = policy["spec"]["target"]["container"]
+        gc = get_crd(custom, "globalconfigurations", "global-config")
+        original_url = gc.get("spec", {}).get("prometheus", {}).get("url")
+        created_policy = False
+        namespace_created = False
+        policy_uid = ""
+
+        def backend_ready(expected):
+            for pod in core.list_namespaced_pod(namespace, label_selector=selector).items:
+                if (
+                    kubeai
+                    and (pod.metadata.annotations or {}).get("prometheus.io/scrape") != "true"
+                ):
+                    # KubeAI does not copy arbitrary Model annotations onto serving pods.
+                    core.patch_namespaced_pod(
+                        pod.metadata.name, namespace,
+                        {"metadata": {"annotations": {
+                            "prometheus.io/scrape": "true", "prometheus.io/path": "/metrics",
+                            "prometheus.io/port": "8000",
+                        }}},
+                    )
+                if not any(
+                    status.name == serving_container and status.ready
+                    for status in (pod.status.container_statuses or [])
+                ):
+                    continue
+                container = next(c for c in pod.spec.containers if c.name == serving_container)
+                args = container.args or []
+                revision = MARLIN_CHECKPOINTS[improvement][1]
+                assert (
+                    f"--revision={revision}" in args
+                    or ("--revision" in args and args[args.index("--revision") + 1] == revision)
+                ), "backend trials must not change the checkpoint revision"
+                if any(
+                    arg == f"--quantization={expected}"
+                    or (arg == "--quantization" and args[index + 1:index + 2] == [expected])
+                    for index, arg in enumerate(args)
+                ):
+                    return True
+            return False
+
+        try:
+            core.read_namespaced_service("prometheus", "monitoring")
+            wait_for_pod_ready(core, "monitoring", "app=prometheus", timeout=300)
+            custom.patch_cluster_custom_object(
+                GROUP, VERSION, "globalconfigurations", "global-config",
+                {"spec": {"prometheus": {"url": PROMETHEUS_URL}}},
+            )
+            core.create_namespace({"metadata": {"name": namespace}})
+            namespace_created = True
+            _reload_prometheus(kube_context)
+            apply_manifest(yaml.safe_dump_all([target, service]), kube_context)
+            wait_for_pod_ready(core, namespace, selector, timeout=1800)
+            assert backend_ready(backend)
+            with _load_driver(kube_context, namespace, workload):
+                wait_for(
+                    lambda: all(
+                        _metric_values(kube_context, namespace, workload).get(family, 0) > 0
+                        for family in COUNTER_FAMILIES + HISTOGRAM_COUNT_FAMILIES
+                    ),
+                    timeout=300, interval=10, message="quantized baseline metrics under load",
+                )
+                apply_manifest(yaml.safe_dump(policy), kube_context)
+                created_policy = True
+                policy_uid = get_crd(custom, "vllmoptimizationpolicies", name)["metadata"]["uid"]
+                active = _wait_for_policy(
+                    custom, name,
+                    lambda p: p.get("status", {}).get("plan", {}).get("phase")
+                    == ("RollingBack" if kubeai else "Evaluating"),
+                    timeout=1800, message="Marlin startup timeout or candidate evaluation",
+                )
+                plan = active["status"]["plan"]
+                assert plan["improvement"] == improvement
+                assert plan["createdAt"]
+                assert _configuration_value(
+                    plan["candidateConfiguration"], "--quantization"
+                ) == f"{backend}_marlin"
+                if kubeai:
+                    decision = active["status"]["lastDecision"]
+                    assert decision["outcome"] == "Failed"
+                    assert "StartupTimeout" in decision["reason"]
+                    decision_at = datetime.fromisoformat(decision["time"].replace("Z", "+00:00"))
+                    created_at = datetime.fromisoformat(plan["createdAt"].replace("Z", "+00:00"))
+                    assert decision_at - created_at >= timedelta(seconds=1)
+                else:
+                    assert backend_ready(f"{backend}_marlin")
+                settled = _wait_for_policy(
+                    custom, name,
+                    lambda p: backend_ready(backend)
+                    and p.get("status", {}).get("phase") == "Monitoring",
+                    timeout=1800, message="Marlin trial rollback and monitoring",
+                )
+                assert _configuration_value(
+                    settled["status"]["selectedConfiguration"], "--quantization"
+                ) == backend
+                results = settled["status"]["search"]["trialResults"]
+                assert len(results) == 1
+                assert results[0]["outcome"] in (
+                    {"Failed"} if kubeai else {"Rejected", "Deferred"}
+                )
+                if not kubeai:
+                    assert results[0].get("candidateMeasurement"), (
+                        "a ready Marlin backend must produce a candidate measurement"
+                    )
+                if kubeai:
+                    current = custom.get_namespaced_custom_object(
+                        "kubeai.org", "v1", namespace, "models", workload
+                    )
+                    assert current["spec"]["url"] == target["spec"]["url"]
+                    assert current["spec"]["args"] == target["spec"]["args"]
+                else:
+                    current = k8s_clients.apps.read_namespaced_deployment(workload, namespace)
+                    assert current.spec.template.spec.containers[0].args == (
+                        target["spec"]["template"]["spec"]["containers"][0]["args"]
+                    )
+                wait_for(
+                    lambda: backend_ready(backend), timeout=1200, interval=5,
+                    message="prior explicit quantization backend restored",
+                )
+        finally:
+            try:
+                if created_policy:
+                    custom.delete_cluster_custom_object(
+                        GROUP, VERSION, "vllmoptimizationpolicies", name
+                    )
+                    _wait_for_policy_deletion(custom, name, timeout=1200)
+                    wait_for(
+                        lambda: backend_ready(backend)
+                        and _no_owned_child_policy(custom, policy_uid),
+                        timeout=1200, interval=5, message="Marlin restoration and child cleanup",
+                    )
+                    created_policy = False
+            finally:
+                custom.patch_cluster_custom_object(
+                    GROUP, VERSION, "globalconfigurations", "global-config",
+                    {"spec": {"prometheus": {"url": original_url}}},
+                )
+                if namespace_created and not created_policy:
+                    core.delete_namespace(namespace)
+                    wait_for(
+                        lambda: namespace_gone(k8s_clients, namespace), timeout=180,
+                        message=f"namespace {namespace} removal",
+                    )
+
     @pytest.mark.timeout(7200)
     @pytest.mark.parametrize(
         "sizing_basis,failed_rollout",

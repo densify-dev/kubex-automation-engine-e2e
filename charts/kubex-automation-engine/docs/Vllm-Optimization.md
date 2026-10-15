@@ -1,6 +1,6 @@
 # vLLM optimization policy
 
-`VllmOptimizationPolicy` can tune `--max-num-batched-tokens`, `--max-num-seqs`, or both for one Deployment or KubeAI Model. It compares complete policy-controlled configurations and replaces pods when applying a trial. It does not change GPU allocation, replica count, KV-cache size, or other vLLM arguments. Pod disruption during trials is expected.
+`VllmOptimizationPolicy` can tune `--max-num-batched-tokens`, `--max-num-seqs`, and opt-in `--quantization` backend transitions for one Deployment or KubeAI Model. It compares complete policy-controlled configurations and replaces pods when applying a trial. It does not change GPU allocation, replica count, KV-cache size, or other vLLM arguments. Pod disruption during trials is expected.
 
 ## E2e fixture prerequisites
 
@@ -10,6 +10,12 @@ The live optimization tests require a real NVIDIA GPU cluster and the e2e Promet
 - Hybrid uses the sliding-window/full-attention `google/gemma-2-2b-it` at revision `299a8560bedf22ed1c72a8a11e7dce4a7f9f51f8`, confirmed through the Hugging Face model API, with the hybrid manager enabled. Accept the model's gated license on Hugging Face and export `HF_TOKEN` for an account with approved access. Without `HF_TOKEN`, hybrid live cases skip. The test creates a Secret in its per-test namespace and passes `HF_TOKEN` through `secretKeyRef` only for hybrid pods. Tokens never appear in workload manifests; namespace cleanup removes the Secret.
 
 `NativeCapacity` live cases require `vllm:cache_config_info` with namespace, pod, engine, and finite positive `kv_cache_max_concurrency` labels, and gauge value `1`. The pinned image's metadata capability has not been verified on a live GPU here. If that image does not expose this metadata, the native fixture is blocked and the test fails with a capability error. Do not substitute observed sizing, infer concurrency from block counts, or add model/image identity rules to make it pass. Observed-cache and batch-only cases do not require this native metadata.
+
+Marlin GPU cases use the same pinned stable vLLM image with `Qwen/Qwen2.5-0.5B-Instruct-AWQ` at revision `db09cd27ead7fee40cdee309693cf83601b9c899`, or `Qwen/Qwen2.5-0.5B-Instruct-GPTQ-Int4` at revision `c34a4a91629f09f73a285f32dbd26106b033c654`. Both revisions and quantization configurations were confirmed through the Hugging Face API. They require Marlin-compatible NVIDIA hardware. The KubeAI timeout case requires the installed `nvidia-gpu-l4:1` resource profile and deliberately uses a `1s` startup timeout. Run only the targeted cases against an existing GPU context:
+
+```sh
+python -m pytest test/e2e/tests/test_vllm_optimization.py -k marlin --gpu-suite --skip-kind-bootstrap --kube-context <existing-context>
+```
 
 ## Configure a policy
 
@@ -74,7 +80,7 @@ spec:
       targetCacheUtilization: 0.8
 ```
 
-The target, latency limits, evaluation settings, and at least one formula or experiment are required. The target, including its container, is immutable. `formulaOrder` selects the `maxNumSeqs` formula; `experimentOrder` selects the `maxNumBatchedTokens` experiment. Either list may be empty, but not both. The example ranges are illustrative. Keep bounds valid for the model and vLLM configuration. Without chunked prefill, the batch-token limit must accommodate the model's maximum sequence length.
+The target, latency limits, evaluation settings, and at least one formula or experiment are required. The target, including its container, is immutable. `formulaOrder` selects the `maxNumSeqs` formula; `experimentOrder` selects `maxNumBatchedTokens`, `awqMarlin`, or `gptqMarlin` experiments. Either list may be empty, but not both. The example ranges are illustrative. Keep bounds valid for the model and vLLM configuration. Without chunked prefill, the batch-token limit must accommodate the model's maximum sequence length.
 
 ## Defaults and metrics
 
@@ -87,6 +93,7 @@ Defaults come from the CRD schema:
 | GPU compute / GPU memory direction | `Maximize / Minimize` |
 | `minScoreGain` | `2` |
 | `maxTrialsPerSearch` | `12` |
+| `parameters.awqMarlin.startupTimeout` / `parameters.gptqMarlin.startupTimeout` | `10m` |
 | `monitorInterval` / `stableFor` / `rescanInterval` | `5m / 15m / 6h` |
 | `trafficChangeThresholdPercent` | `20` |
 | `tolerancePercent` / `minBackloggedFraction` | `10 / 0.8` |
@@ -141,7 +148,7 @@ For the `maxNumBatchedTokens` experiment, a parseable starting value outside the
 
 ## Formula and experiment phases
 
-`formulaOrder` and `experimentOrder` are required lists. At least one must be nonempty. `formulaOrder` currently accepts `maxNumSeqs`; `experimentOrder` accepts `maxNumBatchedTokens`. Combined policies run Initial formulas → Experiments → Final formulas → Monitoring. The final pass runs once in `formulaOrder` using fresh measurements of the retained post-experiment configuration, even if no experiment was accepted. Formula-only policies run a single formula pass; experiment-only policies run no formulas. Use an empty list for a phase you do not need.
+`formulaOrder` and `experimentOrder` are required lists. At least one must be nonempty. `formulaOrder` currently accepts `maxNumSeqs`; `experimentOrder` accepts `maxNumBatchedTokens`, `awqMarlin`, and `gptqMarlin`. Combined policies run Initial formulas → Experiments → Final formulas → Monitoring. The final pass runs once in `formulaOrder` using fresh measurements of the retained post-experiment configuration, even if no experiment was accepted. Formula-only policies run a single formula pass; experiment-only policies run no formulas. Use an empty list for a phase you do not need.
 
 The `maxNumSeqs` formula has two explicit modes:
 
@@ -157,6 +164,30 @@ After formula improvements, `experimentOrder` runs bounded neighbor trials for `
 Each persisted formula or experiment candidate plan consumes an attempt, whether accepted, rejected, failed, or deferred. Skipped unchanged or invalid proposals consume none. `maxTrialsPerSearch` defaults to 12 and must be at least one; it limits the initial formulas and experiments together. Combined policies then allow at most one additional candidate per formula in the final pass, beyond that limit. Each final formula gets one opportunity: acceptance, rejection, failure, or deferral consumes it without retry. A final pass does not restart experiments. Formula results and cursors persist across controller restarts. Experiments begin with a fresh baseline of the retained configuration and never change sequence count. Reconciliation retries of the same plan do not count again. Deferred experimental candidates can be retried as new attempts. Active evaluation and required rollback finish before the next phase or monitoring begins. Unmet latency constraints still report failure. Traffic changes or periodic rescans can start a new search.
 
 The batch-token experiment is bounded local search, not an exhaustive grid or a global optimum. Twelve 30-minute baselines and 15-minute trials require about nine hours of measurement alone, excluding rollouts, cooldown, and additional waits. The final formula pass adds measurement time beyond that budget and can cause additional rollouts and rollbacks. Each candidate and rollback can disrupt serving pods.
+
+## Opt-in Marlin backend experiments
+
+Marlin experiments change only an explicit backend argument, never the checkpoint, revision, weights, or quantization format:
+
+| Experiment | Required current argument | Candidate |
+| --- | --- | --- |
+| `awqMarlin` | `--quantization=awq` | `--quantization=awq_marlin` |
+| `gptqMarlin` | `--quantization=gptq` | `--quantization=gptq_marlin` |
+
+Absent, unrelated, or already-Marlin backend values do not produce a candidate. The controller does not infer a backend from checkpoint metadata. Compatible models without an explicit backend may already use Marlin automatically. Both split and equals argument syntax are supported. To enable AWQ alone, use:
+
+```yaml
+formulaOrder: []
+experimentOrder: [awqMarlin]
+parameters:
+  awqMarlin: {} # startupTimeout defaults to 10m
+```
+
+Use `gptqMarlin` and `parameters.gptqMarlin` for GPTQ. You may order either alongside batch-token experiments. Each has one explicit transition, not a numeric search range. A compatible quantized checkpoint and working baseline are prerequisites. GPU architecture, vLLM build, and checkpoint layout determine whether the backend starts. Compatibility is established by a controlled trial on the target, not an identity allowlist or a promise that all AWQ/GPTQ checkpoints work. Benchmarking does not validate model output quality.
+
+`startupTimeout` must be positive and applies only to initial candidate application while replacement pods become ready, including KubeAI Models without Deployment progress deadlines. Its deadline starts at persisted `status.plan.createdAt`; reconciliation retries and controller restarts do not reset it. The controller must observe initial readiness before that deadline, so controller downtime counts toward the timeout. It is not an evaluation-window, rollback, baseline-startup, or cleanup timeout. A candidate startup timeout fails the trial and starts rollback to the prior complete configuration. Once ready, the candidate uses the usual measurement, traffic, scoring, and rejection rules. An incompatible startup is not a reason to change the checkpoint automatically.
+
+Both Marlin experiments share ownership of `--quantization`. Removing one while the other remains enabled retains that argument's selected and original snapshots and child-policy ownership. Only removing the last Marlin experiment restores the latest original declaration and releases ownership after convergence. Deleting the policy also restores it. Do not run another argument policy that owns `--quantization` on the same target.
 
 ## Workload changes
 
@@ -174,7 +205,7 @@ Runtime argument drift follows the same declaration and convergence checks. The 
 
 After a search settles, the controller measures the selected configuration again and uses that as the monitoring reference. It starts a new search after a sustained traffic change, sustained latency-limit violation, periodic rescan deadline, or policy change. Invalid observations and missed monitoring checks reset sustained-change detection. Candidate changes respect cooldown; a required rollback does not.
 
-`status.phase` is policy-wide. `Monitoring` means the policy is settled and will keep checking, not that it has stopped adapting. Root `Ready=True` and `status.outcome=Success` require a fresh compliant measurement in monitoring. Pending observations do not report success. Fresh unmet latency constraints report failure, including when local search is exhausted. `status.selectedConfiguration` and `status.originalConfiguration` are authoritative complete argument snapshots. `status.parameters` contains derived summaries for both arguments, and `status.lastDecision` retains the latest candidate outcome. `status.search.attempts` counts attempts; `status.search.trialResults` retains current-search decisions with complete candidate configurations, raw throughput, p50/p95 latency and optional GPU measurements, scores, and scored metrics. These records reset with the next search.
+`status.phase` is policy-wide. `Monitoring` means the policy is settled and will keep checking, not that it has stopped adapting. Root `Ready=True` and `status.outcome=Success` require a fresh compliant measurement in monitoring. Pending observations do not report success. Fresh unmet latency constraints report failure, including when local search is exhausted. `status.selectedConfiguration` and `status.originalConfiguration` are authoritative complete argument snapshots. `status.parameters` contains derived summaries for numeric controls only; quantization appears in the complete configuration snapshots, and `status.lastDecision` retains the latest candidate outcome. `status.search.attempts` counts attempts; `status.search.trialResults` retains current-search decisions with complete candidate configurations, raw throughput, p50/p95 latency and optional GPU measurements, scores, and scored metrics. These records reset with the next search.
 
 `status.search.completion` preserves its own retained configuration and measurement, completion reason, scored metrics, and score calculated directly against the fixed search reference. It does not sum gains from different windows. `comparisonReason` explains unavailable comparisons, such as incomparable traffic or no scoring opportunity. `recoveryProgress` reports reduced hard-limit violations separately from objective improvement. Later monitoring measurements do not change completion evidence.
 

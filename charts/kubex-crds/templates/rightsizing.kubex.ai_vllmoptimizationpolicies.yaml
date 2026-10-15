@@ -155,8 +155,10 @@ spec:
                   enum:
                   - maxNumBatchedTokens
                   - maxNumSeqs
+                  - awqMarlin
+                  - gptqMarlin
                   type: string
-                maxItems: 1
+                maxItems: 3
                 type: array
                 x-kubernetes-list-type: atomic
                 x-kubernetes-validations:
@@ -170,6 +172,8 @@ spec:
                   enum:
                   - maxNumBatchedTokens
                   - maxNumSeqs
+                  - awqMarlin
+                  - gptqMarlin
                   type: string
                 maxItems: 1
                 type: array
@@ -340,6 +344,30 @@ spec:
               parameters:
                 description: parameters defines the supported search spaces.
                 properties:
+                  awqMarlin:
+                    description: awqMarlin enables an AWQ Marlin quantization experiment.
+                    properties:
+                      startupTimeout:
+                        default: 10m
+                        description: startupTimeout limits how long replacement pods
+                          may take to become ready.
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be greater than 0 seconds
+                          rule: duration(self) > duration('0s')
+                    type: object
+                  gptqMarlin:
+                    description: gptqMarlin enables a GPTQ Marlin quantization experiment.
+                    properties:
+                      startupTimeout:
+                        default: 10m
+                        description: startupTimeout limits how long replacement pods
+                          may take to become ready.
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be greater than 0 seconds
+                          rule: duration(self) > duration('0s')
+                    type: object
                   maxNumBatchedTokens:
                     description: maxNumBatchedTokens defines the search range for
                       --max-num-batched-tokens.
@@ -415,7 +443,8 @@ spec:
                 type: object
                 x-kubernetes-validations:
                 - message: at least one supported parameter is required
-                  rule: has(self.maxNumBatchedTokens) || has(self.maxNumSeqs)
+                  rule: has(self.maxNumBatchedTokens) || has(self.maxNumSeqs) || has(self.awqMarlin)
+                    || has(self.gptqMarlin)
               prometheus:
                 default: {}
                 description: |-
@@ -595,10 +624,12 @@ spec:
                 are configured
               rule: self.formulaOrder.all(parameter, parameter == 'maxNumSeqs' &&
                 has(self.parameters.maxNumSeqs))
-            - message: experimentOrder may include maxNumBatchedTokens only when its
-                experiment settings are configured
-              rule: self.experimentOrder.all(parameter, parameter == 'maxNumBatchedTokens'
-                && has(self.parameters.maxNumBatchedTokens))
+            - message: experimentOrder may include maxNumBatchedTokens, awqMarlin,
+                or gptqMarlin only when their experiment settings are configured
+              rule: self.experimentOrder.all(parameter, (parameter == 'maxNumBatchedTokens'
+                && has(self.parameters.maxNumBatchedTokens)) || (parameter == 'awqMarlin'
+                && has(self.parameters.awqMarlin)) || (parameter == 'gptqMarlin' &&
+                has(self.parameters.gptqMarlin)))
           status:
             description: status reports observed optimization state.
             properties:
@@ -1445,6 +1476,8 @@ spec:
                     enum:
                     - maxNumBatchedTokens
                     - maxNumSeqs
+                    - awqMarlin
+                    - gptqMarlin
                     type: string
                   outcome:
                     description: outcome is the decision result.
@@ -2214,6 +2247,8 @@ spec:
                     enum:
                     - maxNumBatchedTokens
                     - maxNumSeqs
+                    - awqMarlin
+                    - gptqMarlin
                     type: string
                   phase:
                     description: phase is Applying, Evaluating, or RollingBack.
@@ -2655,6 +2690,8 @@ spec:
                           enum:
                           - maxNumBatchedTokens
                           - maxNumSeqs
+                          - awqMarlin
+                          - gptqMarlin
                           type: string
                         outcome:
                           description: outcome records whether the formula result
@@ -3333,6 +3370,8 @@ spec:
                           enum:
                           - maxNumBatchedTokens
                           - maxNumSeqs
+                          - awqMarlin
+                          - gptqMarlin
                           type: string
                         outcome:
                           description: outcome is the decision result.
