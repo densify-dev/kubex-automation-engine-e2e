@@ -597,10 +597,10 @@ spec:
                     default: 10
                     description: |-
                       tolerancePercent is the allowed relative change in request lengths and demand-limited completed-request rate.
-                      A demand-limited candidate with a strictly higher completed-request rate is also comparable when
-                      meanRunningRequests + meanWaitingRequests stays within this tolerance, even if backlog eligibility changes.
+                      A demand-limited candidate with comparable request lengths and a strictly higher completed-request rate
+                      is also comparable regardless of concurrency or changed backlog eligibility.
                       The exception must pass against both the fresh baseline and fixed search reference, using exact window durations.
-                      Concurrency is a demand proxy, not proof of identical traffic.
+                      Comparable request lengths and faster completions do not prove identical incoming traffic.
                     maximum: 100
                     minimum: 0
                     type: number
