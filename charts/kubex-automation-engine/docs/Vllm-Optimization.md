@@ -223,18 +223,20 @@ The existing controller `/metrics` endpoint exposes gauges `automation_controlle
 
 `configuration="selected"` is the retained setting; `configuration="candidate"` is the active trial setting. Values come from cached `status.parameters.maxNumBatchedTokens` and `status.parameters.maxNumSeqs`. Unknown or absent argument values produce no series, and the controller never invents vLLM defaults. Candidate series disappear after acceptance or during rollback. All series disappear when a policy is deleting or deleted. Cache-read failures surface as collection errors.
 
-For dashboards, deduplicate controller replicas with:
+`configuration="current"` is the controller's current target. It uses the candidate value while a plan is `Applying` or `Evaluating`, and the selected value during `RollingBack` or when no plan exists. A stale candidate summary without a plan does not affect `current`. If the corresponding value is unknown or absent, no `current` series is emitted.
+
+For dashboards showing the current target, deduplicate controller replicas with:
 
 ```promql
 max by (
   policy, target_namespace, target_kind,
   target_name, container, configuration
 ) (
-  automation_controller_vllm_optimization_max_num_batched_tokens
+  automation_controller_vllm_optimization_max_num_batched_tokens{configuration="current"}
 )
 ```
 
-These metrics describe controller settings, not proof that every pod has completed rollout. Cache propagation can briefly differ between controller replicas.
+These metrics describe controller settings, not settings confirmed on every running pod. In particular, `current` can change before every pod has completed rollout. Cache propagation can briefly differ between controller replicas.
 
 ## Rollback, deletion, and upgrade
 
