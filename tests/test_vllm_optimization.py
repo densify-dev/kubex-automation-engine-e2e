@@ -462,7 +462,7 @@ def _gpu_node_available(core) -> bool:
 
 def _deployment_manifest(
     namespace: str, name: str, initial_sequences: str = "8", cache_manager: str = "full",
-    image: str = IMAGE,
+    image: str = IMAGE, chunked_prefill: bool = True,
 ) -> str:
     model, revision = (
         (MODEL, MODEL_REVISION)
@@ -530,7 +530,7 @@ spec:
             - {BATCH_ARG}=4096
             - --max-num-seqs={initial_sequences}
             - --gpu-memory-utilization=0.9
-            - --enable-chunked-prefill
+            - {"--enable-chunked-prefill" if chunked_prefill else "--no-enable-chunked-prefill"}
             - --enable-prefix-caching
             - --seed=0
             - {cache_flag}
@@ -568,7 +568,10 @@ spec:
 """
 
 
-def _policy_manifest(name: str, namespace: str, workload: str, sizing_basis: str | None) -> str:
+def _policy_manifest(
+    name: str, namespace: str, workload: str, sizing_basis: str | None,
+    failed_rollout: bool = False,
+) -> str:
     formula_order = (
         "  formulaOrder:\n    - maxNumSeqs\n" if sizing_basis else "  formulaOrder: []\n"
     )
@@ -579,6 +582,8 @@ def _policy_manifest(name: str, namespace: str, workload: str, sizing_basis: str
     )
     if sizing_basis == "ObservedCacheUsage":
         sequence_settings += "      targetCacheUtilization: 0.8\n"
+    # Keep live searches to three experimental attempts plus the initial formula.
+    trial_budget = 4 if sizing_basis else 3
     return f"""\
 apiVersion: {GROUP}/{VERSION}
 kind: VllmOptimizationPolicy
@@ -615,7 +620,7 @@ spec:
     trialWindow: 2m
     cooldown: 15s
     minFinishedRequests: 5
-    maxTrialsPerSearch: 12
+    maxTrialsPerSearch: {trial_budget}
   adaptation:
     monitorInterval: 10s
     stableFor: 20s
@@ -628,10 +633,22 @@ spec:
     - maxNumBatchedTokens
   parameters:
     maxNumBatchedTokens:
-      min: 4096
-      max: 5120
-      step: 1024
+      min: {512 if failed_rollout else 4096}
+      max: {768 if failed_rollout else 5120}
 {sequence_settings}"""
+
+
+def test_failed_rollout_manifest_uses_legal_batch_below_model_length():
+    deployment, _ = yaml.safe_load_all(
+        _deployment_manifest("ns", "server", chunked_prefill=False)
+    )
+    args = deployment["spec"]["template"]["spec"]["containers"][0]["args"]
+    policy = yaml.safe_load(_policy_manifest("policy", "ns", "server", None, failed_rollout=True))
+    domain = policy["spec"]["parameters"]["maxNumBatchedTokens"]
+    assert "--no-enable-chunked-prefill" in args
+    sequences = int(next(arg.split("=", 1)[1] for arg in args if arg.startswith(SEQ_ARG + "=")))
+    model_length = int(args[args.index("--max-model-len") + 1])
+    assert sequences <= domain["min"] < domain["max"] < model_length
 
 
 @pytest.mark.parametrize("cache_manager", ["full", "hybrid"])
@@ -669,7 +686,10 @@ def test_manifest_formula_modes_and_reproducible_flags(cache_manager, sizing_bas
     assert expected_model not in policy_manifest
     assert expected_revision not in policy_manifest
     assert IMAGE not in policy_manifest
-    settings = yaml.safe_load(policy_manifest)["spec"]["parameters"]["maxNumSeqs"]
+    spec = yaml.safe_load(policy_manifest)["spec"]
+    assert spec["parameters"]["maxNumBatchedTokens"] == {"min": 4096, "max": 5120}
+    assert spec["evaluation"]["maxTrialsPerSearch"] == 4
+    settings = spec["parameters"]["maxNumSeqs"]
     assert set(settings) == (
         {"min", "max", "sizingBasis", "targetCacheUtilization"}
         if sizing_basis == "ObservedCacheUsage"
@@ -1014,6 +1034,7 @@ class TestVllmOptimization:
                 _deployment_manifest(
                     namespace, workload, original_sequences, cache_manager,
                     NATIVE_IMAGE if sizing_basis == "NativeCapacity" else IMAGE,
+                    chunked_prefill=not failed_rollout,
                 ),
                 kube_context,
             )
@@ -1053,13 +1074,10 @@ class TestVllmOptimization:
                 short_prompt_mean = _prompt_mean(kube_context, namespace, workload)
                 assert short_prompt_mean is not None and short_prompt_mean > 0
 
-                manifest = _policy_manifest(policy_name, namespace, workload, sizing_basis)
-                if failed_rollout:
-                    # vLLM rejects batch tokens below max-num-seqs, forcing startup failure.
-                    manifest = manifest.replace(
-                        "min: 4096\n      max: 5120\n      step: 1024",
-                        "min: 1\n      max: 2\n      step: 1",
-                    )
+                # Without chunked prefill, vLLM rejects legal batch probes below max-model-len.
+                manifest = _policy_manifest(
+                    policy_name, namespace, workload, sizing_basis, failed_rollout=failed_rollout
+                )
                 apply_manifest(manifest, kube_context)
                 created_policy = True
                 policy_uid = get_crd(k8s_clients.custom, "vllmoptimizationpolicies", policy_name)[
@@ -1119,7 +1137,7 @@ class TestVllmOptimization:
                     "candidateConfiguration"
                 ]
                 assert _configuration_value(experiment_configuration) == (
-                    "2" if failed_rollout else "5120"
+                    "512" if failed_rollout else "5120"
                 )
                 if failed_rollout:
                     decision = experiment_trial["status"]["lastDecision"]

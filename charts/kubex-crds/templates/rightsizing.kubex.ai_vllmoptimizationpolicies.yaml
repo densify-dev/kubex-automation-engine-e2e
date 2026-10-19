@@ -382,17 +382,9 @@ spec:
                         format: int64
                         minimum: 1
                         type: integer
-                      step:
-                        description: |-
-                          step is the maximum change between adjacent in-range trial values.
-                          Entering the range from an out-of-range selection uses the nearest boundary, regardless of step.
-                        format: int64
-                        minimum: 1
-                        type: integer
                     required:
                     - max
                     - min
-                    - step
                     type: object
                     x-kubernetes-validations:
                     - message: min must be less than max
