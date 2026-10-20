@@ -1,6 +1,6 @@
 # vLLM optimization policy
 
-`VllmOptimizationPolicy` can tune `--max-num-batched-tokens`, `--max-num-seqs`, and opt-in `--quantization` backend transitions for one Deployment or KubeAI Model. It compares complete policy-controlled configurations and replaces pods when applying a trial. It does not change GPU allocation, replica count, KV-cache size, or other vLLM arguments. Pod disruption during trials is expected.
+`VllmOptimizationPolicy` can tune `--max-num-batched-tokens`, `--max-num-seqs`, and opt-in `--quantization` backend transitions or `--enforce-eager` toggles for one Deployment or KubeAI Model. It compares complete policy-controlled configurations and replaces pods when applying a trial. It does not change GPU allocation, replica count, KV-cache size, or other vLLM arguments. Pod disruption during trials is expected.
 
 ## E2e fixture prerequisites
 
@@ -79,7 +79,7 @@ spec:
       targetCacheUtilization: 0.8
 ```
 
-The target, latency limits, evaluation settings, and at least one formula or experiment are required. The target, including its container, is immutable. `formulaOrder` selects the `maxNumSeqs` formula; `experimentOrder` selects `maxNumBatchedTokens`, `awqMarlin`, or `gptqMarlin` experiments. Either list may be empty, but not both. The example ranges are illustrative. Keep bounds valid for the model and vLLM configuration. Without chunked prefill, the batch-token limit must accommodate the model's maximum sequence length.
+The target, latency limits, evaluation settings, and at least one formula or experiment are required. The target, including its container, is immutable. `formulaOrder` selects the `maxNumSeqs` formula; `experimentOrder` selects `maxNumBatchedTokens`, `awqMarlin`, `gptqMarlin`, or `enforceEager` experiments. Either list may be empty, but not both. The example ranges are illustrative. Keep bounds valid for the model and vLLM configuration. Without chunked prefill, the batch-token limit must accommodate the model's maximum sequence length.
 
 ## Defaults and metrics
 
@@ -92,7 +92,7 @@ Defaults come from the CRD schema:
 | GPU compute / GPU memory direction | `Maximize / Minimize` |
 | `minScoreGain` | `2` |
 | `maxTrialsPerSearch` | `12` |
-| `parameters.awqMarlin.startupTimeout` / `parameters.gptqMarlin.startupTimeout` | `10m` |
+| `parameters.awqMarlin.startupTimeout` / `parameters.gptqMarlin.startupTimeout` / `parameters.enforceEager.startupTimeout` | `10m` |
 | `monitorInterval` / `stableFor` / `rescanInterval` | `5m / 15m / 6h` |
 | `trafficChangeThresholdPercent` | `20` |
 | `tolerancePercent` / `minBackloggedFraction` | `10 / 0.8` |
@@ -151,7 +151,7 @@ Refinement evidence must have valid, comparable measurements, matching scored-me
 
 ## Formula and experiment phases
 
-`formulaOrder` and `experimentOrder` are required lists. At least one must be nonempty. `formulaOrder` currently accepts `maxNumSeqs`; `experimentOrder` accepts `maxNumBatchedTokens`, `awqMarlin`, and `gptqMarlin`. Combined policies run Initial formulas → Experiments → Final formulas → Monitoring. The final pass runs once in `formulaOrder` using fresh measurements of the retained post-experiment configuration, even if no experiment was accepted. Formula-only policies run a single formula pass; experiment-only policies run no formulas. Use an empty list for a phase you do not need.
+`formulaOrder` and `experimentOrder` are required lists. At least one must be nonempty. `formulaOrder` currently accepts `maxNumSeqs`; `experimentOrder` accepts `maxNumBatchedTokens`, `awqMarlin`, `gptqMarlin`, and `enforceEager`. Combined policies run Initial formulas → Experiments → Final formulas → Monitoring. The final pass runs once in `formulaOrder` using fresh measurements of the retained post-experiment configuration, even if no experiment was accepted. Formula-only policies run a single formula pass; experiment-only policies run no formulas. Use an empty list for a phase you do not need.
 
 The `maxNumSeqs` formula has two explicit modes:
 
@@ -169,6 +169,29 @@ Each persisted formula or experiment candidate plan consumes an attempt, whether
 Experiments remember measured baselines and tried candidates across accepted improvements within a search. History tracks complete configurations, so a different sequence count or backend makes a configuration eligible again. New searches start with fresh history and can revisit configurations. Deferred experimental candidates remain eligible for retry.
 
 Coarse probes and anchor refinement share the same `maxTrialsPerSearch` budget with initial formulas and other experiments. Refinement has no separate allowance. The search stops when that budget is exhausted or no eligible untried integer candidate remains. Twelve 30-minute baselines and 15-minute trials require about nine hours of measurement alone, excluding rollouts, cooldown, and additional waits. The final formula pass adds measurement time beyond that budget and can cause additional rollouts and rollbacks. Each candidate and rollback can disrupt serving pods.
+
+## Opt-in eager-mode experiment
+
+```yaml
+formulaOrder: []
+experimentOrder: [enforceEager]
+parameters:
+  enforceEager: {} # startupTimeout defaults to 10m
+```
+
+The controller measures the current configuration, then trials the opposite eager state. Enabled means a bare `--enforce-eager`; disabled means the argument is absent. Valued forms such as `--enforce-eager=true` or `--enforce-eager false`, and `--no-enforce-eager`, are rejected. Controlled arguments in container commands are unsupported. Other arguments stay unchanged. Existing policies do not change unless they opt in.
+
+This is a normal scored experiment, not exhaustive paired benchmarking. It uses the same traffic comparisons, latency constraints, regression checks, and shared `maxTrialsPerSearch` budget. Put `enforceEager` before `maxNumBatchedTokens` to give it priority. Complete-configuration history prevents duplicate trials and oscillation within a search; a changed batch or backend configuration can make the opposite eager state eligible again.
+
+`startupTimeout` must be positive. The deadline starts at persisted `status.plan.createdAt`, includes controller downtime, and applies until initial candidate readiness is observed for both Deployments and KubeAI Models. Timeout or other trial failure starts rollback; rejection also restores the prior complete configuration. Removing the experiment or deleting the policy restores its latest original declaration.
+
+Removing `--enforce-eager` permits graph capture. Some models, vLLM builds, and execution configurations cannot capture graphs or need more startup memory. Establish a working baseline and expect disruption during trials and rollback. Benchmark acceptance does not validate output quality. Eager state appears in complete configuration snapshots, not numeric summaries or settings metrics.
+
+Run the targeted GPU cases against an existing GPU context:
+
+```sh
+python -m pytest test/e2e/tests/test_vllm_optimization.py -k enforce_eager --gpu-suite --skip-kind-bootstrap --kube-context <existing-context>
+```
 
 ## Opt-in Marlin backend experiments
 
@@ -210,7 +233,7 @@ Runtime argument drift follows the same declaration and convergence checks. The 
 
 After a search settles, the controller measures the selected configuration again and uses that as the monitoring reference. It starts a new search after a sustained traffic change, sustained latency-limit violation, periodic rescan deadline, or policy change. Invalid observations and missed monitoring checks reset sustained-change detection. Candidate changes respect cooldown; a required rollback does not.
 
-`status.phase` is policy-wide. `Monitoring` means the policy is settled and will keep checking, not that it has stopped adapting. Root `Ready=True` and `status.outcome=Success` require a fresh compliant measurement in monitoring. Pending observations do not report success. Fresh unmet latency constraints report failure, including when the coarse-to-fine search is exhausted. `status.selectedConfiguration` and `status.originalConfiguration` are authoritative complete argument snapshots. `status.parameters` contains derived summaries for numeric controls only; quantization appears in the complete configuration snapshots, and `status.lastDecision` retains the latest candidate outcome. `status.search.attempts` counts attempts; `status.search.trialResults` retains current-search decisions with complete candidate configurations, raw throughput, p50/p95 latency and optional GPU measurements, scores, and scored metrics. These records reset with the next search.
+`status.phase` is policy-wide. `Monitoring` means the policy is settled and will keep checking, not that it has stopped adapting. Root `Ready=True` and `status.outcome=Success` require a fresh compliant measurement in monitoring. Pending observations do not report success. Fresh unmet latency constraints report failure, including when the coarse-to-fine search is exhausted. `status.selectedConfiguration` and `status.originalConfiguration` are authoritative complete argument snapshots. `status.parameters` contains derived summaries for numeric controls only; quantization and eager state appear in the complete configuration snapshots, and `status.lastDecision` retains the latest candidate outcome. `status.search.attempts` counts attempts; `status.search.trialResults` retains current-search decisions with complete candidate configurations, raw throughput, p50/p95 latency and optional GPU measurements, scores, and scored metrics. These records reset with the next search.
 
 `status.search.completion` preserves its own retained configuration and measurement, completion reason, scored metrics, and score calculated directly against the fixed search reference. It does not sum gains from different windows. `comparisonReason` explains unavailable comparisons, such as incomparable traffic or no scoring opportunity. `recoveryProgress` reports reduced hard-limit violations separately from objective improvement. Later monitoring measurements do not change completion evidence.
 

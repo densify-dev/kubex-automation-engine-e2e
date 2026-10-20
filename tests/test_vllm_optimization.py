@@ -788,8 +788,159 @@ def test_marlin_manifests_pin_checkpoint_and_backend(improvement, kubeai):
     )
 
 
+def _eager_manifests(namespace, workload, policy_name, initial_eager):
+    deployment, service = yaml.safe_load_all(_deployment_manifest(namespace, workload))
+    if initial_eager:
+        deployment["spec"]["template"]["spec"]["containers"][0]["args"].append("--enforce-eager")
+    policy = yaml.safe_load(_policy_manifest(policy_name, namespace, workload, None))
+    policy["spec"]["experimentOrder"] = ["enforceEager"]
+    policy["spec"]["parameters"] = {"enforceEager": {}}
+    policy["spec"]["evaluation"]["maxTrialsPerSearch"] = 1
+    return deployment, service, policy
+
+
+@pytest.mark.parametrize("initial_eager", [False, True], ids=["absent", "bare-present"])
+def test_eager_manifests_isolate_boolean_trial(initial_eager):
+    deployment, service, policy = _eager_manifests("ns", "server", "policy", initial_eager)
+    original, _ = yaml.safe_load_all(_deployment_manifest("ns", "server"))
+    args = deployment["spec"]["template"]["spec"]["containers"][0]["args"]
+    original_args = original["spec"]["template"]["spec"]["containers"][0]["args"]
+    assert args == original_args + (["--enforce-eager"] if initial_eager else [])
+    assert service["spec"]["selector"] == {"app": "server"}
+    spec = policy["spec"]
+    assert spec["formulaOrder"] == []
+    assert spec["experimentOrder"] == ["enforceEager"]
+    assert spec["parameters"] == {"enforceEager": {}}
+    assert spec["evaluation"]["maxTrialsPerSearch"] == 1
+    assert spec["objective"]["minScoreGain"] == 1000000
+
+
 @pytest.mark.usefixtures("kind_cluster")
 class TestVllmOptimization:
+    @pytest.mark.timeout(5400)
+    @pytest.mark.parametrize("initial_eager", [False, True], ids=["absent", "bare-present"])
+    def test_enforce_eager_trial_and_exact_argument_restoration(
+        self, kube_context, k8s_clients, initial_eager
+    ):
+        if kube_context.startswith("kind-") or not _gpu_node_available(k8s_clients.core):
+            pytest.skip("eager trials require a real NVIDIA GPU cluster")
+        core, custom = k8s_clients.core, k8s_clients.custom
+        suffix = uuid4().hex[:8]
+        namespace, workload, name = (
+            f"eager-e2e-{suffix}", f"eager-server-{suffix}", f"eager-policy-{suffix}"
+        )
+        deployment, service, policy = _eager_manifests(
+            namespace, workload, name, initial_eager
+        )
+        original_args = deployment["spec"]["template"]["spec"]["containers"][0]["args"]
+        non_eager_args = [arg for arg in original_args if arg != "--enforce-eager"]
+        gc = get_crd(custom, "globalconfigurations", "global-config")
+        original_url = gc.get("spec", {}).get("prometheus", {}).get("url")
+        created_policy = False
+        namespace_created = False
+        policy_uid = ""
+
+        def ready_arguments(restored=False):
+            for pod in core.list_namespaced_pod(
+                namespace, label_selector=f"app={workload}"
+            ).items:
+                if not any(
+                    status.name == "vllm" and status.ready
+                    for status in (pod.status.container_statuses or [])
+                ):
+                    continue
+                args = next(c for c in pod.spec.containers if c.name == "vllm").args or []
+                if restored:
+                    if args == original_args:
+                        return True
+                elif (
+                    ("--enforce-eager" in args) == (not initial_eager)
+                    and [arg for arg in args if arg != "--enforce-eager"] == non_eager_args
+                ):
+                    return True
+            return False
+
+        def original_deployment_restored():
+            current = k8s_clients.apps.read_namespaced_deployment(workload, namespace)
+            return current.spec.template.spec.containers[0].args == original_args
+
+        try:
+            core.read_namespaced_service("prometheus", "monitoring")
+            wait_for_pod_ready(core, "monitoring", "app=prometheus", timeout=300)
+            custom.patch_cluster_custom_object(
+                GROUP, VERSION, "globalconfigurations", "global-config",
+                {"spec": {"prometheus": {"url": PROMETHEUS_URL}}},
+            )
+            core.create_namespace({"metadata": {"name": namespace}})
+            namespace_created = True
+            _reload_prometheus(kube_context)
+            apply_manifest(yaml.safe_dump_all([deployment, service]), kube_context)
+            wait_for_pod_ready(core, namespace, f"app={workload}", timeout=1800)
+            assert ready_arguments(restored=True)
+            with _load_driver(kube_context, namespace, workload):
+                wait_for(
+                    lambda: all(
+                        _metric_values(kube_context, namespace, workload).get(family, 0) > 0
+                        for family in COUNTER_FAMILIES + HISTOGRAM_COUNT_FAMILIES
+                    ),
+                    timeout=300, interval=10, message="eager baseline metrics under load",
+                )
+                apply_manifest(yaml.safe_dump(policy), kube_context)
+                created_policy = True
+                policy_uid = get_crd(custom, "vllmoptimizationpolicies", name)["metadata"]["uid"]
+                active = _wait_for_policy(
+                    custom, name,
+                    lambda p: p.get("status", {}).get("plan", {}).get("phase") == "Evaluating"
+                    and ready_arguments(),
+                    timeout=1800, message="opposite eager trial applied on a ready pod",
+                )
+                plan = active["status"]["plan"]
+                assert plan["improvement"] == "enforceEager"
+                argument = next(
+                    arg for arg in plan["candidateConfiguration"]["arguments"]
+                    if arg["name"] == "--enforce-eager"
+                )
+                assert argument["operation"] == ("Remove" if initial_eager else "AddOrUpdate")
+                assert argument.get("value") is None
+                settled = _wait_for_policy(
+                    custom, name,
+                    lambda p: p.get("status", {}).get("phase") == "Monitoring"
+                    and p.get("status", {}).get("search", {}).get("completedAt")
+                    and original_deployment_restored() and ready_arguments(restored=True),
+                    timeout=1800, message="eager trial rollback restores exact initial args",
+                )
+                results = settled["status"]["search"]["trialResults"]
+                assert len(results) == 1
+                assert results[0]["improvement"] == "enforceEager"
+                assert results[0]["outcome"] in {"Rejected", "Deferred"}
+                assert results[0].get("candidateMeasurement")
+        finally:
+            try:
+                if created_policy:
+                    custom.delete_cluster_custom_object(
+                        GROUP, VERSION, "vllmoptimizationpolicies", name
+                    )
+                    _wait_for_policy_deletion(custom, name, timeout=1200)
+                    wait_for(
+                        lambda: original_deployment_restored()
+                        and ready_arguments(restored=True)
+                        and _no_owned_child_policy(custom, policy_uid),
+                        timeout=1200, interval=5,
+                        message="exact eager argument restoration and child cleanup after deletion",
+                    )
+                    created_policy = False
+            finally:
+                custom.patch_cluster_custom_object(
+                    GROUP, VERSION, "globalconfigurations", "global-config",
+                    {"spec": {"prometheus": {"url": original_url}}},
+                )
+                if namespace_created and not created_policy:
+                    core.delete_namespace(namespace)
+                    wait_for(
+                        lambda: namespace_gone(k8s_clients, namespace), timeout=180,
+                        message=f"namespace {namespace} removal",
+                    )
+
     @pytest.mark.timeout(5400)
     @pytest.mark.parametrize(
         "improvement,kubeai",
