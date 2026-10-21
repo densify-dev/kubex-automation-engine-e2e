@@ -815,8 +815,166 @@ def test_eager_manifests_isolate_boolean_trial(initial_eager):
     assert spec["objective"]["minScoreGain"] == 1000000
 
 
+def _traffic_shift_policy(name, namespace, workload):
+    policy = yaml.safe_load(_policy_manifest(name, namespace, workload, None))
+    spec = policy["spec"]
+    spec["parameters"]["maxNumBatchedTokens"] = {"min": 512, "max": 8192}
+    spec["objective"]["minScoreGain"] = 2
+    spec["objective"]["throughput"]["weight"] = 50
+    spec["objective"]["p95TTFT"]["weight"] = 25
+    spec["objective"]["p95InterTokenLatency"]["weight"] = 25
+    spec["evaluation"].update(trialWindow="1m", maxTrialsPerSearch=8)
+    return policy
+
+
+def test_traffic_shift_policy_uses_shared_budget_and_normal_scoring():
+    spec = _traffic_shift_policy("policy", "ns", "server")["spec"]
+    assert spec["formulaOrder"] == []
+    assert spec["experimentOrder"] == ["maxNumBatchedTokens"]
+    assert spec["parameters"] == {"maxNumBatchedTokens": {"min": 512, "max": 8192}}
+    assert spec["evaluation"]["maxTrialsPerSearch"] == 8
+    assert spec["objective"]["minScoreGain"] == 2
+    assert sum(value["weight"] for value in spec["objective"].values()
+               if isinstance(value, dict)) == 100
+    assert spec["objective"]["gpuComputeUtilization"]["weight"] == 0
+    assert spec["objective"]["gpuMemoryFootprint"]["weight"] == 0
+
+
 @pytest.mark.usefixtures("kind_cluster")
 class TestVllmOptimization:
+    @pytest.mark.timeout(14400)
+    def test_traffic_shift_planner_comparison(
+        self, kube_context, k8s_clients, record_property
+    ):
+        """Run unchanged against each installed planner; emit comparable JUnit evidence."""
+        if kube_context.startswith("kind-") or not _gpu_node_available(k8s_clients.core):
+            pytest.skip("traffic-shift comparison requires a real NVIDIA GPU cluster")
+        core, custom, apps = k8s_clients.core, k8s_clients.custom, k8s_clients.apps
+        suffix = uuid4().hex[:8]
+        namespace, workload, name = (
+            f"traffic-e2e-{suffix}", f"traffic-server-{suffix}", f"traffic-policy-{suffix}"
+        )
+        gc = get_crd(custom, "globalconfigurations", "global-config")
+        original_url = gc.get("spec", {}).get("prometheus", {}).get("url")
+        created_policy = namespace_created = False
+        policy_uid = ""
+        reports = []
+
+        def revision():
+            deployment = apps.read_namespaced_deployment(workload, namespace)
+            return int((deployment.metadata.annotations or {}).get(
+                "deployment.kubernetes.io/revision", "0"
+            ))
+
+        try:
+            core.read_namespaced_service("prometheus", "monitoring")
+            wait_for_pod_ready(core, "monitoring", "app=prometheus", timeout=300)
+            custom.patch_cluster_custom_object(
+                GROUP, VERSION, "globalconfigurations", "global-config",
+                {"spec": {"prometheus": {"url": PROMETHEUS_URL}}},
+            )
+            core.create_namespace({"metadata": {"name": namespace}})
+            namespace_created = True
+            _reload_prometheus(kube_context)
+            apply_manifest(_deployment_manifest(namespace, workload), kube_context)
+            wait_for_pod_ready(core, namespace, f"app={workload}", timeout=1800)
+            with _load_driver(kube_context, namespace, workload) as load:
+                previous_search = None
+                # Repeat both mixes so the new planner can reuse cross-search evidence.
+                for repetitions in (16, 96, 16, 96):
+                    start_revision = revision()
+                    rollback_plans = set()
+                    load.set_prompt_mix(repetitions)
+                    expected_mean = None
+
+                    def mix_is_live():
+                        nonlocal expected_mean
+                        expected_mean = _prompt_mean(kube_context, namespace, workload)
+                        previous_mean = reports[-1]["prompt_mean"] if reports else None
+                        return expected_mean is not None and math.isfinite(expected_mean) and (
+                            expected_mean > 0 if previous_mean is None else
+                            expected_mean > previous_mean * 4 if repetitions == 96 else
+                            expected_mean < previous_mean / 4
+                        )
+
+                    wait_for(mix_is_live, timeout=300, interval=10,
+                             message=f"prompt mix {repetitions} visible in Prometheus")
+                    if not created_policy:
+                        apply_manifest(yaml.safe_dump(
+                            _traffic_shift_policy(name, namespace, workload)
+                        ), kube_context)
+                        created_policy = True
+                        policy_uid = get_crd(custom, "vllmoptimizationpolicies", name)[
+                            "metadata"
+                        ]["uid"]
+
+                    def search_settled(policy):
+                        status = policy.get("status", {})
+                        plan = status.get("plan") or {}
+                        if plan.get("phase") == "RollingBack":
+                            rollback_plans.add(plan["createdAt"])
+                        search = status.get("search", {})
+                        return (
+                            search.get("startedAt") not in (None, previous_search)
+                            and search.get("completedAt")
+                            and status.get("phase") == "Monitoring"
+                            and (status.get("monitoring") or {}).get("referenceMeasurement")
+                            and not plan
+                        )
+
+                    settled = _wait_for_policy(
+                        custom, name, search_settled, timeout=2700,
+                        message=f"traffic mix {repetitions} search settles",
+                    )
+                    status = settled["status"]
+                    search = status["search"]
+                    assert search["trigger"] == (
+                        "Initial" if previous_search is None else "TrafficChange"
+                    )
+                    results = search.get("trialResults", [])
+                    assert search.get("attempts", 0) <= 8
+                    assert search.get("completion"), "search must preserve completion evidence"
+                    # Retain raw measurements, including throughput and TTFT/ITL, not just scores.
+                    reports.append({
+                        "repetitions": repetitions, "prompt_mean": expected_mean,
+                        "trial_count": search.get("attempts", 0),
+                        "rollouts": revision() - start_revision,
+                        "observed_rollbacks": len(rollback_plans),
+                        "rollback_decisions": sum(
+                            result["outcome"] in {"Rejected", "Deferred", "Failed"}
+                            for result in results
+                        ),
+                        "request_errors_cumulative": load.request_errors,
+                        "search": search,
+                        "settled_measurement": status["monitoring"]["referenceMeasurement"],
+                        "selected_configuration": status.get("selectedConfiguration"),
+                    })
+                    previous_search = search["startedAt"]
+                    print("traffic_shift_comparison=" + json.dumps(reports[-1], sort_keys=True))
+        finally:
+            record_property("traffic_shift_comparison", json.dumps(reports))
+            try:
+                if created_policy:
+                    custom.delete_cluster_custom_object(
+                        GROUP, VERSION, "vllmoptimizationpolicies", name
+                    )
+                    _wait_for_policy_deletion(custom, name, timeout=1200)
+                    wait_for(
+                        lambda: _ready_pod_with_value(core, namespace, workload, "4096", "8")
+                        and _no_owned_child_policy(custom, policy_uid),
+                        timeout=1200, interval=5, message="traffic fixture restoration",
+                    )
+                    created_policy = False
+            finally:
+                custom.patch_cluster_custom_object(
+                    GROUP, VERSION, "globalconfigurations", "global-config",
+                    {"spec": {"prometheus": {"url": original_url}}},
+                )
+                if namespace_created and not created_policy:
+                    core.delete_namespace(namespace)
+                    wait_for(lambda: namespace_gone(k8s_clients, namespace), timeout=180,
+                             message=f"namespace {namespace} removal")
+
     @pytest.mark.timeout(5400)
     @pytest.mark.parametrize("initial_eager", [False, True], ids=["absent", "bare-present"])
     def test_enforce_eager_trial_and_exact_argument_restoration(

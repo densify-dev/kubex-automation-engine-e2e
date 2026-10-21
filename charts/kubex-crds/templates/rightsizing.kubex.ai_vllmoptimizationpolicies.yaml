@@ -910,6 +910,138 @@ spec:
                       type: object
                     type: array
                 type: object
+              experimentHistory:
+                description: |-
+                  experimentHistory retains the latest 32 experiment outcomes across searches and restarts.
+                  Policy changes and workload adaptation clear it. Measurements are never reused for scoring.
+                items:
+                  description: VllmExperimentHistoryEntry retains a transition outcome
+                    for candidate selection only.
+                  properties:
+                    baselineTraffic:
+                      description: baselineTraffic describes the fresh baseline traffic,
+                        never a scoring reference.
+                      properties:
+                        backloggedFraction:
+                          description: backloggedFraction is the fraction of the window
+                            with waiting requests.
+                          type: number
+                        meanOutputTokens:
+                          description: meanOutputTokens is the mean generated length.
+                          type: number
+                        meanPromptTokens:
+                          description: meanPromptTokens is the mean prompt length.
+                          type: number
+                        requestsPerSecond:
+                          description: requestsPerSecond is the completed-request
+                            rate over the exact window.
+                          type: number
+                      required:
+                      - backloggedFraction
+                      - meanOutputTokens
+                      - meanPromptTokens
+                      - requestsPerSecond
+                      type: object
+                    candidateConfiguration:
+                      description: candidateConfiguration is the complete evaluated
+                        configuration.
+                      properties:
+                        arguments:
+                          description: arguments lists the argument operations that
+                            make up this configuration.
+                          items:
+                            description: ContainerArgsPolicyArgument describes one
+                              named container argument operation.
+                            properties:
+                              name:
+                                description: name is the literal option name, such
+                                  as --flag or -f.
+                                minLength: 2
+                                pattern: ^--?[^\s=]+$
+                                type: string
+                              operation:
+                                default: AddOrUpdate
+                                description: operation controls whether the option
+                                  is added/updated or removed.
+                                enum:
+                                - AddOrUpdate
+                                - Remove
+                                type: string
+                              value:
+                                description: value is optional. Omitted value means
+                                  a valueless flag; an explicit empty value is preserved.
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          type: array
+                      type: object
+                    experiment:
+                      description: experiment identifies the experimental parameter.
+                      enum:
+                      - maxNumBatchedTokens
+                      - maxNumSeqs
+                      - awqMarlin
+                      - gptqMarlin
+                      - enforceEager
+                      type: string
+                    outcome:
+                      description: outcome is Accepted, Rejected, Failed, or Deferred.
+                        Only comparable performance rejections suppress retries.
+                      enum:
+                      - Accepted
+                      - Rejected
+                      - Failed
+                      - Deferred
+                      type: string
+                    priorConfiguration:
+                      description: priorConfiguration is the complete starting configuration.
+                      properties:
+                        arguments:
+                          description: arguments lists the argument operations that
+                            make up this configuration.
+                          items:
+                            description: ContainerArgsPolicyArgument describes one
+                              named container argument operation.
+                            properties:
+                              name:
+                                description: name is the literal option name, such
+                                  as --flag or -f.
+                                minLength: 2
+                                pattern: ^--?[^\s=]+$
+                                type: string
+                              operation:
+                                default: AddOrUpdate
+                                description: operation controls whether the option
+                                  is added/updated or removed.
+                                enum:
+                                - AddOrUpdate
+                                - Remove
+                                type: string
+                              value:
+                                description: value is optional. Omitted value means
+                                  a valueless flag; an explicit empty value is preserved.
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          type: array
+                      type: object
+                    time:
+                      description: time is when the outcome was recorded.
+                      format: date-time
+                      type: string
+                  required:
+                  - baselineTraffic
+                  - candidateConfiguration
+                  - experiment
+                  - outcome
+                  - priorConfiguration
+                  - time
+                  type: object
+                maxItems: 32
+                type: array
+                x-kubernetes-list-type: atomic
               initialMeasurement:
                 description: initialMeasurement is the historical measurement collected
                   before tuning.
