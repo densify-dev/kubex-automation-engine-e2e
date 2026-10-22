@@ -211,7 +211,6 @@ rules:
   - proactivepolicies/status
   - rollbackpolicies/status
   - staticpolicies/status
-  - vllmoptimizationpolicies/status
   verbs:
   - get
   - patch
@@ -233,7 +232,6 @@ rules:
   - proactivepolicies/finalizers
   - rollbackpolicies/finalizers
   - staticpolicies/finalizers
-  - vllmoptimizationpolicies/finalizers
   verbs:
   - update
 - apiGroups:
@@ -247,15 +245,5 @@ rules:
   - get
   - list
   - patch
-  - watch
-- apiGroups:
-  - rightsizing.kubex.ai
-  resources:
-  - vllmoptimizationpolicies
-  verbs:
-  - get
-  - list
-  - patch
-  - update
   - watch
 {{- end }}

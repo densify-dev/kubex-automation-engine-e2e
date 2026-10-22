@@ -1,5 +1,7 @@
 """Tests: vendored examples exercise live cluster behavior, not just schema validity."""
 
+import json
+import re
 import time
 
 import pytest
@@ -10,10 +12,42 @@ from example_utils import (
     apply_manifest,
     assert_declared_resources_exist,
     delete_manifest_in_reverse,
+    manifest_documents,
     skip_reason,
     wait_for_declared_workloads_ready,
 )
-from helpers import get_deployment_resources
+from helpers import apply_manifest as apply_manifest_object
+from helpers import (
+    find_recommendation_annotation_key,
+    get_crd,
+    get_deployment_pod,
+    get_deployment_resources,
+    get_pod_resources,
+    wait_for,
+)
+
+
+def test_find_recommendation_annotation_key_selects_policy():
+    fixed_key = "static.rightsizing.kubex.ai/desired-resource-requests"
+    first_key = "static.rightsizing.kubex.ai/hfirst-desired-resource-requests"
+    second_key = "static.rightsizing.kubex.ai/hsecond-desired-resource-requests"
+    annotations = {
+        first_key: json.dumps({"policyName": "first-policy"}),
+        second_key: json.dumps({"policyName": "second-policy"}),
+    }
+
+    assert (
+        find_recommendation_annotation_key(
+            annotations, fixed_key, policy_name="second-policy"
+        )
+        == second_key
+    )
+    assert (
+        find_recommendation_annotation_key(
+            annotations, fixed_key, policy_name="missing-policy"
+        )
+        is None
+    )
 
 
 class TestExampleBehavior:
@@ -100,5 +134,235 @@ class TestHPAExampleBehavior:
                     f"expected HPA example {manifest_path.name} to preserve memory request "
                     f"for container {container}"
                 )
+        finally:
+            delete_manifest_in_reverse(manifest_path, kube_context)
+
+
+class TestMultiPolicyExampleBehavior:
+    @pytest.mark.timeout(900)
+    @pytest.mark.parametrize(
+        (
+            "manifest_path",
+            "deployment_name",
+            "policy_kind",
+            "policy_prefix",
+            "policy_containers",
+            "expected_resources",
+            "policy_weights",
+        ),
+        [
+            (
+                EXAMPLES_ROOT / "staticpolicy" / "multi-policy-container-scope.yaml",
+                "multi-policy-container-scope-demo",
+                "StaticPolicy",
+                "static",
+                {"multi-policy-app": {"app"}, "multi-policy-sidecar": {"sidecar"}},
+                {
+                    "app": {
+                        "requests": {"cpu": "250m", "memory": "256Mi"},
+                        "limits": {"cpu": "500m", "memory": "512Mi"},
+                    },
+                    "sidecar": {
+                        "requests": {"cpu": "150m", "memory": "192Mi"},
+                        "limits": {"cpu": "300m", "memory": "384Mi"},
+                    },
+                    "metrics": {
+                        "requests": {"cpu": "25m", "memory": "32Mi"},
+                        "limits": {"cpu": "50m", "memory": "64Mi"},
+                    },
+                },
+                {"multi-policy-app": 0, "multi-policy-sidecar": 0},
+            ),
+            (
+                EXAMPLES_ROOT / "proactivepolicy" / "multi-policy-container-scope.yaml",
+                "multi-policy-proactive-container-scope-demo",
+                "ProactivePolicy",
+                "proactive",
+                {
+                    "multi-policy-proactive-app": {"app"},
+                    "multi-policy-proactive-sidecar": {"sidecar"},
+                },
+                {
+                    "app": {
+                        "requests": {"cpu": "250m", "memory": "256Mi"},
+                        "limits": {"cpu": "500m", "memory": "512Mi"},
+                    },
+                    "sidecar": {
+                        "requests": {"cpu": "150m", "memory": "192Mi"},
+                        "limits": {"cpu": "300m", "memory": "384Mi"},
+                    },
+                    "metrics": {
+                        "requests": {"cpu": "25m", "memory": "32Mi"},
+                        "limits": {"cpu": "50m", "memory": "64Mi"},
+                    },
+                },
+                {
+                    "multi-policy-proactive-app": 0,
+                    "multi-policy-proactive-sidecar": 0,
+                },
+            ),
+            (
+                EXAMPLES_ROOT / "staticpolicy" / "weighted-container-exclusion.yaml",
+                "weighted-container-exclusion-demo",
+                "StaticPolicy",
+                "static",
+                {
+                    "weighted-container-exclusion-default": {"*"},
+                    "weighted-container-exclusion-sidecar": {"sidecar"},
+                },
+                {
+                    "app": {
+                        "requests": {"cpu": "250m", "memory": "256Mi"},
+                        "limits": {"cpu": "500m", "memory": "512Mi"},
+                    },
+                    "sidecar": {
+                        "requests": {"cpu": "50m", "memory": "64Mi"},
+                        "limits": {"cpu": "100m", "memory": "128Mi"},
+                    },
+                },
+                {
+                    "weighted-container-exclusion-default": 10,
+                    "weighted-container-exclusion-sidecar": 20,
+                },
+            ),
+            (
+                EXAMPLES_ROOT / "proactivepolicy" / "weighted-container-exclusion.yaml",
+                "weighted-proactive-container-exclusion-demo",
+                "ProactivePolicy",
+                "proactive",
+                {
+                    "weighted-proactive-container-exclusion-default": {"app", "sidecar"},
+                    "weighted-proactive-container-exclusion-sidecar": {"sidecar"},
+                },
+                {
+                    "app": {
+                        "requests": {"cpu": "250m", "memory": "256Mi"},
+                        "limits": {"cpu": "500m", "memory": "512Mi"},
+                    },
+                    "sidecar": {
+                        "requests": {"cpu": "50m", "memory": "64Mi"},
+                        "limits": {"cpu": "100m", "memory": "128Mi"},
+                    },
+                },
+                {
+                    "weighted-proactive-container-exclusion-default": 10,
+                    "weighted-proactive-container-exclusion-sidecar": 20,
+                },
+            ),
+        ],
+        ids=[
+            "staticpolicy/multi-policy-container-scope.yaml",
+            "proactivepolicy/multi-policy-container-scope.yaml",
+            "staticpolicy/weighted-container-exclusion.yaml",
+            "proactivepolicy/weighted-container-exclusion.yaml",
+        ],
+    )
+    def test_multi_policy_container_scope_composes_policy_results(
+        self,
+        manifest_path,
+        deployment_name,
+        policy_kind,
+        policy_prefix,
+        policy_containers,
+        expected_resources,
+        policy_weights,
+        kube_context,
+        k8s_clients,
+    ):
+        global_config = get_crd(k8s_clients.custom, "globalconfigurations", "global-config")
+        if not global_config.get("spec", {}).get("multiPolicyContainerRightsizingEnabled", False):
+            pytest.skip("multi-policy container rightsizing is disabled")
+
+        annotation_prefix = f"{policy_prefix}.rightsizing.kubex.ai"
+        key_pattern = re.compile(
+            rf"^{re.escape(annotation_prefix)}/h[A-Za-z0-9_-]+-desired-resource-(requests|limits)$"
+        )
+
+        def recommendation_keys(annotations):
+            keys = {"requests": [], "limits": []}
+            for key in annotations or {}:
+                match = key_pattern.fullmatch(key)
+                if match:
+                    keys[match.group(1)].append(key)
+            return keys
+
+        def annotations_converged():
+            deployment = k8s_clients.apps.read_namespaced_deployment(deployment_name, "default")
+            annotations = deployment.metadata.annotations or {}
+            keys = recommendation_keys(annotations)
+            return (
+                len(keys["requests"]) == 2
+                and len(keys["limits"]) == 2
+                and f"{annotation_prefix}/desired-resource-requests" not in annotations
+                and f"{annotation_prefix}/desired-resource-limits" not in annotations
+                and all(
+                    find_recommendation_annotation_key(
+                        annotations,
+                        f"{annotation_prefix}/desired-resource-{usage}",
+                        policy_name=policy_name,
+                    )
+                    is not None
+                    for usage in ("requests", "limits")
+                    for policy_name in policy_containers
+                )
+            )
+
+        try:
+            manifest_docs = manifest_documents(manifest_path)
+            for doc in manifest_docs:
+                if doc["kind"] == "Deployment":
+                    doc["spec"]["replicas"] = 0
+                apply_manifest_object(doc, kube_context)
+            assert_declared_resources_exist(manifest_path, kube_context)
+            wait_for(
+                annotations_converged,
+                timeout=180,
+                message=f"{policy_kind} multi-policy deployment annotations",
+            )
+
+            deployment = k8s_clients.apps.read_namespaced_deployment(deployment_name, "default")
+            annotations = deployment.metadata.annotations or {}
+            keys = recommendation_keys(annotations)
+            assert len(keys["requests"]) == 2
+            assert len(keys["limits"]) == 2
+            assert f"{annotation_prefix}/desired-resource-requests" not in annotations
+            assert f"{annotation_prefix}/desired-resource-limits" not in annotations
+
+            for usage in ("requests", "limits"):
+                fixed_key = f"{annotation_prefix}/desired-resource-{usage}"
+                for policy_name, containers in policy_containers.items():
+                    key = find_recommendation_annotation_key(
+                        annotations, fixed_key, policy_name=policy_name
+                    )
+                    assert key is not None
+                    payload = json.loads(annotations[key])
+                    assert payload["policyName"] == policy_name
+                    assert payload["policyNamespace"] == "default"
+                    assert payload["policyKind"] == policy_kind
+                    assert payload.get("policyWeight", 0) == policy_weights[policy_name]
+                    assert set(payload["containers"]) == containers
+
+            k8s_clients.apps.patch_namespaced_deployment(
+                deployment_name, "default", {"spec": {"replicas": 1}}
+            )
+            wait_for_declared_workloads_ready(manifest_path, k8s_clients)
+
+            def live_pod_converged():
+                pod = get_deployment_pod(k8s_clients.core, "default", deployment_name)
+                if pod.metadata.deletion_timestamp is not None:
+                    return False
+                resources = get_pod_resources(k8s_clients.core, "default", pod.metadata.name)
+                return all(
+                    resources[container][resource_type].get(resource) == value
+                    for container, expected in expected_resources.items()
+                    for resource_type, values in expected.items()
+                    for resource, value in values.items()
+                )
+
+            wait_for(
+                live_pod_converged,
+                timeout=600,
+                message=f"{policy_kind} multi-policy pod resources",
+            )
         finally:
             delete_manifest_in_reverse(manifest_path, kube_context)

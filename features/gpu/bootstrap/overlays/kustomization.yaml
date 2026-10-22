@@ -6,4 +6,3 @@ namespace: monitoring
 resources:
   - prometheus-config.yaml
   - prometheus-deploy.yaml
-  - prometheus-rbac.yaml

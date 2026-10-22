@@ -2,6 +2,45 @@
 
 All notable changes to the Kubex Automation Engine Helm chart will be documented in this file.
 
+## [1.16.0] - 2026-10-22
+
+### Added
+- Ephemeral-storage right-sizing automation for container requests and limits. It is off by default: enable it with `EPHEMERAL_STORAGE_AUTOMATION_ENABLED` on the controller (only on Kubex instances on a rapid release that supports it) and then opt in per automation strategy. Changes that need a pod restart are deferred until the pod is next recreated, or applied when eviction is allowed, and deferred changes are reported as restart-pending in the automation state. See [Proactive Policies](./docs/Proactive-Policies.md#ephemeral-storage).
+
+### Changed
+- The dry-run webhook probe Pod now runs with secure default security contexts that satisfy restricted pod security settings; see the configuration reference for the new values.
+
+### Fixed
+- A resize that leaves a workload crash-looping can now be rolled back. Rollback restore no longer waits on readiness and max-unavailable checks for pods that are already unavailable, so a single-replica workload stuck in CrashLoopBackOff recovers instead of staying blocked.
+- Proposals for managed resources can now change proposal IDs without being blocked by the reconciler.
+
+### Security
+- The controller is built with Go 1.27.3 to pick up updated certificate distrust handling.
+
+## [1.15.2] - 2026-10-09
+
+### Fixed
+- Values schema now accepts `null` for CPU resource limits, preserving the option to explicitly disable CPU limits for the controller and gateway.
+
+## [1.15.1] - 2026-10-08
+
+### Changed
+- CPU limits are no longer set by default on the controller, gateway, and compaction components, so they are no longer CPU-throttled. Memory limits and CPU requests are unchanged.
+- The pre-delete cleanup job's resources are now configurable through `cleanup.resources`.
+
+---
+
+## [1.15.0] - 2026-10-05
+
+### Added
+- Multi-policy container rightsizing: multiple policies of the same kind can now manage different containers of the same workload. Opt in with `globalConfiguration.multiPolicyContainerRightsizingEnabled`, and use the new `scope.containers` field to target specific containers.
+- Mutation logs now include the workload's current replica count.
+
+### Changed
+- Resize safety checks are stricter when several strategies apply to the same pod, and resizes are blocked when no common resize method is available.
+
+---
+
 ## [1.14.0] - 2026-09-23
 
 ### Added

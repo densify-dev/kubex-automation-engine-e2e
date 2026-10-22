@@ -337,7 +337,9 @@ class TestKubexMock:
                     if (
                         mutation.get("entityId") == "entity-gpu-kubex-demo"
                         and mutation.get("containerId") == "container-gpu-kubex-demo"
-                        and gpu_request == {"original": 0, "new": 0.25}
+                        and gpu_request is not None
+                        and "original" not in gpu_request
+                        and gpu_request.get("new") == 0.25
                     ):
                         captured["payload"] = mutation
                         return True

@@ -754,6 +754,49 @@ class TestRollbackBehavior:
         assert self._rollback_annotations_cleared(k8s_clients)
 
     @pytest.mark.timeout(900)
+    def test_rollback_recovers_crash_looping_single_replica_under_strict_safety_checks(self, k8s_clients):
+        """PD-60820: rollback must not be gated by the readiness checks that protect healthy pods.
+
+        A single-replica workload that a resize leaves crash-looping can only become Ready again
+        through the rollback restore, so min-ready-duration and maxUnavailable must not block it.
+        """
+        self._wait_for_initial_monitoring_success(k8s_clients)
+
+        # Default-like safety checks: the fixture relaxes minReadyDuration to 0s, which hides the bug.
+        k8s_clients.custom.patch_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            self.NAMESPACE,
+            "automationstrategies",
+            self.STRATEGY_NAME,
+            {"spec": {"safetyChecks": {"minReadyDuration": "10s", "respectWorkloadMaxUnavailable": True}}},
+        )
+
+        self._patch_rollback_policy_target(k8s_clients, "lastSuccessful")
+        self._patch_rollback_policy_monitoring_period(k8s_clients, "90s")
+        self._patch_static_policy_resources(k8s_clients, self.FAILING_RESOURCES)
+        self._wait_for_pod_resources(k8s_clients, self.FAILING_RESOURCES, timeout=300)
+
+        # Zero unavailability budget, applied after the forward resize so that resize is not blocked.
+        k8s_clients.apps.patch_namespaced_deployment(
+            self.DEPLOYMENT,
+            self.NAMESPACE,
+            {"spec": {"strategy": {"rollingUpdate": {"maxUnavailable": 0, "maxSurge": 1}}}},
+        )
+
+        wait_for(
+            lambda: self._deployment_failure_reason(k8s_clients) in {"CrashLoopBackOff", "OOMKilled"},
+            timeout=180,
+            message="resource-driven failure status",
+        )
+        state = self._wait_for_state_modes(k8s_clients, {"rollingBack", "backingOff", "backedOff"}, timeout=240)
+        assert state["failureReason"] in {"oomKilled", "crashLoopBackOff", "adoptionThresholdNotMet"}
+
+        # The restore must complete: a Ready pod running the last successful resources.
+        restored = self._wait_for_restored_pod(k8s_clients, set(), timeout=300)
+        assert pod_is_ready(restored)
+
+    @pytest.mark.timeout(900)
     def test_unschedulable_recommendation_rolls_back_to_last_successful(self, k8s_clients):
         if self.resize_mode == "in-place":
             pytest.skip("an impossible request is an eviction-only rollback scenario")

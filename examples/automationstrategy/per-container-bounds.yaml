@@ -21,6 +21,20 @@ spec:
           app:
             floor: 192Mi
             ceiling: 384Mi
+    ephemeralStorage:
+      requests:
+        upsize: true
+        downsize: true
+        setFromUnspecified: true
+        floor: 1Gi
+        ceiling: 10Gi
+        containers:
+          app:
+            ceiling: 5Gi
+      limits:
+        upsize: true
+        setFromUnspecified: true
+        floor: 1Gi
 ---
 # Valid cluster-scoped example: inherited and explicit container bounds are compatible.
 apiVersion: rightsizing.kubex.ai/v1alpha1
