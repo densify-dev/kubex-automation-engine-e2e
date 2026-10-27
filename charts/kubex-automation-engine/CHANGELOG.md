@@ -13,6 +13,7 @@ All notable changes to the Kubex Automation Engine Helm chart will be documented
 - A policy's status is no longer changed when a recommendation build is skipped, and status-only policy updates no longer trigger workload rescans.
 - A pod created in a paused namespace is no longer changed by the admission webhook. Pause, protected-namespace and quota checks now run before any admission hook, and an owner's pause is read live before a resize.
 - A pod blocked by a pause no longer gets the resize or the namespace's pause annotations.
+- A rollback now completes when the pod already runs the rollback target. Before, the owner could stay in `rollingBack` indefinitely, especially with `maxUnavailable: 0`.
 
 ---
 
