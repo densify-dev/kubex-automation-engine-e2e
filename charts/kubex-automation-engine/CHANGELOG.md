@@ -2,10 +2,23 @@
 
 All notable changes to the Kubex Automation Engine Helm chart will be documented in this file.
 
+## [1.16.1] - 2026-10-22
+
+### Changed
+- The gateway image is updated from 1.7 to 1.9.
+
+### Fixed
+- Pod admission no longer applies automation changes before the global configuration is ready.
+
+### Security
+- The gateway 1.9 image is built with Go 1.27.3 and updated `golang.org/x/net` and `klauspost/compress` dependencies that fix published CVEs.
+
+---
+
 ## [1.16.0] - 2026-10-22
 
 ### Added
-- Ephemeral-storage right-sizing automation for container requests and limits. It is off by default: enable it with `EPHEMERAL_STORAGE_AUTOMATION_ENABLED` on the controller (only on Kubex instances on a rapid release that supports it) and then opt in per automation strategy. Changes that need a pod restart are deferred until the pod is next recreated, or applied when eviction is allowed, and deferred changes are reported as restart-pending in the automation state. See [Proactive Policies](./docs/Proactive-Policies.md#ephemeral-storage).
+- Ephemeral-storage right-sizing automation for container requests and limits. It is off by default. See [Proactive Policies](./docs/Proactive-Policies.md#ephemeral-storage) for more details.
 
 ### Changed
 - The dry-run webhook probe Pod now runs with secure default security contexts that satisfy restricted pod security settings; see the configuration reference for the new values.

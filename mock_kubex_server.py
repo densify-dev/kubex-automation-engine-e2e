@@ -17,6 +17,7 @@ STATE = {
     "mutations": [],
     "policies": [],
     "states": [],
+    "scopes": [],
     "recommendations": [],
     "proposals": [],
     "requests": [],
@@ -192,6 +193,10 @@ class Handler(BaseHTTPRequestHandler):
                     ]
                 },
             )
+            return
+        if parts and parts[-1] == "scope":
+            _record("scopes", _cluster_name_from_path(parts, "scope"), _read_json_body(self))
+            self._send_json(HTTPStatus.OK, {"status": "ok"})
             return
         if parts and parts[-1] == "heartbeat":
             cluster_name = _cluster_name_from_path(parts, "heartbeat")

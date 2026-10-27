@@ -1,8 +1,10 @@
 """Tests: in-cluster Kubex mock receives recommendations and gateway uploads."""
 
 import json
+import time
 
 import pytest
+from kubernetes import client
 from kubernetes.client.rest import ApiException
 
 from example_utils import EXAMPLES_ROOT
@@ -11,6 +13,7 @@ from helpers import (
     VERSION,
     automation_strategy_manifest,
     create_multi_container_deployment,
+    cluster_static_policy_manifest,
     delete_deployment,
     get_crd,
     get_deployment_pod,
@@ -276,6 +279,141 @@ class TestKubexMock:
         mutations_payload = state["mutations"][-1]["payload"]
         assert isinstance(mutations_payload, list)
         assert len(mutations_payload) > 0
+
+    @pytest.mark.timeout(300)
+    def test_scope_upload_removes_workload_after_namespace_selector_shrinks(
+        self, request, k8s_clients, kube_context, controller_namespace
+    ):
+        old_namespace = "scope-old"
+        new_namespace = "scope-new"
+        strategy_name = f"{self.STRATEGY_NAME}-scope"
+        policy_name = f"{self.POLICY_NAME}-scope"
+
+        def cleanup_scope_resources():
+            try:
+                k8s_clients.custom.delete_cluster_custom_object(
+                    GROUP, VERSION, "clusterstaticpolicies", policy_name
+                )
+            except ApiException as exc:
+                if exc.status != 404:
+                    raise
+            for _ in range(60):
+                try:
+                    k8s_clients.custom.get_cluster_custom_object(
+                        GROUP, VERSION, "clusterstaticpolicies", policy_name
+                    )
+                except ApiException as exc:
+                    if exc.status == 404:
+                        break
+                    raise
+                time.sleep(1)
+            else:
+                raise AssertionError(f"ClusterStaticPolicy {policy_name} did not finish deletion")
+            try:
+                k8s_clients.custom.delete_cluster_custom_object(
+                    GROUP, VERSION, "clusterautomationstrategies", strategy_name
+                )
+            except ApiException as exc:
+                if exc.status != 404:
+                    raise
+            for namespace in (old_namespace, new_namespace):
+                try:
+                    k8s_clients.core.delete_namespace(namespace)
+                except ApiException as exc:
+                    if exc.status != 404:
+                        raise
+                for _ in range(60):
+                    try:
+                        k8s_clients.core.read_namespace(namespace)
+                    except ApiException as exc:
+                        if exc.status == 404:
+                            break
+                        raise
+                    time.sleep(1)
+                else:
+                    raise AssertionError(f"namespace {namespace} did not finish deletion")
+
+        cleanup_scope_resources()
+        request.addfinalizer(cleanup_scope_resources)
+        for namespace in (old_namespace, new_namespace):
+            try:
+                k8s_clients.core.create_namespace(client.V1Namespace(metadata=client.V1ObjectMeta(name=namespace)))
+            except ApiException as exc:
+                if exc.status != 409:
+                    raise
+
+        strategy = automation_strategy_manifest(strategy_name)
+        k8s_clients.custom.create_cluster_custom_object(GROUP, VERSION, "clusterautomationstrategies", strategy)
+        policy = cluster_static_policy_manifest(
+            policy_name,
+            strategy_name,
+            namespace_values=[old_namespace],
+            label_selector_app="scope-demo",
+        )
+        k8s_clients.custom.create_cluster_custom_object(GROUP, VERSION, "clusterstaticpolicies", policy)
+        create_multi_container_deployment(
+            k8s_clients.apps,
+            old_namespace,
+            "scope-demo",
+            containers=[
+                {
+                    "name": "demo",
+                    "requests": {"cpu": "100m", "memory": "128Mi"},
+                    "limits": {"cpu": "200m", "memory": "256Mi"},
+                }
+            ],
+        )
+
+        def old_workload_uploaded():
+            state = get_mock_kubex_state(kube_context, controller_namespace)
+            return any(
+                entry.get("policyName") == policy_name
+                and any(container.get("namespace") == old_namespace for container in entry.get("containers", []))
+                for payload in state["scopes"]
+                for entry in payload.get("policyScope", [])
+            )
+
+        wait_for(old_workload_uploaded, timeout=180, message="initial scoped workload upload")
+        scopes_before_update = len(get_mock_kubex_state(kube_context, controller_namespace)["scopes"])
+
+        current = k8s_clients.custom.get_cluster_custom_object(
+            GROUP, VERSION, "clusterstaticpolicies", policy_name
+        )
+        current["spec"]["scope"]["namespaceSelector"]["values"] = [new_namespace]
+        k8s_clients.custom.replace_cluster_custom_object(
+            GROUP, VERSION, "clusterstaticpolicies", policy_name, current
+        )
+        create_multi_container_deployment(
+            k8s_clients.apps,
+            new_namespace,
+            "scope-demo",
+            containers=[
+                {
+                    "name": "demo",
+                    "requests": {"cpu": "100m", "memory": "128Mi"},
+                    "limits": {"cpu": "200m", "memory": "256Mi"},
+                }
+            ],
+        )
+
+        def old_workload_removed():
+            state = get_mock_kubex_state(kube_context, controller_namespace)
+            later_payloads = state["scopes"][scopes_before_update:]
+            return any(
+                not any(
+                    entry.get("policyName") == policy_name
+                    and any(container.get("namespace") == old_namespace for container in entry.get("containers", []))
+                    for entry in payload.get("policyScope", [])
+                )
+                and any(
+                    entry.get("policyName") == policy_name
+                    and any(container.get("namespace") == new_namespace for container in entry.get("containers", []))
+                    for entry in payload.get("policyScope", [])
+                )
+                for payload in later_payloads
+            )
+
+        wait_for(old_workload_removed, timeout=180, message="stale scoped workload removal")
 
     @pytest.mark.timeout(300)
     def test_mock_receives_fractional_gpu_mutation(
