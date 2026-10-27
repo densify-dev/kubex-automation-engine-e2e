@@ -2,6 +2,20 @@
 
 All notable changes to the Kubex Automation Engine Helm chart will be documented in this file.
 
+## [1.17.0] - 2026-10-27
+
+### Added
+- A `minEphemeralStorageChangePercent` safety check (default `10`) on `AutomationStrategy` and `ClusterAutomationStrategy`. Ephemeral-storage resize actions below this percent change are dropped with `change-below-threshold`, as CPU and memory already are. Upgrade the `kubex-crds` chart to 1.17.0 together with the controller to use it.
+- The controller publishes the in-scope container IDs of each policy to the automation gateway at the policy snapshot interval.
+
+### Fixed
+- Tiny ephemeral-storage differences, such as recommendations a few bytes away from the current limit, no longer leave pods in "Pending Restart" or evict them with `restartStrategy: Evict`.
+- A policy's status is no longer changed when a recommendation build is skipped, and status-only policy updates no longer trigger workload rescans.
+- A pod created in a paused namespace is no longer changed by the admission webhook. Pause, protected-namespace and quota checks now run before any admission hook, and an owner's pause is read live before a resize.
+- A pod blocked by a pause no longer gets the resize or the namespace's pause annotations.
+
+---
+
 ## [1.16.1] - 2026-10-22
 
 ### Changed

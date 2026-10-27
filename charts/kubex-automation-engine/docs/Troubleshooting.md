@@ -432,10 +432,6 @@ This happens when the controller detects a critical issue preventing safe operat
 
 ## 3. Check Policy and Strategy Resolution
 
-Policy status reason `Ready` means policy-level checks and scope reconciliation succeeded. It does not mean every selected workload resized successfully. Only policy-level reconciliation updates policy outcomes, reasons, observed generation, and conditions. Individual workload success, failure, or skipped recommendation builds do not change that status.
-
-For an individual resize failure, check the pod\'s `automation-constraints` annotation, `rightsizing summary` logs, and workload events described above. Workload errors still retry independently of policy status.
-
 Policies (ProactivePolicy, StaticPolicy, etc.) define **what** to resize. AutomationStrategies define **how** to resize (in-place vs eviction, safety checks, etc.). If your policy references a strategy that doesn't exist or is invalid, automation won't work.
 
 ### Check Policies

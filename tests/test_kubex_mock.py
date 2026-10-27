@@ -369,8 +369,8 @@ class TestKubexMock:
             return any(
                 entry.get("policyName") == policy_name
                 and any(container.get("namespace") == old_namespace for container in entry.get("containers", []))
-                for payload in state["scopes"]
-                for entry in payload.get("policyScope", [])
+                for upload in state["scopes"]
+                for entry in upload.get("payload", {}).get("policyScope", [])
             )
 
         wait_for(old_workload_uploaded, timeout=180, message="initial scoped workload upload")
@@ -398,19 +398,19 @@ class TestKubexMock:
 
         def old_workload_removed():
             state = get_mock_kubex_state(kube_context, controller_namespace)
-            later_payloads = state["scopes"][scopes_before_update:]
+            later_uploads = state["scopes"][scopes_before_update:]
             return any(
                 not any(
                     entry.get("policyName") == policy_name
                     and any(container.get("namespace") == old_namespace for container in entry.get("containers", []))
-                    for entry in payload.get("policyScope", [])
+                    for entry in upload.get("payload", {}).get("policyScope", [])
                 )
                 and any(
                     entry.get("policyName") == policy_name
                     and any(container.get("namespace") == new_namespace for container in entry.get("containers", []))
-                    for entry in payload.get("policyScope", [])
+                    for entry in upload.get("payload", {}).get("policyScope", [])
                 )
-                for payload in later_payloads
+                for upload in later_uploads
             )
 
         wait_for(old_workload_removed, timeout=180, message="stale scoped workload removal")
