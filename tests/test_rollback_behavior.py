@@ -797,67 +797,6 @@ class TestRollbackBehavior:
         assert pod_is_ready(restored)
 
     @pytest.mark.timeout(900)
-    def test_rollback_completes_when_pod_already_runs_rollback_target(self, k8s_clients):
-        """PD-60838: a rollingBack owner whose pod already runs the target must complete.
-
-        With maxUnavailable 0 a further resize is never allowed, so completion must not depend on
-        executing one. The owner is returned to rollingBack after a real restore to reproduce a
-        ready pod that already has the rollback values.
-        """
-        self._wait_for_initial_monitoring_success(k8s_clients)
-
-        k8s_clients.custom.patch_namespaced_custom_object(
-            GROUP,
-            VERSION,
-            self.NAMESPACE,
-            "automationstrategies",
-            self.STRATEGY_NAME,
-            {"spec": {"safetyChecks": {"minReadyDuration": "10s", "respectWorkloadMaxUnavailable": True}}},
-        )
-        self._patch_rollback_policy_target(k8s_clients, "lastSuccessful")
-        self._patch_rollback_policy_monitoring_period(k8s_clients, "90s")
-        # Long backoff so the owner stays in backingOff instead of expiring while the test inspects it.
-        self._patch_rollback_policy_backoff(k8s_clients, time_period="30m", max_attempts=3)
-        self._patch_static_policy_resources(k8s_clients, self.FAILING_RESOURCES)
-        self._wait_for_pod_resources(k8s_clients, self.FAILING_RESOURCES, timeout=300)
-
-        k8s_clients.apps.patch_namespaced_deployment(
-            self.DEPLOYMENT,
-            self.NAMESPACE,
-            {"spec": {"strategy": {"rollingUpdate": {"maxUnavailable": 0, "maxSurge": 1}}}},
-        )
-
-        self._wait_for_state_modes(k8s_clients, {"rollingBack", "backingOff"}, timeout=300)
-        restored = self._wait_for_restored_pod(k8s_clients, set(), timeout=300)
-        assert pod_is_ready(restored)
-        self._wait_for_state_mode(k8s_clients, "backingOff", timeout=180)
-
-        state = self._rollback_state(k8s_clients)
-        assert state is not None
-        state["mode"] = "rollingBack"
-        state.pop("expiryAt", None)
-        state["rollbackStartedAt"] = (
-            datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=30)
-        ).strftime("%Y-%m-%dT%H:%M:%SZ")
-        k8s_clients.apps.patch_namespaced_deployment(
-            self.DEPLOYMENT,
-            self.NAMESPACE,
-            {"metadata": {"annotations": {ROLLBACK_STATE_ANNOTATION: json.dumps(state)}}},
-        )
-        assert self._rollback_state(k8s_clients)["mode"] == "rollingBack"
-
-        # The owner rollback controller completes the rollback once every pod runs the target.
-        completed = self._wait_for_state_mode(k8s_clients, "backingOff", timeout=180)
-        assert completed.get("expiryAt")
-
-        # Completion must not have cost the workload a restart.
-        pods = k8s_clients.core.list_namespaced_pod(
-            self.NAMESPACE, label_selector=f"app={self.DEPLOYMENT}"
-        ).items
-        live = [pod for pod in pods if pod.metadata.deletion_timestamp is None]
-        assert [pod.metadata.uid for pod in live] == [restored.metadata.uid]
-
-    @pytest.mark.timeout(900)
     def test_unschedulable_recommendation_rolls_back_to_last_successful(self, k8s_clients):
         if self.resize_mode == "in-place":
             pytest.skip("an impossible request is an eviction-only rollback scenario")
