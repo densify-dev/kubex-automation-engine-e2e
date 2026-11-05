@@ -2,16 +2,32 @@
 
 All notable changes to the Kubex Automation Engine Helm chart will be documented in this file.
 
+## [1.18.0] - 2026-11-05
+
+### Breaking
+- **[Rollback recovery may bypass PodDisruptionBudgets](./BREAKING.md#upgrading-to-1180-or-later-rollback-recovery-may-bypass-poddisruptionbudgets)**: while recovering from a rollback, pods not yet running the rollback target are recreated one at a time. If a PodDisruptionBudget blocks the eviction, the pod is deleted gracefully instead. See [Rollback Policies](./docs/Rollback-Policies.md#rollback-recovery-behavior-breaking-change).
+
+### Added
+- `ObjectPatch` and `ClusterObjectPatch` can patch HorizontalPodAutoscalers, PodDisruptionBudgets and OpenShift ClusterAutoscalers, as well as Karpenter NodePools. Each permission can be turned off under `rbac.objectPatches`.
+
+### Changed
+- In-place resizes that don't restart a container are no longer blocked by `respectWorkloadMaxUnavailable`.
+
+### Fixed
+- A rollback now completes only after every replica of the workload is running the rollback target.
+
+---
+
 ## [1.17.0] - 2026-10-28
 
 ### Added
-- A `minEphemeralStorageChangePercent` safety check (default `10`) on `AutomationStrategy` and `ClusterAutomationStrategy`. Ephemeral-storage resize actions below this percent change are dropped with `change-below-threshold`, as CPU and memory already are. Upgrade the `kubex-crds` chart to 1.17.0 together with the controller to use it.
-- The controller publishes the in-scope container IDs of each policy to the automation gateway at the policy snapshot interval.
+- `minEphemeralStorageChangePercent` (default `10`) on `AutomationStrategy` and `ClusterAutomationStrategy` skips ephemeral-storage changes below that percentage.
+- Policy scope (the containers each policy covers) is now reported to Kubex.
 
 ### Fixed
-- Tiny ephemeral-storage differences, such as recommendations a few bytes away from the current limit, no longer leave pods in "Pending Restart" or evict them with `restartStrategy: Evict`.
-- A policy's status is no longer changed when a recommendation build is skipped, and status-only policy updates no longer trigger workload rescans.
-- A change to the policy snapshot interval now reaches both the policy snapshot sender and the in-scope container publisher, instead of only one of them.
+- Pods are no longer left in "Pending Restart" or evicted over negligible ephemeral-storage differences.
+- A policy's status no longer changes when a recommendation can't be built.
+- Fixed bug where `pause-until` wouldn't be consistently honored.
 
 ---
 

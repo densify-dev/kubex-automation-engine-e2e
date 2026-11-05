@@ -20,6 +20,7 @@ from helpers import (
     get_crd,
     get_deployment_pod,
     get_pod_resources,
+    pod_is_ready,
     static_policy_manifest,
     update_namespace_annotations,
     wait_for,
@@ -507,4 +508,114 @@ class TestNodeAllocatableAdmissionGap:
             and event.involved_object.name == pod.metadata.name
             and "Insufficient" in (event.message or "")
             for event in events
+        )
+
+
+class TestInPlaceResizeWithZeroMaxUnavailable:
+    """PD-60859: in-place resizes that restart no container proceed when maxUnavailable is 0."""
+
+    STRATEGY_NAME = "e2e-zero-max-unavailable-strategy"
+    POLICY_NAME = "e2e-zero-max-unavailable-policy"
+    DEPLOYMENT = "e2e-zero-max-unavailable-workload"
+
+    def _cleanup(self, k8s_clients, test_namespace):
+        delete_deployment(k8s_clients.apps, test_namespace, self.DEPLOYMENT)
+        for plural, name in [
+            ("staticpolicies", self.POLICY_NAME),
+            ("automationstrategies", self.STRATEGY_NAME),
+        ]:
+            try:
+                k8s_clients.custom.delete_namespaced_custom_object(
+                    GROUP, VERSION, test_namespace, plural, name
+                )
+            except ApiException:
+                pass
+
+    @pytest.fixture(autouse=True)
+    def setup_teardown(self, k8s_clients, test_namespace, supports_in_place_resize):
+        if not supports_in_place_resize:
+            pytest.skip("requires Kubernetes v1.33+ in-place resize support")
+        self._cleanup(k8s_clients, test_namespace)
+        yield
+        self._cleanup(k8s_clients, test_namespace)
+
+    @pytest.mark.timeout(900)
+    def test_upsize_and_downsize_resize_in_place(self, k8s_clients, test_namespace):
+        strategy = automation_strategy_manifest(self.STRATEGY_NAME, test_namespace)
+        strategy["spec"].update(
+            {
+                "inPlaceResize": {"enabled": True, "containerRestart": False},
+                "podEviction": {"enabled": True},
+                "safetyChecks": {
+                    "respectWorkloadMaxUnavailable": True,
+                    "minReadyDuration": "0s",
+                    "resizeRetryInterval": "5s",
+                },
+            }
+        )
+        k8s_clients.custom.create_namespaced_custom_object(
+            GROUP, VERSION, test_namespace, "automationstrategies", strategy
+        )
+        create_deployment(
+            k8s_clients.apps,
+            test_namespace,
+            self.DEPLOYMENT,
+            cpu_request="100m",
+            mem_request="64Mi",
+        )
+        k8s_clients.apps.patch_namespaced_deployment(
+            self.DEPLOYMENT,
+            test_namespace,
+            {"spec": {"strategy": {"rollingUpdate": {"maxUnavailable": 0, "maxSurge": "25%"}}}},
+        )
+        wait_for(
+            lambda: pod_is_ready(get_deployment_pod(k8s_clients.core, test_namespace, self.DEPLOYMENT)),
+            timeout=180,
+            message="workload pod ready",
+        )
+        original = get_deployment_pod(k8s_clients.core, test_namespace, self.DEPLOYMENT)
+
+        k8s_clients.custom.create_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            test_namespace,
+            "staticpolicies",
+            static_policy_manifest(
+                self.POLICY_NAME,
+                test_namespace,
+                strategy_name=self.STRATEGY_NAME,
+                label_selector_app=self.DEPLOYMENT,
+                cpu_request="150m",
+                mem_request="96Mi",
+            ),
+        )
+        self._wait_for_in_place_resize(k8s_clients, test_namespace, original, "150m", "96Mi")
+
+        k8s_clients.custom.patch_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            test_namespace,
+            "staticpolicies",
+            self.POLICY_NAME,
+            {"spec": {"resources": {"containers": {"*": {"requests": {"cpu": "50m", "memory": "48Mi"}}}}}},
+        )
+        self._wait_for_in_place_resize(k8s_clients, test_namespace, original, "50m", "48Mi")
+
+    def _wait_for_in_place_resize(self, k8s_clients, test_namespace, original, cpu, memory):
+        def resized():
+            # The spec changes when the API accepts the resize; container status resources change once the kubelet applies it.
+            pod = k8s_clients.core.read_namespaced_pod(original.metadata.name, test_namespace)
+            applied = next(
+                (status.resources for status in pod.status.container_statuses or [] if status.name == "app"),
+                None,
+            )
+            requests = (applied.requests or {}) if applied else {}
+            return pod_is_ready(pod) and requests.get("cpu") == cpu and requests.get("memory") == memory
+
+        wait_for(resized, timeout=300, message=f"in-place resize to cpu={cpu} memory={memory} applied by the kubelet")
+        pod = k8s_clients.core.read_namespaced_pod(original.metadata.name, test_namespace)
+        assert pod.metadata.uid == original.metadata.uid, "pod should be resized in place, not replaced"
+        assert pod.metadata.deletion_timestamp is None, "pod should not be evicted"
+        assert all(status.restart_count == 0 for status in pod.status.container_statuses or []), (
+            "in-place resize should not restart the container"
         )

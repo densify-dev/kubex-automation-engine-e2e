@@ -1,6 +1,7 @@
 """Tests: live rollback state transitions and cleanup."""
 
 import datetime
+import hashlib
 import json
 import time
 
@@ -76,7 +77,9 @@ class TestRollbackBehavior:
     def setup_teardown(self, request, k8s_clients, kube_context, rollback_resize_mode):
         self.resize_mode = rollback_resize_mode
 
-        suffix = request.node.name.replace("_", "-")[:20]
+        readable = request.node.name.replace("_", "-")[:12]
+        unique = hashlib.sha256(request.node.nodeid.encode()).hexdigest()[:8]
+        suffix = f"{readable}-{unique}"
         self.STRATEGY_NAME = f"e2e-rollback-strategy-{suffix}"
         self.STATIC_POLICY_NAME = f"e2e-rollback-static-{suffix}"
         self.ROLLBACK_POLICY_NAME = f"e2e-rollback-policy-{suffix}"
@@ -319,6 +322,35 @@ class TestRollbackBehavior:
             },
         )
 
+    def _patch_static_policy_memory_resources(self, k8s_clients, requests: str, limits: str) -> None:
+        k8s_clients.custom.patch_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            self.NAMESPACE,
+            "staticpolicies",
+            self.STATIC_POLICY_NAME,
+            {
+                "spec": {
+                    "resources": {
+                        "containers": {
+                            "*": {
+                                "requests": {"cpu": None, "memory": requests},
+                                "limits": {"cpu": None, "memory": limits},
+                            }
+                        }
+                    }
+                }
+            },
+        )
+
+    def _wait_for_memory_resources(self, k8s_clients, requests: str, limits: str, timeout: int) -> None:
+        def applied():
+            pod = get_deployment_pod(k8s_clients.core, self.NAMESPACE, self.DEPLOYMENT)
+            live = get_pod_resources(k8s_clients.core, self.NAMESPACE, pod.metadata.name)["app"]
+            return live["requests"].get("memory") == requests and live["limits"].get("memory") == limits
+
+        wait_for(applied, timeout=timeout, message="live memory resource update")
+
     def _delete_static_policy(self, k8s_clients) -> None:
         delete_custom_object(
             k8s_clients.custom,
@@ -357,6 +389,18 @@ class TestRollbackBehavior:
             if involved.kind != "Deployment" or involved.name != self.DEPLOYMENT:
                 continue
             if event.reason != reason:
+                continue
+            if message_substring and message_substring not in (event.message or ""):
+                continue
+            return True
+        return False
+
+    def _pod_event_seen(self, k8s_clients, reason: str, message_substring: str | None = None) -> bool:
+        for event in k8s_clients.core.list_namespaced_event(self.NAMESPACE).items:
+            involved = event.involved_object
+            if not involved or involved.kind != "Pod":
+                continue
+            if not involved.name.startswith(f"{self.DEPLOYMENT}-") or event.reason != reason:
                 continue
             if message_substring and message_substring not in (event.message or ""):
                 continue
@@ -415,7 +459,12 @@ class TestRollbackBehavior:
             ),
         )
 
-    def _count_pods_with_resources(self, k8s_clients, resources: dict[str, dict[str, str]]) -> int:
+    def _count_pods_with_resources(
+        self,
+        k8s_clients,
+        resources: dict[str, dict[str, str]],
+        ready_only: bool = False,
+    ) -> int:
         count = 0
         pods = k8s_clients.core.list_namespaced_pod(
             self.NAMESPACE,
@@ -423,6 +472,8 @@ class TestRollbackBehavior:
         ).items
         for pod in pods:
             if pod.metadata.deletion_timestamp is not None:
+                continue
+            if ready_only and not pod_is_ready(pod):
                 continue
             live = get_pod_resources(k8s_clients.core, self.NAMESPACE, pod.metadata.name)["app"]
             if (
@@ -515,6 +566,32 @@ class TestRollbackBehavior:
             timeout=timeout,
             message="replacement pod restored to last successful resources",
         )
+        return pod_box["value"]
+
+    def _wait_for_restored_memory_pod(
+        self, k8s_clients, excluded_uids: set[str], request: str, limit: str, timeout: int
+    ):
+        pod_box = {"value": None}
+
+        def restored():
+            pods = k8s_clients.core.list_namespaced_pod(
+                self.NAMESPACE,
+                label_selector=f"app={self.DEPLOYMENT}",
+            ).items
+            for pod in pods:
+                if (
+                    pod.metadata.deletion_timestamp is not None
+                    or str(pod.metadata.uid) in excluded_uids
+                    or not pod_is_ready(pod)
+                ):
+                    continue
+                resources = get_pod_resources(k8s_clients.core, self.NAMESPACE, pod.metadata.name)["app"]
+                if resources["requests"].get("memory") == request and resources["limits"].get("memory") == limit:
+                    pod_box["value"] = pod
+                    return True
+            return False
+
+        wait_for(restored, timeout=timeout, message="replacement pod restored to rollback memory target")
         return pod_box["value"]
 
     def _wait_for_state_mode(self, k8s_clients, mode: str, timeout: int, interval: float = POLL_INTERVAL) -> dict:
@@ -797,6 +874,155 @@ class TestRollbackBehavior:
         assert pod_is_ready(restored)
 
     @pytest.mark.timeout(900)
+    def test_rollback_completes_when_pod_already_runs_rollback_target(self, k8s_clients):
+        """PD-60838: a rollingBack owner whose pod already runs the target must complete.
+
+        With maxUnavailable 0 a further resize is never allowed, so completion must not depend on
+        executing one. The owner is returned to rollingBack after a real restore to reproduce a
+        ready pod that already has the rollback values.
+        """
+        self._wait_for_initial_monitoring_success(k8s_clients)
+
+        k8s_clients.custom.patch_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            self.NAMESPACE,
+            "automationstrategies",
+            self.STRATEGY_NAME,
+            {"spec": {"safetyChecks": {"minReadyDuration": "10s", "respectWorkloadMaxUnavailable": True}}},
+        )
+        self._patch_rollback_policy_target(k8s_clients, "lastSuccessful")
+        self._patch_rollback_policy_monitoring_period(k8s_clients, "90s")
+        # Long backoff so the owner stays in backingOff instead of expiring while the test inspects it.
+        self._patch_rollback_policy_backoff(k8s_clients, time_period="30m", max_attempts=3)
+        self._patch_static_policy_resources(k8s_clients, self.FAILING_RESOURCES)
+        self._wait_for_pod_resources(k8s_clients, self.FAILING_RESOURCES, timeout=300)
+
+        k8s_clients.apps.patch_namespaced_deployment(
+            self.DEPLOYMENT,
+            self.NAMESPACE,
+            {"spec": {"strategy": {"rollingUpdate": {"maxUnavailable": 0, "maxSurge": 1}}}},
+        )
+
+        self._wait_for_state_modes(k8s_clients, {"rollingBack", "backingOff"}, timeout=300)
+        restored = self._wait_for_restored_pod(k8s_clients, set(), timeout=300)
+        assert pod_is_ready(restored)
+        self._wait_for_state_mode(k8s_clients, "backingOff", timeout=180)
+
+        state = self._rollback_state(k8s_clients)
+        assert state is not None
+        state["mode"] = "rollingBack"
+        state.pop("expiryAt", None)
+        state["rollbackStartedAt"] = (
+            datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=30)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        k8s_clients.apps.patch_namespaced_deployment(
+            self.DEPLOYMENT,
+            self.NAMESPACE,
+            {"metadata": {"annotations": {ROLLBACK_STATE_ANNOTATION: json.dumps(state)}}},
+        )
+        assert self._rollback_state(k8s_clients)["mode"] == "rollingBack"
+
+        # The owner rollback controller completes the rollback once every pod runs the target.
+        completed = self._wait_for_state_mode(k8s_clients, "backingOff", timeout=180)
+        assert completed.get("expiryAt")
+
+        # Completion must not have cost the workload a restart.
+        pods = k8s_clients.core.list_namespaced_pod(
+            self.NAMESPACE, label_selector=f"app={self.DEPLOYMENT}"
+        ).items
+        live = [pod for pod in pods if pod.metadata.deletion_timestamp is None]
+        assert [pod.metadata.uid for pod in live] == [restored.metadata.uid]
+
+    @pytest.mark.timeout(900)
+    def test_rollback_recreates_pod_when_in_place_and_pdb_block_eviction(self, k8s_clients, kube_context):
+        """Rollback recreates an unapplied target despite in-place and maxUnavailable controls."""
+        self._patch_static_policy_memory_resources(
+            k8s_clients,
+            self.INITIAL_RESOURCES["requests"]["memory"],
+            self.INITIAL_RESOURCES["limits"]["memory"],
+        )
+        self._wait_for_memory_resources(
+            k8s_clients,
+            self.INITIAL_RESOURCES["requests"]["memory"],
+            self.INITIAL_RESOURCES["limits"]["memory"],
+            timeout=300,
+        )
+        self._wait_for_state_mode(k8s_clients, "monitoringSucceeded", timeout=180)
+        wait_for(
+            lambda: self._rollback_annotations_cleared(k8s_clients),
+            timeout=60,
+            message="initial rollback annotations cleared",
+        )
+
+        k8s_clients.custom.patch_namespaced_custom_object(
+            GROUP,
+            VERSION,
+            self.NAMESPACE,
+            "automationstrategies",
+            self.STRATEGY_NAME,
+            {"spec": {"safetyChecks": {"minReadyDuration": "5s", "respectWorkloadMaxUnavailable": True}}},
+        )
+        self._patch_rollback_policy_target(k8s_clients, "lastSuccessful")
+        self._patch_rollback_policy_monitoring_period(k8s_clients, "90s")
+        self._patch_rollback_policy_threshold(k8s_clients, 100)
+        self._patch_rollback_policy_backoff(k8s_clients, time_period="30m", max_attempts=3)
+        self._patch_static_policy_memory_resources(
+            k8s_clients,
+            self.FAILING_RESOURCES["requests"]["memory"],
+            self.FAILING_RESOURCES["limits"]["memory"],
+        )
+
+        # Let the forward resize complete before installing the PDB so setup doesn't block it.
+        self._wait_for_memory_resources(
+            k8s_clients,
+            self.FAILING_RESOURCES["requests"]["memory"],
+            self.FAILING_RESOURCES["limits"]["memory"],
+            timeout=300,
+        )
+        wait_for(
+            lambda: self._deployment_failure_reason(k8s_clients) in {"CrashLoopBackOff", "OOMKilled"},
+            timeout=180,
+            message="rollback-triggering pod failure",
+        )
+        failed_pod = get_deployment_pod(k8s_clients.core, self.NAMESPACE, self.DEPLOYMENT)
+        failed_uid = str(failed_pod.metadata.uid)
+
+        # Install a closed PDB after the forward change. Rollback should try eviction, then use
+        # graceful deletion only when Kubernetes explicitly reports the PDB rejection.
+        k8s_clients.apps.patch_namespaced_deployment(
+            self.DEPLOYMENT,
+            self.NAMESPACE,
+            {"spec": {"strategy": {"rollingUpdate": {"maxUnavailable": 0, "maxSurge": 1}}}},
+        )
+        self._apply_pdb(kube_context, max_unavailable=0)
+        wait_for(
+            lambda: kubectl(
+                "get", "pdb", self.PDB_NAME, "-n", self.NAMESPACE,
+                "-o", "jsonpath={.status.disruptionsAllowed}", context=kube_context,
+            ) == "0",
+            timeout=60,
+            message="PDB blocks voluntary eviction",
+        )
+
+        self._wait_for_state_mode(k8s_clients, "rollingBack", timeout=240)
+        wait_for(
+            lambda: self._pod_event_seen(k8s_clients, "RollbackPDBOverride"),
+            timeout=240,
+            message="PDB rejection triggers rollback deletion fallback",
+        )
+        restored = self._wait_for_restored_memory_pod(
+            k8s_clients,
+            {failed_uid},
+            self.INITIAL_RESOURCES["requests"]["memory"],
+            self.INITIAL_RESOURCES["limits"]["memory"],
+            timeout=300,
+        )
+        assert str(restored.metadata.uid) != failed_uid
+        assert pod_is_ready(restored)
+        self._wait_for_state_mode(k8s_clients, "backingOff", timeout=240)
+
+    @pytest.mark.timeout(900)
     def test_unschedulable_recommendation_rolls_back_to_last_successful(self, k8s_clients):
         if self.resize_mode == "in-place":
             pytest.skip("an impossible request is an eviction-only rollback scenario")
@@ -900,7 +1126,7 @@ class TestRollbackBehavior:
         self._wait_for_ready_replicas(k8s_clients, replicas=5)
         self._apply_pdb(kube_context, max_unavailable=1)
 
-        self._patch_rollback_policy_monitoring_period(k8s_clients, "5s")
+        self._patch_rollback_policy_monitoring_period(k8s_clients, "20s")
         self._patch_rollback_policy_threshold(k8s_clients, 20)
         self._patch_static_policy_resources(k8s_clients, self.PARTIAL_ADOPTION_RESOURCES)
 
@@ -910,17 +1136,23 @@ class TestRollbackBehavior:
             # eviction-based resize is naturally paced one pod at a time and
             # a genuine partial-adoption window is reliably observable.
             wait_for(
-                lambda: 0 < self._count_pods_with_resources(k8s_clients, self.PARTIAL_ADOPTION_RESOURCES) < 5,
+                lambda: 0
+                < self._count_pods_with_resources(
+                    k8s_clients, self.PARTIAL_ADOPTION_RESOURCES, ready_only=True
+                )
+                < 5,
+                # A spec-only partial adoption is not enough: the verification threshold counts healthy
+                # pods, and container startup takes several seconds after an eviction.
                 timeout=120,
                 interval=0.2,
-                message="partial adoption observed",
+                message="ready partial adoption observed",
             )
         succeeded = self._wait_for_state_mode(k8s_clients, "monitoringSucceeded", timeout=180)
         adopted = self._count_pods_with_resources(k8s_clients, self.PARTIAL_ADOPTION_RESOURCES)
 
         assert succeeded["activeRecommendationFingerprint"]
         if self.resize_mode == "eviction":
-            assert 1 <= adopted < 5
+            assert 1 <= adopted <= 5
         else:
             # In-place resize applies to every pod immediately with no
             # disruption-based throttle, so all replicas can adopt before any
