@@ -37,6 +37,47 @@ ROLLBACK_STATE_ANNOTATION = "rightsizing.kubex.ai/rollback-state"
 STATIC_POLICY_ANNOTATION = "static.rightsizing.kubex.ai/desired-resource-requests"
 
 
+# Labels returned by container_failure_reason for a crashing workload container.
+CONTAINER_FAILURE_REASONS = frozenset({"CrashLoopBackOff", "OOMKilled", "Error"})
+
+
+def container_failure_reason(status) -> str | None:
+    """Return a failure label if a container is crash-looping or was OOM-killed.
+
+    Container runtimes and kubelet versions report the same OOM kill differently:
+    kind v1.32 shows ``CrashLoopBackOff``/``OOMKilled``, v1.37 shows a terminated
+    ``OOMKilled``, and kind v1.35 shows a terminated ``Error`` (exit code 137) and
+    never enters ``CrashLoopBackOff``. Treat any of those as a resource-driven failure.
+    """
+    state = status.state
+    if state is not None:
+        if state.waiting is not None and state.waiting.reason == "CrashLoopBackOff":
+            return "CrashLoopBackOff"
+        terminated = state.terminated
+        if terminated is not None:
+            if terminated.reason == "OOMKilled":
+                return "OOMKilled"
+            if terminated.exit_code not in (0, None):
+                return terminated.reason or "Error"
+    last = status.last_state.terminated if status.last_state is not None else None
+    if last is not None and (status.restart_count or 0) >= 2 and last.exit_code not in (0, None):
+        return last.reason or "Error"
+    return None
+
+
+def deployment_container_failure_reason(core, namespace: str, deployment: str, container: str = "app") -> str | None:
+    """Return the first failure label across the pods of ``app=<deployment>``."""
+    pods = core.list_namespaced_pod(namespace, label_selector=f"app={deployment}").items
+    for pod in pods:
+        for status in pod.status.container_statuses or []:
+            if status.name != container:
+                continue
+            reason = container_failure_reason(status)
+            if reason is not None:
+                return reason
+    return None
+
+
 def find_recommendation_annotation_key(
     annotations: dict[str, str] | None,
     fixed_key: str,

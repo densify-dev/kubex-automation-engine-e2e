@@ -11,6 +11,9 @@ from kubernetes.client.rest import ApiException
 from bootstrap import ignore_not_found
 from example_utils import EXAMPLES_ROOT, apply_manifest, delete_manifest_in_reverse
 from helpers import (
+    CONTAINER_FAILURE_REASONS,
+    container_failure_reason,
+    deployment_container_failure_reason,
     find_recommendation_annotation_key,
     get_crd,
     GROUP,
@@ -668,7 +671,7 @@ class TestGpuKaiRollback:
         self._patch_rollback_policy_backoff(k8s_clients, time_period="10s", max_attempts=max_attempts)
 
         wait_for(
-            lambda: self._deployment_failure_reason(k8s_clients) in {"CrashLoopBackOff", "OOMKilled"},
+            lambda: self._deployment_failure_reason(k8s_clients) in CONTAINER_FAILURE_REASONS,
             timeout=180,
             message="resource-driven failure status",
         )
@@ -698,19 +701,7 @@ class TestGpuKaiRollback:
         return completed["value"]
 
     def _deployment_failure_reason(self, k8s_clients) -> str | None:
-        pods = k8s_clients.core.list_namespaced_pod(
-            self.namespace,
-            label_selector=f"app={self.deployment}",
-        ).items
-        for pod in pods:
-            for status in pod.status.container_statuses or []:
-                if status.name != "app" or status.state is None:
-                    continue
-                if status.state.waiting is not None:
-                    return status.state.waiting.reason
-                if status.state.terminated is not None:
-                    return status.state.terminated.reason
-        return None
+        return deployment_container_failure_reason(k8s_clients.core, self.namespace, self.deployment)
 
     def _delete_healthy_pods(self, k8s_clients) -> None:
         pods = k8s_clients.core.list_namespaced_pod(
@@ -719,14 +710,7 @@ class TestGpuKaiRollback:
         ).items
         for pod in pods:
             statuses = pod.status.container_statuses or []
-            if any(
-                status.state
-                and (
-                    (status.state.waiting and status.state.waiting.reason == "CrashLoopBackOff")
-                    or (status.state.terminated and status.state.terminated.reason == "OOMKilled")
-                )
-                for status in statuses
-            ):
+            if any(container_failure_reason(status) is not None for status in statuses):
                 continue
             with ignore_not_found():
                 k8s_clients.core.delete_namespaced_pod(pod.metadata.name, self.namespace)
